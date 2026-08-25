@@ -13,6 +13,10 @@ dependencies = [
     "pydantic-settings>=2.4",
     "pydantic>=2.7",
     "sentence-transformers>=3.0",
+    "mcp>=2.1",
+    "uvicorn>=0.30",
+    "torch>=2.2",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +32,17 @@ dev = [
 
 [project.scripts]
 graph-rag = "graph_rag.cli:app"
+
+# Embeddings run on CPU (local dev machines, and the mcp-server container have no
+# GPU) — without this, Linux resolves PyPI's default CUDA-enabled torch wheel,
+# pulling in several GB of unused nvidia-* packages.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

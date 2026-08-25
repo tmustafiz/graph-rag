@@ -1,0 +1,22 @@
+metadata:
+  id: "CKV2_CUSTOM_1"
+  name: "Ensure RDS instances and clusters are encrypted at rest"
+  category: "GENERAL_SECURITY"
+  severity: "HIGH"
+  guideline: "Enable storage_encrypted (or the cluster equivalent) and set a customer-managed KMS key."
+scope:
+  provider: "aws"
+definition:
+  or:
+    - cond_type: "attribute"
+      resource_types:
+        - "aws_db_instance"
+      attribute: "storage_encrypted"
+      operator: "equals"
+      value: true
+    - cond_type: "attribute"
+      resource_types:
+        - "aws_rds_cluster"
+      attribute: "storage_encrypted"
+      operator: "equals"
+      value: true

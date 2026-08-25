@@ -18,10 +18,24 @@ services:
       timeout: 5s
       retries: 10
 
-  # mcp-server:
-  #   Added in Phase 3 once the MCP server exists. Will build from this
-  #   repo's Dockerfile, depend on neo4j, and publish 127.0.0.1:8765:8765
-  #   only (loopback-only — see docs/IMPLEMENTATION_PLAN.md Phase 3).
+  mcp-server:
+    build: .
+    container_name: graph-rag-mcp
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8765:8765" # loopback-only — see docs/IMPLEMENTATION_PLAN.md Phase 3
+    environment:
+      NEO4J_URI: "bolt://neo4j:7687"
+      NEO4J_USER: "${NEO4J_USER:-neo4j}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme-local-dev}"
+      MCP_HOST: "0.0.0.0" # binds all interfaces inside the container so Docker's
+      # port-forwarding can reach it; the host-side publish above still restricts
+      # external access to 127.0.0.1. Origin/DNS-rebinding checks stay on
+      # regardless (see the explicit TransportSecuritySettings in cli.py).
+      MCP_PORT: "8765"
+      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN:-}"
 
 volumes:
   neo4j_data:

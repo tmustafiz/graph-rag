@@ -1,4 +1,4 @@
-.PHONY: up down logs status install lint test ingest
+.PHONY: up down logs status install lint test ingest mcp-serve
 
 up:
 	docker compose up -d neo4j
@@ -20,6 +20,9 @@ apply-schema:
 
 ingest:
 	uv run graph-rag ingest training-docs/dms-ug.pdf
+
+mcp-serve:
+	uv run graph-rag serve-mcp
 
 lint:
 	uv run ruff check .

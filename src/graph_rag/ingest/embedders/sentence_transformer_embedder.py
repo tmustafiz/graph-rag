@@ -1,6 +1,6 @@
 from sentence_transformers import SentenceTransformer
 
-from graph_rag.ingest.embedder import Embedder
+from .embedder import Embedder
 
 DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
