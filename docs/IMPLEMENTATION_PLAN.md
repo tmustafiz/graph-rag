@@ -129,17 +129,17 @@ writes into the same shape.
 ```mermaid
 graph LR
     Source -->|HAS_SECTION| Section
-    Section -->|PARENT_OF| Section
+    Section -->|PARENT_OF| Section2["Section"]
     Section -->|HAS_CHUNK| Chunk
-    Chunk -->|NEXT| Chunk
+    Chunk -->|NEXT| Chunk2["Chunk"]
     Source -->|DEFINES| CodeEntity
-    CodeEntity -->|CONTAINS| CodeEntity
-    CodeEntity -->|CALLS| CodeEntity
-    CodeEntity -->|IMPORTS| CodeEntity
+    CodeEntity -->|CONTAINS| CodeEntity2["CodeEntity"]
+    CodeEntity -->|CALLS| CodeEntity3["CodeEntity"]
+    CodeEntity -->|IMPORTS| CodeEntity4["CodeEntity"]
     Source -->|DEFINES| PolicyRule
     PolicyRule -->|APPLIES_TO| Concept
     Chunk -->|MENTIONS| Concept
-    Concept -->|RELATED_TO| Concept
+    Concept -->|RELATED_TO| Concept2["Concept"]
 ```
 
 **Constraints/indexes**

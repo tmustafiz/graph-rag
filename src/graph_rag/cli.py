@@ -1,7 +1,13 @@
+from pathlib import Path
+
 import typer
 
 from graph_rag.graph.client import check_connectivity, driver_session
+from graph_rag.graph.graph_writer import GraphWriter
 from graph_rag.graph.schema import apply_schema
+from graph_rag.ingest.enricher import Enricher
+from graph_rag.ingest.pdf_parser import PdfParser
+from graph_rag.ingest.sentence_transformer_embedder import SentenceTransformerEmbedder
 
 app = typer.Typer(
     name="graph-rag",
@@ -31,6 +37,34 @@ def apply_schema_command() -> None:
         typer.secho(f"Failed to apply schema: {exc}", fg=typer.colors.RED)
         raise typer.Exit(code=1) from exc
     typer.secho(f"Applied {len(statements)} constraints/indexes.", fg=typer.colors.GREEN)
+
+
+@app.command()
+def ingest(
+    path: Path = typer.Argument(..., exists=True, dir_okay=False, help="File to ingest."),  # noqa: B008
+) -> None:
+    """Parse, chunk, embed, and upsert a document into the graph."""
+    if path.suffix.lower() != ".pdf":
+        typer.secho(
+            f"Unsupported file type: {path.suffix} (only .pdf for now)", fg=typer.colors.RED
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Parsing {path}...")
+    document = PdfParser().parse(path)
+    typer.echo(f"Parsed {len(document.sections)} sections, {len(document.chunks)} chunks.")
+
+    typer.echo("Generating embeddings...")
+    document = Enricher(SentenceTransformerEmbedder()).enrich(document)
+
+    typer.echo("Writing to Neo4j...")
+    with driver_session() as driver:
+        GraphWriter(driver).write(document)
+
+    typer.secho(
+        f"Ingested {path}: {len(document.sections)} sections, {len(document.chunks)} chunks.",
+        fg=typer.colors.GREEN,
+    )
 
 
 def main() -> None:

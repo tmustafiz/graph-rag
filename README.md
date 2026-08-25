@@ -15,6 +15,7 @@ make install               # uv sync
 make up                    # start Neo4j via Docker
 make status                 # verify connectivity from the CLI
 make apply-schema           # create constraints, full-text + vector indexes
+make ingest                 # parse, embed, and load training-docs/dms-ug.pdf
 ```
 
 Neo4j Browser: http://localhost:7474 (auth: `neo4j` / value of `NEO4J_PASSWORD`).

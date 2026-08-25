@@ -8,6 +8,102 @@ phased plan this log tracks progress against.
 
 ---
 
+## 2026-08-25 12:58 EDT
+
+[CHECKPOINT]
+
+1. **Core Objective**: (unchanged) Graph RAG system, Neo4j-backed,
+   heterogeneous doc ingestion, MCP lookup for coding agents.
+2. **Completed Milestones**:
+   - **Phase 2 (PDF ingestion) — complete and verified** against the
+     real `training-docs/dms-ug.pdf` (1780 pages):
+     - New `src/graph_rag/ingest/` modules, one class per file per
+       project convention: `Source`/`Section`/`Chunk`/`ParsedDocument`
+       (Pydantic v2 models), `PdfParser`, `Chunker`, `Embedder` (ABC)
+       + `SentenceTransformerEmbedder`, `Enricher`. Hoisted through
+       `ingest/__init__.py`'s `__all__` facade.
+     - New `src/graph_rag/graph/graph_writer.py`: `GraphWriter` —
+       idempotent Cypher upsert (`MERGE` throughout, batched
+       `UNWIND` in batches of 500) for `Source`, `Section` (+
+       `HAS_SECTION`/`PARENT_OF`), `Chunk` (+ `HAS_CHUNK`), and a
+       full-document `NEXT` reading-order chain across chunks.
+       Hoisted through `graph/__init__.py`.
+     - `PdfParser` walks PyMuPDF's `doc.get_toc()` outline to build
+       the `Section` hierarchy (breadcrumb + parent/child), extracts
+       leaf-section body text by page range, and delegates to
+       `Chunker` for ~400-word chunks (word count as a token-count
+       approximation, no tokenizer dependency) with 15% overlap,
+       never crossing a heading boundary.
+     - New CLI command `graph-rag ingest <path>` (`.pdf`-only for
+       now; validates extension, clear error otherwise) — parses,
+       embeds, and writes in one pass. New `make ingest` target.
+     - New tests: `tests/test_chunker.py` (5 tests — chunk sizing,
+       overlap, empty input, order offset, content-hash determinism)
+       and `tests/test_pdf_parser.py` (4 tests — hierarchy/breadcrumb
+       construction, page-range computation, leaf detection, stable
+       IDs), all pure/no live DB. 13/13 tests pass, `ruff` clean,
+       `pyright` clean (incl. `reportDeprecated`).
+   - **Real end-to-end run verified**: `graph-rag ingest
+     training-docs/dms-ug.pdf` → 1500 sections, 1582 chunks written.
+     Confirmed all three Phase 2 exit criteria directly:
+     - Full guide ingested (1 `Source`, 1500 `Section`, 1582
+       `Chunk` nodes; 1500 `HAS_SECTION`, 1473 `PARENT_OF`, 1582
+       `HAS_CHUNK`, 1581 `NEXT` edges).
+     - Walked `Source → Section → Chunk` and back up the breadcrumb
+       for the plan's own example: `.../Selection rules in DMS
+       Schema Conversion/Selection rules format` (page 176–177).
+     - Vector-similarity query for "how do I create a replication
+       instance" (the plan's Phase 3 example query) returned
+       "Creating a replication instance" as the top hit, score 0.80.
+     - Re-ran ingest a second time on the unchanged PDF: identical
+       node/edge counts (no duplicates) — confirms the `MERGE`-based
+       upsert is genuinely idempotent.
+3. **Critical Context**:
+   - **Embedding model changed from the plan's default**: this
+     sandbox has no network egress to huggingface.co, so
+     `BAAI/bge-small-en-v1.5` (the plan's stated default) can't be
+     downloaded. Switched `SentenceTransformerEmbedder`'s default to
+     `sentence-transformers/all-MiniLM-L6-v2`, which was already
+     cached locally (`~/.cache/huggingface`) — also 384-dim, so no
+     change needed to the Phase 1 vector index config
+     (`settings.embedding_dimensions`/`embedding_similarity_function`
+     already matched). `settings.py`'s comment updated accordingly.
+     If ingesting on a machine with normal internet access, either
+     model works; `Embedder`/`SentenceTransformerEmbedder(model_name=...)`
+     is pluggable, so swapping back is a one-line change plus
+     re-ingest (embeddings aren't portable across models).
+   - Ingest was run with `HF_HUB_OFFLINE=1` to skip a slow/blocked
+     network round-trip on model load — not required once the model
+     is cached, but harmless to keep using locally.
+   - `Chunk.id`/`Section.id` are deterministic
+     (`{source_path}::s{index}` / `{section_id}::c{order}`), not
+     content hashes — stable across re-ingestion of the same PDF
+     structure, which is what makes the `MERGE`-based upsert
+     idempotent. `content_hash` (sha256) is stored separately on both
+     `Source` and `Chunk` for future change-detection (Phase 7).
+   - `PdfParser`/`Chunker` are separate, composable classes (not
+     merged) specifically so `Chunker` is reusable as-is by the
+     Markdown/Python/YAML parsers in Phases 4–6, per the plan.
+   - `GraphWriter` batches every `UNWIND` write at 500 rows — untested
+     at much larger scale than this PDF, but cheap insurance against
+     one oversized transaction on bigger future sources.
+4. **Discarded Paths**:
+   - Considered making `PdfParser` call `Chunker` implicitly via a
+     combined return type — kept them fully decoupled instead
+     (`Chunker.chunk(text, section_id, start_order, ...)` takes plain
+     text) so Phase 4+ parsers can reuse `Chunker` without any
+     PDF-specific coupling.
+   - Considered adding `tiktoken` for exact token counts — skipped;
+     word-count approximation is sufficient for chunk-boundary sizing
+     and avoids an extra dependency for a non-critical metric.
+5. **Next Step**: Phase 3 — MCP server v1 (Streamable HTTP,
+   read-only `search`/`get_section`/`list_sources` tools) per
+   `docs/IMPLEMENTATION_PLAN.md`. The DMS guide is now fully queryable
+   in the graph, so this phase is what actually exposes it to a
+   coding agent.
+
+---
+
 ## 2026-08-25 11:47 EDT
 
 - Fixed two IDE-reported (Pylance/`reportDeprecated` + `reportArgumentType`)
