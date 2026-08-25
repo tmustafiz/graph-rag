@@ -13,10 +13,10 @@ install:
 	uv sync --all-extras
 
 status:
-	# `graph-rag status` becomes the real subcommand form once a second
-	# command (e.g. `ingest`, Phase 2) exists; Typer collapses a single
-	# command to bare invocation until then.
-	uv run graph-rag
+	uv run graph-rag status
+
+apply-schema:
+	uv run graph-rag apply-schema
 
 lint:
 	uv run ruff check .

@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from neo4j import Driver, GraphDatabase
@@ -14,7 +14,7 @@ def get_driver() -> Driver:
 
 
 @contextmanager
-def driver_session() -> Iterator[Driver]:
+def driver_session() -> Generator[Driver]:
     driver = get_driver()
     try:
         yield driver

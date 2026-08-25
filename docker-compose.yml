@@ -1,6 +1,6 @@
 services:
   neo4j:
-    image: neo4j:5.24-community
+    image: neo4j:2026.07.1
     container_name: graph-rag-neo4j
     ports:
       - "127.0.0.1:7474:7474" # browser UI

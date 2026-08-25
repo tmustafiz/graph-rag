@@ -1,6 +1,7 @@
 import typer
 
-from graph_rag.graph.client import check_connectivity
+from graph_rag.graph.client import check_connectivity, driver_session
+from graph_rag.graph.schema import apply_schema
 
 app = typer.Typer(
     name="graph-rag",
@@ -18,6 +19,18 @@ def status() -> None:
         typer.secho(f"Neo4j unreachable: {exc}", fg=typer.colors.RED)
         raise typer.Exit(code=1) from exc
     typer.secho("Neo4j is reachable.", fg=typer.colors.GREEN)
+
+
+@app.command(name="apply-schema")
+def apply_schema_command() -> None:
+    """Create (or verify) Neo4j constraints and indexes. Idempotent."""
+    try:
+        with driver_session() as driver:
+            statements = apply_schema(driver)
+    except Exception as exc:  # noqa: BLE001
+        typer.secho(f"Failed to apply schema: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+    typer.secho(f"Applied {len(statements)} constraints/indexes.", fg=typer.colors.GREEN)
 
 
 def main() -> None:
