@@ -27,6 +27,10 @@ FULLTEXT_INDEXES: list[str] = [
     "FOR (n:Chunk) ON EACH [n.text]",
     "CREATE FULLTEXT INDEX section_title_fulltext IF NOT EXISTS "
     "FOR (n:Section) ON EACH [n.title]",
+    "CREATE FULLTEXT INDEX code_entity_text_fulltext IF NOT EXISTS "
+    "FOR (n:CodeEntity) ON EACH [n.name, n.qualified_name, n.docstring]",
+    "CREATE FULLTEXT INDEX policy_rule_text_fulltext IF NOT EXISTS "
+    "FOR (n:PolicyRule) ON EACH [n.id, n.name, n.category, n.guideline]",
 ]
 
 
@@ -44,9 +48,43 @@ def vector_index_statement(
     )
 
 
+def code_entity_vector_index_statement(
+    dimensions: int = settings.embedding_dimensions,
+    similarity_function: str = settings.embedding_similarity_function,
+) -> str:
+    return (
+        "CREATE VECTOR INDEX code_entity_embedding IF NOT EXISTS "
+        "FOR (n:CodeEntity) ON (n.embedding) "
+        "OPTIONS {indexConfig: {"
+        f"`vector.dimensions`: {dimensions}, "
+        f"`vector.similarity_function`: '{similarity_function}'"
+        "}}"
+    )
+
+
+def policy_rule_vector_index_statement(
+    dimensions: int = settings.embedding_dimensions,
+    similarity_function: str = settings.embedding_similarity_function,
+) -> str:
+    return (
+        "CREATE VECTOR INDEX policy_rule_embedding IF NOT EXISTS "
+        "FOR (n:PolicyRule) ON (n.embedding) "
+        "OPTIONS {indexConfig: {"
+        f"`vector.dimensions`: {dimensions}, "
+        f"`vector.similarity_function`: '{similarity_function}'"
+        "}}"
+    )
+
+
 def apply_schema(driver: Driver) -> list[str]:
     """Create (or verify) all constraints and indexes. Idempotent."""
-    statements = [*CONSTRAINTS, *FULLTEXT_INDEXES, vector_index_statement()]
+    statements = [
+        *CONSTRAINTS,
+        *FULLTEXT_INDEXES,
+        vector_index_statement(),
+        code_entity_vector_index_statement(),
+        policy_rule_vector_index_statement(),
+    ]
     with driver.session() as session:
         for statement in statements:
             # Statements are fixed, internally-authored DDL (never user

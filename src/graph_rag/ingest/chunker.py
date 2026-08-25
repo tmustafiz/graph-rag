@@ -1,6 +1,6 @@
 import hashlib
 
-from graph_rag.ingest.chunk import Chunk
+from .models import Chunk
 
 TARGET_WORDS = 400
 OVERLAP_RATIO = 0.15

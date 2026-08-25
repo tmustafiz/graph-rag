@@ -1,4 +1,4 @@
-from graph_rag.ingest.pdf_parser import PdfParser
+from graph_rag.ingest.parsers.pdf_parser import PdfParser
 
 # [level, title, start_page]
 SAMPLE_TOC = [

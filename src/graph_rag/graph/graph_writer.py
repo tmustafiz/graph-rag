@@ -2,7 +2,7 @@ from typing import LiteralString, cast
 
 from neo4j import Driver, ManagedTransaction
 
-from graph_rag.ingest.parsed_document import ParsedDocument
+from graph_rag.ingest.models import ParsedDocument
 
 _BATCH_SIZE = 500
 
@@ -43,6 +43,55 @@ MATCH (a:Chunk {id: pair.from}), (b:Chunk {id: pair.to})
 MERGE (a)-[:NEXT]->(b)
 """
 
+_MERGE_CODE_ENTITIES = """
+UNWIND $entities AS row
+MERGE (e:CodeEntity {qualified_name: row.qualified_name})
+SET e.name = row.name, e.kind = row.kind, e.embed_text = row.embed_text,
+    e.file_path = row.file_path, e.start_line = row.start_line, e.end_line = row.end_line,
+    e.signature = row.signature, e.docstring = row.docstring, e.embedding = row.embedding
+WITH e, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(e)
+WITH e, row
+FOREACH (_ IN CASE WHEN row.parent_qualified_name IS NOT NULL THEN [1] ELSE [] END |
+    MERGE (parent:CodeEntity {qualified_name: row.parent_qualified_name})
+    MERGE (parent)-[:CONTAINS]->(e)
+)
+"""
+
+_MERGE_CALLS = """
+UNWIND $pairs AS pair
+MATCH (caller:CodeEntity {qualified_name: pair.from})
+MERGE (callee:CodeEntity {qualified_name: pair.to})
+MERGE (caller)-[:CALLS]->(callee)
+"""
+
+_MERGE_IMPORTS = """
+UNWIND $pairs AS pair
+MATCH (importer:CodeEntity {qualified_name: pair.from})
+MERGE (imported:CodeEntity {qualified_name: pair.to})
+MERGE (importer)-[:IMPORTS]->(imported)
+"""
+
+_MERGE_POLICY_RULES = """
+UNWIND $rules AS row
+MERGE (p:PolicyRule {id: row.id})
+SET p.name = row.name, p.category = row.category, p.severity = row.severity,
+    p.guideline = row.guideline, p.provider = row.provider, p.file_path = row.file_path,
+    p.embed_text = row.embed_text, p.embedding = row.embedding
+WITH p, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(p)
+"""
+
+_MERGE_APPLIES_TO = """
+UNWIND $pairs AS pair
+MATCH (p:PolicyRule {id: pair.from})
+MERGE (c:Concept {name: pair.to})
+SET c.type = "resource_type"
+MERGE (p)-[:APPLIES_TO]->(c)
+"""
+
 
 class GraphWriter:
     """Idempotently upserts a `ParsedDocument` into Neo4j."""
@@ -59,6 +108,16 @@ class GraphWriter:
                 session.execute_write(self._write_chunks, batch)
             for batch in self._batched(self._chunk_pairs(document)):
                 session.execute_write(self._write_next, batch)
+            for batch in self._batched([e.model_dump(mode="json") for e in document.code_entities]):
+                session.execute_write(self._write_code_entities, document.source.path, batch)
+            for batch in self._batched(self._call_pairs(document)):
+                session.execute_write(self._write_calls, batch)
+            for batch in self._batched(self._import_pairs(document)):
+                session.execute_write(self._write_imports, batch)
+            for batch in self._batched([r.model_dump(mode="json") for r in document.policy_rules]):
+                session.execute_write(self._write_policy_rules, document.source.path, batch)
+            for batch in self._batched(self._applies_to_pairs(document)):
+                session.execute_write(self._write_applies_to, batch)
 
     @staticmethod
     def _write_source(tx: ManagedTransaction, document: ParsedDocument) -> None:
@@ -84,10 +143,58 @@ class GraphWriter:
         tx.run(cast(LiteralString, _MERGE_NEXT), pairs=pairs)
 
     @staticmethod
+    def _write_code_entities(
+        tx: ManagedTransaction, source_path: str, entities: list[dict]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _MERGE_CODE_ENTITIES), entities=entities, source_path=source_path
+        )
+
+    @staticmethod
+    def _write_calls(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CALLS), pairs=pairs)
+
+    @staticmethod
+    def _write_imports(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_IMPORTS), pairs=pairs)
+
+    @staticmethod
+    def _write_policy_rules(tx: ManagedTransaction, source_path: str, rules: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_POLICY_RULES), rules=rules, source_path=source_path)
+
+    @staticmethod
+    def _write_applies_to(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_APPLIES_TO), pairs=pairs)
+
+    @staticmethod
     def _chunk_pairs(document: ParsedDocument) -> list[dict]:
         # section_id embeds a zero-padded index, so this sort is full document reading order.
         ordered = sorted(document.chunks, key=lambda c: (c.section_id, c.order))
         return [{"from": a.id, "to": b.id} for a, b in zip(ordered, ordered[1:], strict=False)]
+
+    @staticmethod
+    def _call_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": entity.qualified_name, "to": callee}
+            for entity in document.code_entities
+            for callee in entity.calls
+        ]
+
+    @staticmethod
+    def _import_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": entity.qualified_name, "to": imported}
+            for entity in document.code_entities
+            for imported in entity.imports
+        ]
+
+    @staticmethod
+    def _applies_to_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": rule.id, "to": resource_type}
+            for rule in document.policy_rules
+            for resource_type in rule.resource_types
+        ]
 
     @staticmethod
     def _batched(rows: list) -> list[list]:

@@ -5,11 +5,8 @@ from typing import cast
 
 import pymupdf
 
-from graph_rag.ingest.chunk import Chunk
-from graph_rag.ingest.chunker import Chunker
-from graph_rag.ingest.parsed_document import ParsedDocument
-from graph_rag.ingest.section import Section
-from graph_rag.ingest.source import Source
+from ..chunker import Chunker
+from ..models import Chunk, ParsedDocument, Section, Source
 
 
 class PdfParser:
