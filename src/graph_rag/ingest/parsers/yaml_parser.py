@@ -18,6 +18,10 @@ class YamlParser:
     structural chunking so it still gets parsed and embedded.
     """
 
+    @staticmethod
+    def can_handle(path: Path) -> bool:
+        return path.suffix.lower() in (".yaml", ".yml")
+
     def parse(self, path: Path) -> ParsedDocument:
         content = path.read_bytes()
         source = Source(
