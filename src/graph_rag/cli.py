@@ -6,6 +6,7 @@ import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .eval.retrieval_evaluator import RetrievalEvaluator
+from .graph.centrality_analyzer import CentralityAnalyzer
 from .graph.client import check_connectivity, driver_session
 from .graph.graph_writer import GraphWriter
 from .graph.schema import apply_schema
@@ -123,6 +124,22 @@ def prune_memory(
         f"Soft-deleted {result.soft_deleted} memories, hard-deleted {result.hard_deleted}.",
         fg=typer.colors.GREEN,
     )
+
+
+@app.command(name="compute-centrality")
+def compute_centrality() -> None:
+    """Run PageRank over the CodeEntity CALLS/IMPORTS graph, writing scores
+    to CodeEntity.pagerank. Re-run after ingesting code changes.
+    """
+    with driver_session() as driver:
+        scored = CentralityAnalyzer(driver).compute_code_pagerank()
+    if scored == 0:
+        typer.secho(
+            "No CodeEntity CALLS/IMPORTS edges found — ingest some Python source first.",
+            fg=typer.colors.YELLOW,
+        )
+        return
+    typer.secho(f"Scored {scored} code entities.", fg=typer.colors.GREEN)
 
 
 @app.command(name="eval-retrieval")

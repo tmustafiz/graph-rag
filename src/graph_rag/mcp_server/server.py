@@ -6,6 +6,7 @@ from ..ingestion_pipeline import IngestionPipeline
 from ..ingestion_result import IngestionResult
 from ..memory import AgentMemory, AgentMemoryResult, MemoryRecaller, MemoryWriter
 from .models import (
+    CodeCentralityResult,
     CodeSearchResult,
     NeighborResult,
     OutlineNode,
@@ -32,12 +33,15 @@ INSTRUCTIONS = (
     "no policy exists; try `search_policies` instead of guessing variants. "
     "`get_neighbors` walks the graph from any node (Source path, "
     "Section/Chunk/PolicyRule/AgentMemory id, CodeEntity qualified_name, or "
-    "Concept name). `cite` returns a human-readable citation string for a "
-    "chunk. `ingest_path` (re-)ingests a file or directory after it changes. "
-    "Use `remember`/`recall`/`forget` to save and retrieve your own working "
-    "memory (decisions, corrections, findings) across sessions. The source "
-    "list is also browsable as a resource (`graph-rag://sources`) without a "
-    "tool call."
+    "Concept name). `get_central_code_entities` ranks code by PageRank over "
+    "the CALLS/IMPORTS graph — use it to find what's most depended-upon (and "
+    "riskiest to change) in this codebase; empty until `graph-rag "
+    "compute-centrality` has been run at least once. `cite` returns a "
+    "human-readable citation string for a chunk. `ingest_path` (re-)ingests "
+    "a file or directory after it changes. Use `remember`/`recall`/`forget` "
+    "to save and retrieve your own working memory (decisions, corrections, "
+    "findings) across sessions. The source list is also browsable as a "
+    "resource (`graph-rag://sources`) without a tool call."
 )
 
 
@@ -115,6 +119,14 @@ def build_server(
         specific relationship types (e.g. `["CALLS", "IMPORTS"]`).
         """
         return retriever.get_neighbors(node_id, rel_types)
+
+    @server.tool()
+    def get_central_code_entities(top_k: int = 10) -> list[CodeCentralityResult]:
+        """Most central `CodeEntity` nodes by PageRank over the CALLS/IMPORTS
+        graph — what's most heavily depended-upon (and riskiest to change).
+        Empty until `graph-rag compute-centrality` has been run at least once.
+        """
+        return retriever.get_central_code_entities(top_k)
 
     @server.tool()
     def cite(chunk_id: str) -> str | None:

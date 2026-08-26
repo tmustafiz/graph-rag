@@ -5,6 +5,7 @@ from neo4j import Driver
 from graph_rag.ingest.embedders import Embedder
 
 from .models import (
+    CodeCentralityResult,
     CodeSearchResult,
     NeighborResult,
     OutlineNode,
@@ -101,6 +102,15 @@ _GET_CITATION = """
 MATCH (chunk:Chunk {id: $chunk_id})<-[:HAS_CHUNK]-(sec:Section)<-[:HAS_SECTION]-(src:Source)
 RETURN sec.breadcrumb AS breadcrumb, src.path AS source_path,
        chunk.start_page AS start_page, chunk.end_page AS end_page
+"""
+
+_GET_CENTRAL_CODE_ENTITIES = """
+MATCH (e:CodeEntity)
+WHERE e.pagerank IS NOT NULL AND e.name IS NOT NULL
+RETURN e.qualified_name AS qualified_name, e.name AS name, e.kind AS kind,
+       e.file_path AS file_path, e.pagerank AS pagerank
+ORDER BY e.pagerank DESC
+LIMIT $top_k
 """
 
 _VECTOR_SEARCH_CODE = """
@@ -301,6 +311,25 @@ class Retriever:
         with self._driver.session() as session:
             record = session.run(cast(LiteralString, _GET_CITATION), chunk_id=chunk_id).single()
         return None if record is None else _format_citation(dict(record))
+
+    def get_central_code_entities(self, top_k: int = 10) -> list[CodeCentralityResult]:
+        """The most central `CodeEntity` nodes by PageRank over the
+        `CALLS`/`IMPORTS` graph (see `CentralityAnalyzer` /
+        `graph-rag compute-centrality`) — empty until that's been run at
+        least once.
+        """
+        with self._driver.session() as session:
+            rows = session.run(cast(LiteralString, _GET_CENTRAL_CODE_ENTITIES), top_k=top_k)
+            return [
+                CodeCentralityResult(
+                    qualified_name=row["qualified_name"],
+                    name=row["name"],
+                    kind=row["kind"],
+                    file_path=row["file_path"],
+                    pagerank=row["pagerank"],
+                )
+                for row in rows
+            ]
 
     def search_code(self, query: str, top_k: int = 5) -> list[CodeSearchResult]:
         """Hybrid (vector + full-text) search over `CodeEntity` nodes —

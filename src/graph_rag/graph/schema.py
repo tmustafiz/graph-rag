@@ -29,10 +29,11 @@ FULLTEXT_INDEXES: list[str] = [
     "FOR (n:AgentMemory) ON EACH [n.content]",
 ]
 
-# Range index so the pruner's scan over recency stays cheap as memory grows.
+# Range indexes for cheap ordering scans (pruner's recency sweep, centrality ranking).
 RANGE_INDEXES: list[str] = [
     "CREATE RANGE INDEX agent_memory_last_accessed IF NOT EXISTS "
     "FOR (n:AgentMemory) ON (n.last_accessed_at)",
+    "CREATE RANGE INDEX code_entity_pagerank IF NOT EXISTS FOR (n:CodeEntity) ON (n.pagerank)",
 ]
 
 
