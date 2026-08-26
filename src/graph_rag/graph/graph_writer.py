@@ -92,6 +92,40 @@ SET c.type = "resource_type"
 MERGE (p)-[:APPLIES_TO]->(c)
 """
 
+_GET_SOURCE_CONTENT_HASH = """
+MATCH (s:Source {path: $path})
+RETURN s.content_hash AS content_hash
+"""
+
+# Reconciliation deletes stale children a Source no longer produces on
+# re-parse (e.g. a deleted function, a removed heading) — run after every
+# write so an updated Source never leaves orphaned graph state behind.
+# Chunks are reconciled before Sections so a stale Section is never left
+# holding chunks that were already removed by its own query.
+_RECONCILE_CHUNKS = """
+MATCH (:Source {path: $source_path})-[:HAS_SECTION]->(:Section)-[:HAS_CHUNK]->(c:Chunk)
+WHERE NOT c.id IN $keep_ids
+DETACH DELETE c
+"""
+
+_RECONCILE_SECTIONS = """
+MATCH (:Source {path: $source_path})-[:HAS_SECTION]->(sec:Section)
+WHERE NOT sec.id IN $keep_ids
+DETACH DELETE sec
+"""
+
+_RECONCILE_CODE_ENTITIES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(e:CodeEntity)
+WHERE NOT e.qualified_name IN $keep_ids
+DETACH DELETE e
+"""
+
+_RECONCILE_POLICY_RULES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(p:PolicyRule)
+WHERE NOT p.id IN $keep_ids
+DETACH DELETE p
+"""
+
 
 class GraphWriter:
     """Idempotently upserts a `ParsedDocument` into Neo4j."""
@@ -118,6 +152,32 @@ class GraphWriter:
                 session.execute_write(self._write_policy_rules, document.source.path, batch)
             for batch in self._batched(self._applies_to_pairs(document)):
                 session.execute_write(self._write_applies_to, batch)
+            session.execute_write(
+                self._reconcile_chunks,
+                document.source.path,
+                [c.id for c in document.chunks],
+            )
+            session.execute_write(
+                self._reconcile_sections,
+                document.source.path,
+                [s.id for s in document.sections],
+            )
+            session.execute_write(
+                self._reconcile_code_entities,
+                document.source.path,
+                [e.qualified_name for e in document.code_entities],
+            )
+            session.execute_write(
+                self._reconcile_policy_rules,
+                document.source.path,
+                [r.id for r in document.policy_rules],
+            )
+
+    def get_source_content_hash(self, path: str) -> str | None:
+        """The `content_hash` currently stored for a `Source`, or `None` if unseen."""
+        with self._driver.session() as session:
+            record = session.run(cast(LiteralString, _GET_SOURCE_CONTENT_HASH), path=path).single()
+            return record["content_hash"] if record else None
 
     @staticmethod
     def _write_source(tx: ManagedTransaction, document: ParsedDocument) -> None:
@@ -165,6 +225,34 @@ class GraphWriter:
     @staticmethod
     def _write_applies_to(tx: ManagedTransaction, pairs: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_APPLIES_TO), pairs=pairs)
+
+    @staticmethod
+    def _reconcile_chunks(tx: ManagedTransaction, source_path: str, keep_ids: list[str]) -> None:
+        tx.run(cast(LiteralString, _RECONCILE_CHUNKS), source_path=source_path, keep_ids=keep_ids)
+
+    @staticmethod
+    def _reconcile_sections(tx: ManagedTransaction, source_path: str, keep_ids: list[str]) -> None:
+        tx.run(cast(LiteralString, _RECONCILE_SECTIONS), source_path=source_path, keep_ids=keep_ids)
+
+    @staticmethod
+    def _reconcile_code_entities(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_CODE_ENTITIES),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _reconcile_policy_rules(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_POLICY_RULES),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
 
     @staticmethod
     def _chunk_pairs(document: ParsedDocument) -> list[dict]:

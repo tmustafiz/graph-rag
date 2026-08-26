@@ -23,6 +23,10 @@ class MarkdownParser:
     def __init__(self, chunker: Chunker | None = None) -> None:
         self._chunker = chunker or Chunker()
 
+    @staticmethod
+    def can_handle(path: Path) -> bool:
+        return path.suffix.lower() in (".md", ".markdown")
+
     def parse(self, path: Path) -> ParsedDocument:
         content = path.read_bytes()
         source = Source(

@@ -18,6 +18,10 @@ class PythonParser:
     rather than guessed.
     """
 
+    @staticmethod
+    def can_handle(path: Path) -> bool:
+        return path.suffix.lower() == ".py"
+
     def parse(self, path: Path) -> ParsedDocument:
         content = path.read_bytes()
         source = Source(

@@ -8,12 +8,13 @@ from .graph.client import check_connectivity, driver_session
 from .graph.graph_writer import GraphWriter
 from .graph.schema import apply_schema
 from .ingest.embedders import SentenceTransformerEmbedder
-from .ingest.enricher import Enricher
-from .ingest.parsers import MarkdownParser, PdfParser, PythonParser, YamlParser
+from .ingest.parser_registry import ParserRegistry
+from .ingestion_pipeline import IngestionPipeline
 from .mcp_server.bearer_token_middleware import BearerTokenMiddleware
 from .mcp_server.retriever import Retriever
 from .mcp_server.server import build_server
 from .settings import settings
+from .unsupported_file_type_error import UnsupportedFileTypeError
 
 app = typer.Typer(
     name="graph-rag",
@@ -47,44 +48,35 @@ def apply_schema_command() -> None:
 
 @app.command()
 def ingest(
-    path: Path = typer.Argument(..., exists=True, dir_okay=False, help="File to ingest."),  # noqa: B008
+    path: Path = typer.Argument(..., exists=True, help="File or directory to ingest."),  # noqa: B008
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview what would be ingested without writing to Neo4j."
+    ),
 ) -> None:
-    """Parse, chunk, embed, and upsert a document into the graph."""
-    suffix = path.suffix.lower()
-    if suffix == ".pdf":
-        parser = PdfParser()
-    elif suffix in (".md", ".markdown"):
-        parser = MarkdownParser()
-    elif suffix == ".py":
-        parser = PythonParser()
-    elif suffix in (".yaml", ".yml"):
-        parser = YamlParser()
-    else:
-        typer.secho(
-            f"Unsupported file type: {path.suffix} (only .pdf/.md/.py/.yaml/.yml for now)",
-            fg=typer.colors.RED,
-        )
-        raise typer.Exit(code=1)
+    """Parse, chunk, embed, and upsert a file or directory (recursive) into the graph.
 
-    typer.echo(f"Parsing {path}...")
-    document = parser.parse(path)
-    typer.echo(
-        f"Parsed {len(document.sections)} sections, {len(document.chunks)} chunks, "
-        f"{len(document.code_entities)} code entities, {len(document.policy_rules)} policy rules."
-    )
-
-    typer.echo("Generating embeddings...")
-    document = Enricher(SentenceTransformerEmbedder()).enrich(document)
-
-    typer.echo("Writing to Neo4j...")
+    Skips any file whose content is unchanged since the last ingest.
+    """
     with driver_session() as driver:
-        GraphWriter(driver).write(document)
+        pipeline = IngestionPipeline(
+            ParserRegistry(), SentenceTransformerEmbedder(), GraphWriter(driver)
+        )
+        try:
+            results = pipeline.run(path, dry_run=dry_run)
+        except UnsupportedFileTypeError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
 
-    typer.secho(
-        f"Ingested {path}: {len(document.sections)} sections, {len(document.chunks)} chunks, "
-        f"{len(document.code_entities)} code entities, {len(document.policy_rules)} policy rules.",
-        fg=typer.colors.GREEN,
-    )
+    verb = "Would ingest" if dry_run else "Ingested"
+    for result in results:
+        if result.skipped:
+            typer.echo(f"Skipped {result.path} (unchanged).")
+            continue
+        typer.secho(
+            f"{verb} {result.path}: {result.sections} sections, {result.chunks} chunks, "
+            f"{result.code_entities} code entities, {result.policy_rules} policy rules.",
+            fg=typer.colors.GREEN,
+        )
 
 
 @app.command(name="serve-mcp")
@@ -103,7 +95,9 @@ def serve_mcp() -> None:
     embedder = SentenceTransformerEmbedder()
     with driver_session() as driver:
         retriever = Retriever(driver, embedder)
-        mcp_app = build_server(retriever).streamable_http_app(
+        writer = GraphWriter(driver)
+        ingestion_pipeline = IngestionPipeline(ParserRegistry(), embedder, writer)
+        mcp_app = build_server(retriever, ingestion_pipeline).streamable_http_app(
             host=settings.mcp_host, transport_security=transport_security
         )
         if settings.mcp_auth_token:

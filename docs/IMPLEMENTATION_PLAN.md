@@ -70,12 +70,16 @@ flowchart LR
     P7 --> P9["Phase 9\nMCP hardening"]
     P8 --> P10["Phase 10\nObservability & ops"]
     P9 --> P10
+    P3 --> P11["Phase 11\nAgent memory"]
 ```
 
 Phases 0–3 are the critical path (agent can already query the DMS
 guide). 4–6 fan out independently once the parser-plugin contract is
 proven. 7 unlocks cheap addition of further file types. 8–10 are
-quality/scale layers on a working system.
+quality/scale layers on a working system. 11 is a separate fan-out
+from 3 — it only needs the MCP server and the schema conventions, not
+the document-ingestion pipeline (no `Parser`/`ParsedDocument` involved;
+memories are written one at a time, mid-session, not batch-ingested).
 
 ---
 
@@ -349,4 +353,76 @@ non-trivial answer.
   safety notes.
 - README covering: setup, `docker compose up`, `graph-rag ingest`,
   registering the MCP server with the coding agent.
+
+---
+
+## Phase 11 — Agent memory (GitHub Copilot coding agent)
+
+Store the coding agent's own working memory (decisions, corrections,
+findings) in the same Neo4j instance as the knowledge base, so a
+memory can be linked to the graph entity it's actually about — but
+via its own module and MCP tools, decoupled from the document-
+ingestion pipeline (no `Parser`/`ParsedDocument`/`GraphWriter`;
+memories are written one at a time, mid-session).
+
+**Core node**
+- `AgentMemory` — `id` (merge key), `content`, `kind`
+  (`"decision"`|`"correction"`|`"finding"`|`"preference"`|`"fact"`),
+  `embed_text`, `embedding`, `created_at`, `last_accessed_at`,
+  `access_count`, `importance` (bool — explicit override that exempts
+  a memory from decay-based pruning), `archived_at` (soft-delete
+  marker), `source_session_id`.
+
+**Relationships**
+- `(AgentMemory)-[:ABOUT]->(CodeEntity|PolicyRule|Section|Source)` —
+  ties a memory to the thing it concerns, so "what has the agent
+  learned about `PdfParser`" is a graph traversal, not a text search.
+- `(AgentMemory)-[:SUPERSEDES]->(AgentMemory)` — a correction replaces
+  an earlier memory without deleting the audit trail.
+- `(AgentMemory)-[:RELATED_TO]->(AgentMemory)` — optional clustering,
+  mirrors the existing `Concept-[:RELATED_TO]->Concept` pattern.
+
+```mermaid
+graph LR
+    AgentMemory -->|ABOUT| CodeEntity
+    AgentMemory -->|ABOUT| PolicyRule
+    AgentMemory -->|SUPERSEDES| AgentMemory2["AgentMemory"]
+    AgentMemory -->|RELATED_TO| AgentMemory3["AgentMemory"]
+```
+
+**New module** — `graph_rag/memory/` (same one-class-per-file layout
+as `ingest/`):
+- `MemoryWriter` — upserts an `AgentMemory` node plus its `ABOUT`/
+  `SUPERSEDES` edges; reuses the existing `Embedder` interface.
+- `MemoryPruner` — recency+frequency decay scoring
+  (`access_count / (age_days + 1)`), soft-deletes (`archived_at`) any
+  non-`importance` memory below a threshold; a separate hard-delete
+  pass removes anything archived past a grace window (e.g. 30 days).
+
+**Schema** (`graph/schema.py`) — uniqueness constraint on
+`AgentMemory.id`; fulltext index on `content`; vector index on
+`embedding`; range index on `last_accessed_at` so the pruner's scan
+stays cheap.
+
+**MCP tools** — kept separate from the existing read-only lookup
+tools (`search`/`get_section`/`list_sources`/`find_policies_for`)
+because this is the first tool set that writes:
+- `remember(content, kind, about_qualified_name?, importance?)` —
+  embeds and upserts an `AgentMemory`, linking `ABOUT` when
+  `about_qualified_name` resolves to an existing node.
+- `recall(query, top_k)` — hybrid vector+fulltext search over
+  `AgentMemory.content`; bumps `last_accessed_at`/`access_count` on
+  every returned hit (recall reinforces, same as human memory).
+- `forget(memory_id)` — explicit deletion, for corrections the agent
+  (or user) wants gone immediately rather than left to decay.
+
+CLI: `graph-rag prune-memory --threshold <score>` runs the pruner as
+an on-demand job to start; promotable to a scheduled task later.
+
+**Exit criteria**: `remember()` a decision in one session; `recall()`
+retrieves it from a fresh session. Simulating age + low access count
+then running `prune-memory` soft-deletes it — unless `importance` was
+set, in which case it survives regardless of recency. A memory linked
+via `ABOUT` to a real `CodeEntity` is reachable by traversing from
+that `CodeEntity` node, not just by searching memory text directly.
 

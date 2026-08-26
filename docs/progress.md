@@ -8,6 +8,120 @@ phased plan this log tracks progress against.
 
 ---
 
+## 2026-08-26 (session) — Phase 7 complete
+
+Phase 7 (generalized ingestion API & incremental updates) complete.
+Core scope only — `--watch` and the FastAPI `POST /ingest` endpoint from
+the plan's Phase 7 bullets were deliberately deferred (see below).
+
+[CHECKPOINT]
+1. Core Objective: Graph RAG system ingesting heterogeneous docs (PDF,
+   Markdown, Python, YAML/Checkov) into Neo4j, exposed to coding agents
+   via an MCP server (Streamable HTTP).
+2. Completed Milestones:
+   - `Parser` protocol (`ingest/parser.py`: `can_handle(path)` +
+     `parse(path)`) — each of the 4 existing parsers gained a
+     `can_handle` static method (suffix check moved out of `cli.py`
+     and into the parser itself).
+   - `ParserRegistry` (`ingest/parser_registry.py`) — holds the 4
+     parser instances, `for_path(path)` returns whichever can handle
+     it or `None`. Adding a new file type is now: write a parser,
+     add one line here, done.
+   - `IngestionPipeline` (top-level `ingestion_pipeline.py`, sits
+     above both `ingest/` and `graph/` since it composes both) —
+     `run(path, dry_run=False)`: file or directory (recursive via
+     `rglob`), skips unsupported files silently when walking a
+     directory but raises `UnsupportedFileTypeError` for an explicit
+     unsupported single-file argument. Per-file: hashes the raw file
+     bytes and compares against `GraphWriter.get_source_content_hash`
+     *before* parsing — unchanged files short-circuit with zero
+     parsing/embedding work. `dry_run=True` still parses (so counts
+     are accurate) but skips embedding + writing.
+   - `GraphWriter` extended with `get_source_content_hash(path)` (read)
+     and stale-child reconciliation, run at the end of every `write()`:
+     `DETACH DELETE` any `Chunk`/`Section`/`CodeEntity`/`PolicyRule`
+     still attached to this `Source` whose merge-key isn't in the
+     newly-parsed set. Chunks reconciled before Sections (so a
+     removed Section never leaves orphaned Chunks for the Section
+     query to miss). This is the piece that makes re-ingestion of a
+     changed file actually remove what was deleted, not just add/
+     update what's still there.
+   - CLI: `graph-rag ingest <path>` now accepts a file **or**
+     directory, plus `--dry-run`. Old per-suffix if/elif dispatch
+     removed in favor of `ParserRegistry` + `IngestionPipeline`.
+   - New MCP tool `ingest_path(path: str, dry_run: bool = False) ->
+     list[IngestionResult]` (`mcp_server/server.py`) — lets the agent
+     itself trigger re-ingestion after editing a file, reusing the
+     same `IngestionPipeline`. This is the MCP server's first
+     **write**-capable tool (previously all 4 tools were read-only
+     lookups).
+   - `IngestionResult` (top-level `ingestion_result.py`) and
+     `UnsupportedFileTypeError` (top-level
+     `unsupported_file_type_error.py`) — kept outside `ingest/` and
+     `graph/` alongside `ingestion_pipeline.py`, since they belong to
+     the orchestration layer, not to parsing or graph-writing alone.
+   - 18 new tests (`tests/test_parser_registry.py`,
+     `tests/test_ingestion_pipeline.py` — the latter uses hand-written
+     fake `Embedder`/`GraphWriter` doubles, no real Neo4j, matching
+     this repo's existing no-mocking-library convention) — 53/53
+     passing total. `ruff check` clean; `ruff format --check` clean on
+     every file touched this phase (the one pre-existing `cli.py`
+     format deviation from Phase 3 is untouched, same as every prior
+     phase's decision).
+   - Live end-to-end verification: `apply-schema` unchanged at 13
+     (Phase 7 adds no new node types/indexes). Ran
+     `graph-rag ingest src/graph_rag --dry-run` (correctly previewed
+     40 files, 0 writes, mix of skip/would-ingest based on real
+     content-hash diffs against Phase 5/6 data) then for real (same
+     split, single command — no more manual per-file shell loop);
+     re-running immediately afterward skipped all 40/40 files,
+     confirming full idempotency. Proved the phase's own exit
+     criterion directly: ingested a 2-function scratch file, deleted
+     one function and edited the other's docstring, re-ingested —
+     Cypher confirmed the edited function's docstring updated in
+     place, the deleted function's `CodeEntity` node was gone
+     entirely (`count = 0`), and nothing else in the repo was touched.
+     Rebuilt/redeployed the `mcp-server` container and called
+     `ingest_path` through a live MCP client twice on the same
+     container-side path — first call ingested, second call correctly
+     reported `skipped: true`.
+3. Critical Context:
+   - `IngestionPipeline` deliberately lives at the top level
+     (`src/graph_rag/ingestion_pipeline.py`), not inside `ingest/` —
+     `ingest/` stays Neo4j-agnostic (parsing/chunking/embedding only);
+     the pipeline is what composes `ingest.ParserRegistry` +
+     `ingest.Enricher` + `graph.GraphWriter`, same composition
+     `cli.py` used to do inline.
+   - `Source.path` is the identity key — the same repo file ingested
+     from two different absolute-path prefixes (host path vs. the
+     container's `/app/...` path) is treated as two distinct `Source`
+     nodes. Surfaced directly during live verification (ingesting
+     `/app/src/graph_rag/settings.py` from inside the container created
+     a second Source alongside the host-ingested `src/graph_rag/
+     settings.py`); both demo artifacts were cleaned from the graph
+     after verification. Not a bug — just something to keep in mind
+     if ever ingesting the same tree from both host and container.
+   - Deferred from the plan's Phase 7 bullets, on purpose: `--watch`
+     (needs a new dependency, `watchdog`, plus a long-running
+     filesystem-event loop — meaningfully more infra than the rest of
+     this phase) and the standalone FastAPI `POST /ingest` endpoint
+     (the MCP server's `ingest_path` tool now covers the "trigger
+     ingestion over HTTP without the CLI" use case; a second, separate
+     REST surface felt like the redundant one given the new tool).
+     Flagged here rather than silently skipped — say the word if
+     either is still wanted.
+4. Discarded Paths: Considered putting `IngestionResult` under
+   `ingest/models/` as a Pydantic model there — moved it to the
+   top level instead once `IngestionPipeline` itself was pulled out
+   of `ingest/`, so the result type sits next to the class that
+   produces it rather than implying it's part of the parsing layer.
+5. Next Step: Per the roadmap, Phase 11 (agent memory) was the
+   originally-agreed next phase after Phase 7 — not yet started.
+   Phases 8–10 (graph enrichment, MCP hardening, observability) remain
+   further out and unstarted.
+
+---
+
 ## 2026-08-25 19:40 EDT
 
 Phase 6 (YAML/Checkov ingestion) complete.
