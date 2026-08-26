@@ -27,6 +27,11 @@ class _FakeGraphWriter:
         self._content_hashes[document.source.path] = document.source.content_hash
 
 
+class _FailingGraphWriter(_FakeGraphWriter):
+    def write(self, document: ParsedDocument) -> None:
+        raise RuntimeError("simulated write failure")
+
+
 def _pipeline(writer: _FakeGraphWriter) -> IngestionPipeline:
     return IngestionPipeline(ParserRegistry(), _FakeEmbedder(), writer)
 
@@ -105,3 +110,26 @@ def test_run_on_directory_recurses_and_skips_unsupported_files(tmp_path: Path) -
     ingested_paths = {result.path.name for result in results}
     assert ingested_paths == {"notes.md", "mod.py"}
     assert len(writer.written) == 2
+
+
+def test_run_records_error_instead_of_raising_when_write_fails(tmp_path: Path) -> None:
+    path = tmp_path / "notes.md"
+    path.write_text("# Title\n\nSome text.\n")
+    writer = _FailingGraphWriter()
+
+    results = _pipeline(writer).run(path)
+
+    assert results[0].skipped is False
+    assert results[0].error == "simulated write failure"
+    assert results[0].sections == 0
+
+
+def test_run_on_directory_continues_past_a_failing_file(tmp_path: Path) -> None:
+    (tmp_path / "a.md").write_text("# A\n\nText a.\n")
+    (tmp_path / "b.md").write_text("# B\n\nText b.\n")
+    writer = _FailingGraphWriter()
+
+    results = _pipeline(writer).run(tmp_path)
+
+    assert len(results) == 2
+    assert all(result.error == "simulated write failure" for result in results)

@@ -5,18 +5,39 @@ from mcp.server import MCPServer
 from ..ingestion_pipeline import IngestionPipeline
 from ..ingestion_result import IngestionResult
 from ..memory import AgentMemory, AgentMemoryResult, MemoryRecaller, MemoryWriter
-from .models import PolicyResult, SearchResult, SectionDetail, SourceInfo
+from .models import (
+    CodeSearchResult,
+    NeighborResult,
+    OutlineNode,
+    PolicyResult,
+    SearchResult,
+    SectionDetail,
+    SourceInfo,
+)
 from .retriever import Retriever
 
 INSTRUCTIONS = (
-    "Look up ingested documentation (currently the AWS DMS User Guide). Use "
-    "`search` for a natural-language question, `get_section` for the full "
-    "text of a known section, `list_sources` to see what's ingested, "
-    "`find_policies_for` to see which Checkov policies apply to a Terraform "
-    "resource type (e.g. `aws_db_instance`), and `ingest_path` to (re-)ingest "
-    "a file or directory after it changes. Use `remember`/`recall`/`forget` "
-    "to save and retrieve your own working memory (decisions, corrections, "
-    "findings) across sessions."
+    "Look up ingested documentation (currently the AWS DMS User Guide), this "
+    "repo's own Python source, and Checkov policies. `search` covers ingested "
+    "prose/Markdown/generic-YAML chunks ONLY — it does not cover Python code "
+    "or Checkov policy text; use `search_code` for a natural-language "
+    "question about this codebase's functions/classes, and `search_policies` "
+    "for a natural-language question about Checkov policies when you don't "
+    "know the exact Terraform resource type. `get_section` returns the full "
+    "text of a known section, `get_outline` browses a source's table of "
+    "contents, `list_sources` shows what's ingested, `find_policies_for` is "
+    "an exact-match traversal from a Terraform resource type (e.g. "
+    "`aws_db_instance`) to the policies that apply to it — no fuzzy fallback, "
+    "so an empty result may mean the resource type string is off, not that "
+    "no policy exists; try `search_policies` instead of guessing variants. "
+    "`get_neighbors` walks the graph from any node (Source path, "
+    "Section/Chunk/PolicyRule/AgentMemory id, CodeEntity qualified_name, or "
+    "Concept name). `cite` returns a human-readable citation string for a "
+    "chunk. `ingest_path` (re-)ingests a file or directory after it changes. "
+    "Use `remember`/`recall`/`forget` to save and retrieve your own working "
+    "memory (decisions, corrections, findings) across sessions. The source "
+    "list is also browsable as a resource (`graph-rag://sources`) without a "
+    "tool call."
 )
 
 
@@ -38,13 +59,28 @@ def build_server(
         source_type: str | None = None,
         source_path: str | None = None,
     ) -> list[SearchResult]:
-        """Hybrid (vector + full-text) search over ingested document chunks."""
+        """Hybrid (vector + full-text) search over ingested prose/Markdown/
+        generic-YAML document chunks ONLY — does not cover Python code
+        (use `search_code`) or Checkov policy text (use `search_policies`).
+        """
         return retriever.search(query, top_k, source_type, source_path)
 
     @server.tool()
-    def get_section(section_id: str) -> SectionDetail | None:
-        """Full text of one section, plus its parent/child outline."""
-        return retriever.get_section(section_id)
+    def search_code(query: str, top_k: int = 5) -> list[CodeSearchResult]:
+        """Hybrid (vector + full-text) search over this codebase's Python
+        functions/classes/modules — the code-search complement to `search`.
+        """
+        return retriever.search_code(query, top_k)
+
+    @server.tool()
+    def get_section(section_id: str, max_chars: int = 8000) -> SectionDetail | None:
+        """Full text of one section (truncated past `max_chars`), plus its parent/child outline."""
+        return retriever.get_section(section_id, max_chars)
+
+    @server.tool()
+    def get_outline(source_path: str) -> list[OutlineNode]:
+        """Section outline (table of contents) for a prose source, as a nested tree."""
+        return retriever.get_outline(source_path)
 
     @server.tool()
     def list_sources() -> list[SourceInfo]:
@@ -53,8 +89,37 @@ def build_server(
 
     @server.tool()
     def find_policies_for(resource_type: str) -> list[PolicyResult]:
-        """Checkov policies that apply to a Terraform resource type (e.g. `aws_db_instance`)."""
+        """Exact-match: Checkov policies whose APPLIES_TO edge names this
+        Terraform resource type precisely (e.g. `aws_db_instance`). No fuzzy
+        fallback — an empty result may mean the exact spelling is off, not
+        that no policy exists; try `search_policies` instead of guessing
+        variants.
+        """
         return retriever.find_policies_for(resource_type)
+
+    @server.tool()
+    def search_policies(query: str, top_k: int = 5) -> list[PolicyResult]:
+        """Hybrid (vector + full-text) search over Checkov policy content —
+        the semantic/fuzzy complement to `find_policies_for`, for when the
+        exact Terraform resource type isn't known.
+        """
+        return retriever.search_policies(query, top_k)
+
+    @server.tool()
+    def get_neighbors(node_id: str, rel_types: list[str] | None = None) -> list[NeighborResult]:
+        """Every node directly connected to `node_id`, in both relationship directions.
+
+        `node_id` is matched against whichever unique key its node type uses:
+        `Source.path`, `Section`/`Chunk`/`PolicyRule`/`AgentMemory.id`,
+        `CodeEntity.qualified_name`, or `Concept.name`. Optionally filter to
+        specific relationship types (e.g. `["CALLS", "IMPORTS"]`).
+        """
+        return retriever.get_neighbors(node_id, rel_types)
+
+    @server.tool()
+    def cite(chunk_id: str) -> str | None:
+        """Human-readable citation string for a chunk (source + breadcrumb + page range)."""
+        return retriever.cite(chunk_id)
 
     @server.tool()
     def ingest_path(path: str, dry_run: bool = False) -> list[IngestionResult]:
@@ -88,5 +153,10 @@ def build_server(
     def forget(memory_id: str) -> None:
         """Explicitly delete a memory now, rather than waiting for decay-based pruning."""
         memory_writer.forget(memory_id)
+
+    @server.resource("graph-rag://sources")
+    def sources_resource() -> list[SourceInfo]:
+        """Browsable list of every ingested source, without a tool call."""
+        return retriever.list_sources()
 
     return server
