@@ -19,6 +19,8 @@ CONSTRAINTS: list[str] = [
     "FOR (n:PolicyRule) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT concept_name IF NOT EXISTS "
     "FOR (n:Concept) REQUIRE n.name IS UNIQUE",
+    "CREATE CONSTRAINT agent_memory_id IF NOT EXISTS "
+    "FOR (n:AgentMemory) REQUIRE n.id IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.
@@ -31,6 +33,14 @@ FULLTEXT_INDEXES: list[str] = [
     "FOR (n:CodeEntity) ON EACH [n.name, n.qualified_name, n.docstring]",
     "CREATE FULLTEXT INDEX policy_rule_text_fulltext IF NOT EXISTS "
     "FOR (n:PolicyRule) ON EACH [n.id, n.name, n.category, n.guideline]",
+    "CREATE FULLTEXT INDEX agent_memory_content_fulltext IF NOT EXISTS "
+    "FOR (n:AgentMemory) ON EACH [n.content]",
+]
+
+# Range index so the pruner's scan over recency stays cheap as memory grows.
+RANGE_INDEXES: list[str] = [
+    "CREATE RANGE INDEX agent_memory_last_accessed IF NOT EXISTS "
+    "FOR (n:AgentMemory) ON (n.last_accessed_at)",
 ]
 
 
@@ -76,14 +86,30 @@ def policy_rule_vector_index_statement(
     )
 
 
+def agent_memory_vector_index_statement(
+    dimensions: int = settings.embedding_dimensions,
+    similarity_function: str = settings.embedding_similarity_function,
+) -> str:
+    return (
+        "CREATE VECTOR INDEX agent_memory_embedding IF NOT EXISTS "
+        "FOR (n:AgentMemory) ON (n.embedding) "
+        "OPTIONS {indexConfig: {"
+        f"`vector.dimensions`: {dimensions}, "
+        f"`vector.similarity_function`: '{similarity_function}'"
+        "}}"
+    )
+
+
 def apply_schema(driver: Driver) -> list[str]:
     """Create (or verify) all constraints and indexes. Idempotent."""
     statements = [
         *CONSTRAINTS,
         *FULLTEXT_INDEXES,
+        *RANGE_INDEXES,
         vector_index_statement(),
         code_entity_vector_index_statement(),
         policy_rule_vector_index_statement(),
+        agent_memory_vector_index_statement(),
     ]
     with driver.session() as session:
         for statement in statements:

@@ -4,6 +4,7 @@ from mcp.server import MCPServer
 
 from ..ingestion_pipeline import IngestionPipeline
 from ..ingestion_result import IngestionResult
+from ..memory import AgentMemory, AgentMemoryResult, MemoryRecaller, MemoryWriter
 from .models import PolicyResult, SearchResult, SectionDetail, SourceInfo
 from .retriever import Retriever
 
@@ -13,12 +14,21 @@ INSTRUCTIONS = (
     "text of a known section, `list_sources` to see what's ingested, "
     "`find_policies_for` to see which Checkov policies apply to a Terraform "
     "resource type (e.g. `aws_db_instance`), and `ingest_path` to (re-)ingest "
-    "a file or directory after it changes."
+    "a file or directory after it changes. Use `remember`/`recall`/`forget` "
+    "to save and retrieve your own working memory (decisions, corrections, "
+    "findings) across sessions."
 )
 
 
-def build_server(retriever: Retriever, ingestion_pipeline: IngestionPipeline) -> MCPServer:
-    """Wires the lookup tools plus `ingest_path` onto a fresh `MCPServer` instance."""
+def build_server(
+    retriever: Retriever,
+    ingestion_pipeline: IngestionPipeline,
+    memory_writer: MemoryWriter,
+    memory_recaller: MemoryRecaller,
+) -> MCPServer:
+    """Wires the lookup tools plus `ingest_path`/`remember`/`recall`/`forget`
+    onto a fresh `MCPServer` instance.
+    """
     server = MCPServer(name="graph-rag", instructions=INSTRUCTIONS)
 
     @server.tool()
@@ -50,5 +60,33 @@ def build_server(retriever: Retriever, ingestion_pipeline: IngestionPipeline) ->
     def ingest_path(path: str, dry_run: bool = False) -> list[IngestionResult]:
         """(Re-)ingest a file or directory; skips files unchanged since the last ingest."""
         return ingestion_pipeline.run(Path(path), dry_run=dry_run)
+
+    @server.tool()
+    def remember(
+        content: str,
+        kind: str,
+        about_qualified_name: str | None = None,
+        importance: bool = False,
+        source_session_id: str | None = None,
+    ) -> AgentMemory:
+        """Save a decision/correction/finding/preference/fact to memory.
+
+        `kind` is one of "decision"|"correction"|"finding"|"preference"|"fact".
+        `about_qualified_name`, if given, links the memory to that `CodeEntity`.
+        Set `importance=True` to exempt this memory from decay-based pruning.
+        """
+        return memory_writer.remember(
+            content, kind, about_qualified_name, importance, source_session_id
+        )
+
+    @server.tool()
+    def recall(query: str, top_k: int = 5) -> list[AgentMemoryResult]:
+        """Hybrid (vector + full-text) search over your own remembered memories."""
+        return memory_recaller.recall(query, top_k)
+
+    @server.tool()
+    def forget(memory_id: str) -> None:
+        """Explicitly delete a memory now, rather than waiting for decay-based pruning."""
+        memory_writer.forget(memory_id)
 
     return server
