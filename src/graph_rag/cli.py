@@ -13,6 +13,7 @@ from .ingestion_pipeline import IngestionPipeline
 from .mcp_server.bearer_token_middleware import BearerTokenMiddleware
 from .mcp_server.retriever import Retriever
 from .mcp_server.server import build_server
+from .memory import MemoryPruner, MemoryRecaller, MemoryWriter
 from .settings import settings
 from .unsupported_file_type_error import UnsupportedFileTypeError
 
@@ -79,6 +80,26 @@ def ingest(
         )
 
 
+@app.command(name="prune-memory")
+def prune_memory(
+    threshold: float = typer.Option(
+        ...,
+        "--threshold",
+        help="Decay score threshold; memories scoring below this are soft-deleted.",
+    ),
+    grace_days: int = typer.Option(
+        30, "--grace-days", help="Days a soft-deleted memory is kept before hard-delete."
+    ),
+) -> None:
+    """Soft-delete low recency+frequency-score memories; hard-delete ones past the grace window."""
+    with driver_session() as driver:
+        result = MemoryPruner(driver).prune(threshold, grace_days=grace_days)
+    typer.secho(
+        f"Soft-deleted {result.soft_deleted} memories, hard-deleted {result.hard_deleted}.",
+        fg=typer.colors.GREEN,
+    )
+
+
 @app.command(name="serve-mcp")
 def serve_mcp() -> None:
     """Run the MCP server (Streamable HTTP) for coding-agent lookups."""
@@ -97,9 +118,11 @@ def serve_mcp() -> None:
         retriever = Retriever(driver, embedder)
         writer = GraphWriter(driver)
         ingestion_pipeline = IngestionPipeline(ParserRegistry(), embedder, writer)
-        mcp_app = build_server(retriever, ingestion_pipeline).streamable_http_app(
-            host=settings.mcp_host, transport_security=transport_security
-        )
+        memory_writer = MemoryWriter(driver, embedder)
+        memory_recaller = MemoryRecaller(driver, embedder)
+        mcp_app = build_server(
+            retriever, ingestion_pipeline, memory_writer, memory_recaller
+        ).streamable_http_app(host=settings.mcp_host, transport_security=transport_security)
         if settings.mcp_auth_token:
             mcp_app = BearerTokenMiddleware(mcp_app, token=settings.mcp_auth_token)
 

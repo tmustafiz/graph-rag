@@ -8,6 +8,123 @@ phased plan this log tracks progress against.
 
 ---
 
+## 2026-08-26 (session) — Phase 11 complete
+
+Phase 11 (agent memory) complete — full scope from the plan. Implemented
+right after Phase 7 per the user's own agreed sequencing.
+
+[CHECKPOINT]
+1. Core Objective: Graph RAG system ingesting heterogeneous docs (PDF,
+   Markdown, Python, YAML/Checkov) into Neo4j, exposed to coding agents
+   via an MCP server (Streamable HTTP) — plus, as of this phase, a
+   separate agent working-memory store on the same graph.
+2. Completed Milestones:
+   - New top-level `src/graph_rag/memory/` module (one-class-per-file,
+     facade `__init__.py`), deliberately decoupled from the
+     document-ingestion pipeline — no `Parser`/`ParsedDocument`/
+     `GraphWriter` involved:
+     - `AgentMemory` (model) — `id`, `content`, `kind`, `embed_text`,
+       `embedding`, `created_at`, `last_accessed_at`, `access_count`,
+       `importance`, `archived_at`, `source_session_id`.
+     - `AgentMemoryResult` (model) — lightweight `recall()` hit shape
+       (no embedding vector serialized back to the agent).
+     - `MemoryWriter.remember()` — embeds + upserts an `AgentMemory`,
+       optionally linking `ABOUT` a `CodeEntity` when
+       `about_qualified_name` resolves; `MemoryWriter.forget()` —
+       immediate hard delete.
+     - `MemoryRecaller.recall()` — hybrid vector+fulltext search over
+       `AgentMemory.content` (same blend weights/pattern as
+       `mcp_server/retriever.py`'s `combine_scores`, duplicated rather
+       than shared to keep `memory/` independent of `mcp_server/`);
+       every returned hit gets `last_accessed_at`/`access_count` bumped
+       — recall reinforces a memory, same as human memory.
+     - `MemoryPruner.prune(threshold, grace_days=30)` — recency+frequency
+       decay score (`access_count / (age_days + 1)`); anything scoring
+       below `threshold` and not `importance=True` gets soft-deleted
+       (`archived_at` set); anything already archived past the grace
+       window gets hard-deleted (`DETACH DELETE`) in the same pass.
+       `PruneResult(soft_deleted, hard_deleted)`.
+   - `graph/schema.py`: `AgentMemory.id` uniqueness constraint,
+     `agent_memory_content_fulltext` fulltext index, new `RANGE_INDEXES`
+     list with `agent_memory_last_accessed` (keeps the pruner's scan
+     cheap), `agent_memory_embedding` vector index. `apply_schema()` now
+     applies 17 statements (was 13).
+   - `mcp_server/server.py`: three new tools — `remember`, `recall`,
+     `forget` — the first MCP tools in this server beyond `ingest_path`
+     that write. `build_server()` signature grew to take
+     `memory_writer`/`memory_recaller`.
+   - `cli.py`: new `graph-rag prune-memory --threshold <score>
+     [--grace-days N]` command; `serve-mcp` now also constructs
+     `MemoryWriter`/`MemoryRecaller` and passes them into `build_server()`.
+   - Tests: `tests/test_memory_recaller.py` (hybrid-scoring pure
+     functions, mirrors `test_retriever.py`), `tests/test_memory_pruner.py`
+     (`MemoryPruner._score` decay-math cases). 61/61 total passing,
+     `ruff check` clean. (`MemoryWriter`/`MemoryRecaller`/`MemoryPruner`
+     themselves aren't unit tested — same convention as `GraphWriter`,
+     which has no unit tests either — they need a real Neo4j session,
+     so they're verified live instead, see below.)
+3. Critical Context:
+   - **`Session.run()` kwarg collision** — neo4j's `Session.run(query,
+     parameters=None, **kwparameters)` has `query` as its own first
+     positional parameter name. Calling `session.run(cypher, query=query,
+     k=...)` throws `TypeError: Session.run() got multiple values for
+     argument 'query'` whenever a Cypher parameter is itself named
+     `query` (as `recall`'s fulltext search naturally is). Fix: pass a
+     single dict as the second positional arg instead of kwargs —
+     `session.run(cypher, {"query": query, "k": k})`. `retriever.py`'s
+     `_FULLTEXT_SEARCH` already did this (that's why it never hit the
+     bug); `memory_recaller.py` now matches it. Watch for this pattern
+     any time a new Cypher query takes a parameter literally named
+     `query`.
+   - `about_qualified_name` only resolves against `CodeEntity` (not
+     `Section`/`Source`/`PolicyRule`, despite the plan text listing all
+     four as valid `ABOUT` targets) — kept intentionally minimal per the
+     tool's own parameter name; no edge is created if it doesn't match
+     an existing `CodeEntity`.
+   - `MemoryPruner`'s soft-delete and hard-delete both run inside one
+     `prune()` call using the same `now` timestamp for both `archived_at`
+     and the grace-window `cutoff` — so `--grace-days 0` soft-deletes
+     and hard-deletes a stale memory in the same invocation (verified
+     live, see below). This is a real usable "purge everything below
+     threshold right now" mode, not just an edge case.
+   - Score formula is exactly `access_count / (age_days + 1)` — a
+     never-recalled, brand-new memory scores `1.0` (age≈0 → `1/(0+1)`),
+     not `0`, so a `--threshold` above `1.0` is needed to prune
+     freshly-created-but-never-recalled memories; `0` access_count with
+     nonzero age asymptotically approaches `0`.
+   - `MemoryRecaller`'s hybrid scoring duplicates `retriever.py`'s
+     `combine_scores`/`_min_max_normalize` rather than importing them —
+     deliberate, to keep `memory/` from depending on `mcp_server/`
+     (server.py already depends the other way, on `memory/`; importing
+     back would invert the layering). If this duplication needs to grow
+     a third copy later, that's the trigger to extract a shared
+     `scoring.py`, not before.
+4. Discarded Paths: None — this phase matched the plan's own design
+   (from the prior session's Q&A) closely enough that no scope was
+   cut or restructured during implementation, only the `Session.run()`
+   bug above was unplanned.
+5. Live verification (Docker, rebuilt `mcp-server` image): `remember` →
+   returns a full `AgentMemory` with a real embedding; `recall` →
+   hybrid search returns it, `access_count` bumped on each call
+   (confirmed via a second identical `recall`); `forget` → subsequent
+   `recall` for the same query returns `content: []`, empty; `graph-rag
+   prune-memory --threshold 1.0 --grace-days 0` on a synthetic
+   never-recalled, non-important memory → `Soft-deleted 1, hard-deleted
+   1` in one run, confirmed gone from Neo4j (`count(m) = 0`);
+   `importance=True` memory survived `prune-memory --threshold 100`
+   untouched (`archived_at` stayed `NULL`); a memory `remember()`'d with
+   `about_qualified_name="graph_rag.cli.status"` was reachable via
+   `MATCH (e:CodeEntity {qualified_name:'graph_rag.cli.status'})<-[:ABOUT]-(m:AgentMemory)`
+   — traversal from the code side works, not just text search. All demo
+   nodes cleaned up afterward (`DETACH DELETE`).
+6. Next Step: Phase 11 was the last item on the current roadmap after
+   Phase 7 — remaining phases (8 graph enrichment, 9 MCP hardening, 10
+   observability/ops) are still open, plus the two items explicitly
+   deferred from Phase 7 (`--watch`, FastAPI `POST /ingest`). None of
+   these should be started without the user picking one next.
+
+---
+
 ## 2026-08-26 (session) — Phase 7 complete
 
 Phase 7 (generalized ingestion API & incremental updates) complete.
