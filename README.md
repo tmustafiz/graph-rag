@@ -30,6 +30,24 @@ make test     # pytest
 make eval     # retrieval regression eval against search() (needs make ingest first)
 ```
 
+## Code centrality (PageRank)
+
+`graph-rag compute-centrality` runs GDS PageRank over the `CodeEntity`
+`CALLS`/`IMPORTS` graph, writing each entity's score to
+`CodeEntity.pagerank` — a heavily called/imported entity ranks higher.
+Surfaces what's most central (and riskiest to change) in an ingested
+codebase, exposed via the `get_central_code_entities` MCP tool. Needs
+Python source already ingested (`make ingest` only loads the sample
+PDF — run `uv run graph-rag ingest src/graph_rag` first, or point it
+at your own codebase) and the `graph-data-science` Neo4j plugin
+(already enabled in `docker-compose.yml`):
+
+```bash
+uv run graph-rag compute-centrality
+```
+
+Re-run after ingesting code changes — scores aren't updated automatically.
+
 ## Ingesting more than the sample PDF
 
 `graph-rag ingest <path>` accepts a single file or a directory
@@ -83,6 +101,9 @@ Exposes lookup and agent-memory tools over Streamable HTTP:
 - `get_neighbors` — walk the graph from any node (Source path,
   Section/Chunk/PolicyRule/AgentMemory id, CodeEntity qualified_name,
   or Concept name), optionally filtered by relationship type.
+- `get_central_code_entities` — most-depended-upon code by PageRank
+  over the CALLS/IMPORTS graph. Empty until `graph-rag
+  compute-centrality` has been run (see below).
 - `cite` — human-readable citation string for a chunk.
 - `ingest_path` — (re-)ingest a file or directory from within a
   session.

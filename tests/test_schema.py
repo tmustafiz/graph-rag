@@ -1,6 +1,7 @@
 from graph_rag.graph.schema import (
     CONSTRAINTS,
     FULLTEXT_INDEXES,
+    RANGE_INDEXES,
     code_entity_vector_index_statement,
     policy_rule_vector_index_statement,
     vector_index_statement,
@@ -45,3 +46,7 @@ def test_policy_rule_vector_index_statement_embeds_dimensions_and_similarity() -
 
 def test_fulltext_index_defined_for_policy_rule() -> None:
     assert any("PolicyRule) ON EACH" in ix and "n.id" in ix for ix in FULLTEXT_INDEXES)
+
+
+def test_range_index_defined_for_code_entity_pagerank() -> None:
+    assert any("CodeEntity) ON (n.pagerank)" in ix for ix in RANGE_INDEXES)

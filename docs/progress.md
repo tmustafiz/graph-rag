@@ -8,6 +8,107 @@ phased plan this log tracks progress against.
 
 ---
 
+## 2026-08-26 (session) — GDS PageRank/centrality over CodeEntity CALLS/IMPORTS
+
+Phase 8's GDS/APOC "PageRank / community detection" bullet, scoped
+down at the user's explicit choice: run it over the `CodeEntity`
+`CALLS`/`IMPORTS` graph (real, already-ingested) rather than the
+`Concept`/`Section` graph the plan text names (too sparse today — only
+exists from Checkov's structured YAML, ~4 resource-type `Concept`
+nodes). No LLM involved; Phase 8's actual LLM-extraction question
+remains untouched and unstarted.
+
+[CHECKPOINT]
+1. Core Objective: same as prior entries.
+2. Completed Milestones:
+   - `docker-compose.yml`: added the `graph-data-science` Neo4j plugin
+     alongside `apoc` (`NEO4J_PLUGINS`), plus `gds.*` to
+     `NEO4J_dbms_security_procedures_unrestricted`.
+   - New `src/graph_rag/graph/centrality_analyzer.py` —
+     `CentralityAnalyzer.compute_code_pagerank()`: creates a throwaway
+     GDS in-memory graph projection over `CodeEntity` nodes and
+     `CALLS`/`IMPORTS` edges, runs `gds.pageRank.write(...)` to persist
+     scores to `CodeEntity.pagerank`, drops the projection in a
+     `finally` block. Returns 0 (and cleans up) if there are no
+     `CALLS`/`IMPORTS` edges to project, rather than erroring.
+   - `graph/schema.py`: new `code_entity_pagerank` range index (for
+     the `ORDER BY pagerank DESC` scan).
+   - New `Retriever.get_central_code_entities(top_k=10)` +
+     `get_central_code_entities` MCP tool + new `CodeCentralityResult`
+     model.
+   - New CLI command `graph-rag compute-centrality` (on-demand job,
+     same pattern as `prune-memory`/`eval-retrieval` — not run
+     automatically on ingest).
+   - `tests/test_schema.py` gained one assertion for the new index.
+     88/88 tests passing, `ruff check`/`ruff format --check` clean. (No
+     unit tests for `CentralityAnalyzer` itself — needs live Neo4j+GDS,
+     same convention as every other Neo4j-session-dependent class in
+     this repo; verified live instead, see below.)
+   - README: new "Code centrality (PageRank)" section;
+     `get_central_code_entities` added to the MCP tool list;
+     `INSTRUCTIONS` in `server.py` updated to mention it.
+3. Critical Context:
+   - **A real bug caught during live verification, not shipped**: the
+     first version of `_GET_CENTRAL_CODE_ENTITIES`'s Cypher returned
+     *every* `CodeEntity` with a `pagerank` score, including external-
+     library stub nodes that exist only as `IMPORTS`/`CALLS` edge
+     targets (e.g. `typing.cast`, `pydantic.BaseModel`) and were never
+     the subject of a full `_MERGE_CODE_ENTITIES` write — so their
+     `name`/`kind` are `NULL`. Since `CodeCentralityResult.name`/`kind`
+     are non-optional `str` fields, the MCP tool call crashed with a
+     Pydantic `ValidationError` the moment one of those stub nodes
+     ranked in the top-k (which it reliably does — `typing.cast` was
+     the single highest-scoring node in the whole graph, unsurprising
+     given how many files in this codebase use it). Fixed by adding
+     `AND e.name IS NOT NULL` to the retrieval query — deliberately
+     **not** filtering the GDS projection itself, since those stub
+     nodes still correctly inform the ranking of the real entities that
+     reference them; they just shouldn't be display results themselves.
+     This distinction (fix the *display* query, not the *computation*)
+     is worth remembering if this ever needs revisiting.
+   - GDS loaded successfully on the very first try on this Neo4j image
+     (`neo4j:2026.07.1`, GDS reported version `2026.07.0`) —
+     `docker logs` showed "Graph Data Science extension built" at
+     startup, and `RETURN gds.version()` confirmed it via cypher-shell
+     before any Python code was written. Recreating the `neo4j`
+     container to pick up the new `NEO4J_PLUGINS` value preserved all
+     existing graph data (volume-backed, confirmed via node count
+     before/after: 3369 nodes survived the recreate).
+   - `gds.graph.drop` emits a harmless deprecation notification (its
+     `schema` return column is deprecated) on every call — cosmetic,
+     not consumed by this code, safe to ignore.
+4. Discarded Paths:
+   - Did not run PageRank over the `Concept`/`PolicyRule` graph as the
+     plan text originally specified — offered as an explicit choice to
+     the user (CodeEntity graph / Concept graph / both), who picked
+     CodeEntity specifically because it's real data available today,
+     not contingent on Phase 8's LLM-extraction decision.
+   - Did not schedule/automate `compute-centrality` to run after every
+     `graph-rag ingest` — kept it a deliberate, separate on-demand
+     command (matching `prune-memory`) since PageRank over a large
+     codebase has real cost and re-ingesting a single small file
+     doesn't necessarily warrant recomputing global centrality every
+     time.
+5. Live verification: rebuilt `mcp-server`, recreated `neo4j` with the
+   new plugin. `graph-rag compute-centrality` scored 224 code entities
+   from this repo's own ingested `src/graph_rag`. Direct Cypher
+   confirmed intuitive top-ranked results (`typing.cast`,
+   `pydantic.BaseModel`, `pathlib.Path`, `hashlib.sha256` — all
+   genuinely the most pervasively-used symbols in this codebase). After
+   the `name IS NOT NULL` fix, `get_central_code_entities` over MCP
+   correctly returned real internal entities instead — `get_driver`,
+   `Chunker`, `driver_session`, `GraphWriter`, `Enricher`, `Embedder` —
+   exactly the foundational classes/functions the rest of the codebase
+   depends on.
+6. Next Step: Phase 8's LLM-extraction question is the only thing left
+   genuinely open, and per the prior session's conclusion it's likely
+   not needed unless the user specifically wants graph-native traversal
+   between prose sections and policies (not just search-based
+   discovery, which already works) — still awaiting that call, not to
+   be started without it.
+
+---
+
 ## 2026-08-26 (session) — `search_code`/`search_policies` added; Phase 8's LLM half reframed
 
 Not a plan phase per se — this closes a real coverage gap discovered
