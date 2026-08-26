@@ -7,28 +7,20 @@ from graph_rag.settings import settings
 # Uniqueness constraints — one per node type that ingestion upserts on.
 # See docs/IMPLEMENTATION_PLAN.md Phase 1 for the full node/relationship taxonomy.
 CONSTRAINTS: list[str] = [
-    "CREATE CONSTRAINT source_path IF NOT EXISTS "
-    "FOR (n:Source) REQUIRE n.path IS UNIQUE",
-    "CREATE CONSTRAINT section_id IF NOT EXISTS "
-    "FOR (n:Section) REQUIRE n.id IS UNIQUE",
-    "CREATE CONSTRAINT chunk_id IF NOT EXISTS "
-    "FOR (n:Chunk) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT source_path IF NOT EXISTS FOR (n:Source) REQUIRE n.path IS UNIQUE",
+    "CREATE CONSTRAINT section_id IF NOT EXISTS FOR (n:Section) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT chunk_id IF NOT EXISTS FOR (n:Chunk) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT code_entity_qualified_name IF NOT EXISTS "
     "FOR (n:CodeEntity) REQUIRE n.qualified_name IS UNIQUE",
-    "CREATE CONSTRAINT policy_rule_id IF NOT EXISTS "
-    "FOR (n:PolicyRule) REQUIRE n.id IS UNIQUE",
-    "CREATE CONSTRAINT concept_name IF NOT EXISTS "
-    "FOR (n:Concept) REQUIRE n.name IS UNIQUE",
-    "CREATE CONSTRAINT agent_memory_id IF NOT EXISTS "
-    "FOR (n:AgentMemory) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT policy_rule_id IF NOT EXISTS FOR (n:PolicyRule) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT concept_name IF NOT EXISTS FOR (n:Concept) REQUIRE n.name IS UNIQUE",
+    "CREATE CONSTRAINT agent_memory_id IF NOT EXISTS FOR (n:AgentMemory) REQUIRE n.id IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.
 FULLTEXT_INDEXES: list[str] = [
-    "CREATE FULLTEXT INDEX chunk_text_fulltext IF NOT EXISTS "
-    "FOR (n:Chunk) ON EACH [n.text]",
-    "CREATE FULLTEXT INDEX section_title_fulltext IF NOT EXISTS "
-    "FOR (n:Section) ON EACH [n.title]",
+    "CREATE FULLTEXT INDEX chunk_text_fulltext IF NOT EXISTS FOR (n:Chunk) ON EACH [n.text]",
+    "CREATE FULLTEXT INDEX section_title_fulltext IF NOT EXISTS FOR (n:Section) ON EACH [n.title]",
     "CREATE FULLTEXT INDEX code_entity_text_fulltext IF NOT EXISTS "
     "FOR (n:CodeEntity) ON EACH [n.name, n.qualified_name, n.docstring]",
     "CREATE FULLTEXT INDEX policy_rule_text_fulltext IF NOT EXISTS "

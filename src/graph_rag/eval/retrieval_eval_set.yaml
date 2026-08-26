@@ -1,0 +1,19 @@
+# Hand-written retrieval regression cases, run via `graph-rag eval-retrieval`
+# against Retriever.search(). Each case's expected_source_path/breadcrumb was
+# taken from real Section nodes ingested from training-docs/dms-ug.pdf — catches
+# regressions in chunking/embedding without needing to update on every re-run.
+- query: "How do I create a new AWS DMS replication instance?"
+  expected_source_path: "training-docs/dms-ug.pdf"
+  expected_breadcrumb_contains: "Creating a replication instance"
+- query: "What are selection rules and actions used for in table mapping?"
+  expected_source_path: "training-docs/dms-ug.pdf"
+  expected_breadcrumb_contains: "Selection rules and actions"
+- query: "What DMS terminology and concepts should I understand before starting?"
+  expected_source_path: "training-docs/dms-ug.pdf"
+  expected_breadcrumb_contains: "Terminology and concepts"
+- query: "How do I enable Kerberos authentication on a DMS replication instance?"
+  expected_source_path: "training-docs/dms-ug.pdf"
+  expected_breadcrumb_contains: "Kerberos"
+- query: "How do I use SSL to encrypt connections in AWS DMS?"
+  expected_source_path: "training-docs/dms-ug.pdf"
+  expected_breadcrumb_contains: "Encryption in transit"

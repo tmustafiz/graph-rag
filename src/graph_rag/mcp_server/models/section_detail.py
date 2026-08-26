@@ -11,5 +11,6 @@ class SectionDetail(BaseModel):
     breadcrumb: str
     source_path: str
     text: str
+    truncated: bool = False
     parent: SectionOutlineEntry | None = None
     children: list[SectionOutlineEntry] = Field(default_factory=list)

@@ -12,3 +12,4 @@ class PolicyResult(BaseModel):
     provider: str | None = None
     source_path: str | None = None
     resource_types: list[str] = Field(default_factory=list)
+    score: float | None = None  # set by `search_policies`; always `None` from `find_policies_for`
