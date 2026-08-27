@@ -48,6 +48,30 @@ uv run graph-rag compute-centrality
 
 Re-run after ingesting code changes — scores aren't updated automatically.
 
+## Offline embedding model
+
+`models/all-MiniLM-L6-v2/` vendors the sentence-transformers weights
+this repo embeds with (Apache-2.0 licensed, ~87MB), so ingestion and
+`serve-mcp` never need to reach `huggingface.co` — useful on networks
+that block it. `SentenceTransformerEmbedder` loads from this folder
+automatically when present, falling back to downloading
+`sentence-transformers/all-MiniLM-L6-v2` from the Hub otherwise. To
+refresh it (e.g. after a model update upstream):
+
+```bash
+uv run python -c "
+from huggingface_hub import snapshot_download
+snapshot_download(
+    repo_id='sentence-transformers/all-MiniLM-L6-v2',
+    local_dir='models/all-MiniLM-L6-v2',
+    allow_patterns=['config.json', 'config_sentence_transformers.json',
+        'modules.json', 'sentence_bert_config.json', 'special_tokens_map.json',
+        'tokenizer.json', 'tokenizer_config.json', 'vocab.txt',
+        'model.safetensors', '1_Pooling/*'],
+)
+"
+```
+
 ## Ingesting more than the sample PDF
 
 `graph-rag ingest <path>` accepts a single file or a directory

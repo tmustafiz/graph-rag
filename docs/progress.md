@@ -8,6 +8,67 @@ phased plan this log tracks progress against.
 
 ---
 
+## 2026-08-26 (session) — Vendor the embedding model for offline/corp-network use
+
+User's corporate network may block `huggingface.co`; this sandbox
+could still reach it, so the model was fetched here and committed
+into the repo rather than relying on a runtime download.
+
+[CHECKPOINT]
+1. Core Objective: same as prior entries.
+2. Completed Milestones:
+   - Vendored `sentence-transformers/all-MiniLM-L6-v2` (Apache-2.0)
+     into `models/all-MiniLM-L6-v2/` — only the files the
+     `sentence-transformers`/PyTorch runtime needs (`model.safetensors`,
+     tokenizer files, configs; ~87MB) via `snapshot_download(...,
+     allow_patterns=[...])`, deliberately excluding the ONNX/OpenVINO
+     variants HF also ships for this model (would have added ~250MB
+     for a runtime this repo doesn't use).
+   - `SentenceTransformerEmbedder.__init__` (`src/graph_rag/ingest/embedders/sentence_transformer_embedder.py`):
+     `model_name` param now defaults to `None`; resolves to the
+     vendored folder path (`_VENDORED_MODEL_DIR`, computed from
+     `Path(__file__).resolve().parents[4]`) when it exists on disk,
+     else falls back to the original `DEFAULT_MODEL_NAME` Hub id
+     string — so nothing breaks for a checkout that hasn't got the
+     vendored folder.
+   - README: new "Offline embedding model" section documenting this
+     and how to refresh the vendored copy.
+3. Critical Context:
+   - Verified fully offline: `HF_HUB_OFFLINE=1 uv run python -c
+     "...SentenceTransformerEmbedder().embed([...])"` loads from disk
+     with zero network calls and returns correct 384-dim vectors.
+   - `uv run ruff check . && ruff format --check . && pytest tests/ -q`
+     → 88/88 passing, lint clean, no test changes needed (this class
+     is one of the ones verified live, not unit-tested, per existing
+     convention).
+   - Not yet git-committed — files are staged/present in the working
+     tree but the user hasn't explicitly asked for a commit yet.
+4. Discarded Paths:
+   - First `snapshot_download()` call (no `allow_patterns`) pulled the
+     *entire* HF repo including ONNX (3 fp32/O-level variants + 3
+     int8-quantized variants, ~226MB) and OpenVINO IR exports
+     (~600KB but two files failed mid-download) — killed it and
+     restarted scoped to just the PyTorch/tokenizer files actually
+     used, dropping total size from ~335MB to 87MB.
+   - Considered compressing the vendored folder before committing (a
+     user question) — rejected: `model.safetensors` is dense
+     floating-point data, already near-incompressible (~5-15% gzip
+     savings at best), and git's pack format already applies the same
+     compression internally, so a tarball would add an extract step
+     for no real size win. Real reduction would require switching to
+     a quantized ONNX build instead (~23MB) — user explicitly chose
+     "commit as-is, no compression" over that tradeoff (would need a
+     runtime swap to `onnxruntime` and re-embedding everything already
+     in Neo4j).
+   - Considered Docker-image-only (fetch during `docker build`,
+     nothing binary in git) and Git LFS — user picked plain
+     git-committed folder instead.
+5. Next Step: awaiting explicit go-ahead to `git add`/commit these
+   files (per this project's commit-only-when-asked rule); otherwise
+   no outstanding work from this item.
+
+---
+
 ## 2026-08-26 (session) — GDS PageRank/centrality over CodeEntity CALLS/IMPORTS
 
 Phase 8's GDS/APOC "PageRank / community detection" bullet, scoped
