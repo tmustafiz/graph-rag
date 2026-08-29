@@ -41,8 +41,8 @@ into the repo rather than relying on a runtime download.
      → 88/88 passing, lint clean, no test changes needed (this class
      is one of the ones verified live, not unit-tested, per existing
      convention).
-   - Not yet git-committed — files are staged/present in the working
-     tree but the user hasn't explicitly asked for a commit yet.
+   - Committed as `fc738d2` ("Vendor all-MiniLM-L6-v2 for offline
+     embedding"). Working tree is clean.
 4. Discarded Paths:
    - First `snapshot_download()` call (no `allow_patterns`) pulled the
      *entire* HF repo including ONNX (3 fp32/O-level variants + 3
@@ -63,9 +63,7 @@ into the repo rather than relying on a runtime download.
    - Considered Docker-image-only (fetch during `docker build`,
      nothing binary in git) and Git LFS — user picked plain
      git-committed folder instead.
-5. Next Step: awaiting explicit go-ahead to `git add`/commit these
-   files (per this project's commit-only-when-asked rule); otherwise
-   no outstanding work from this item.
+5. Next Step: none outstanding from this item.
 
 ---
 
