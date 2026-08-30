@@ -1,0 +1,56 @@
+name: Bug report
+description: Something isn't working as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please search existing issues first.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected vs. what actually occurred.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands / MCP calls / inputs. A minimal repro helps a lot.
+      placeholder: |
+        1. make up && make apply-schema
+        2. uv run graph-rag ingest ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / traceback
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `git rev-parse --short HEAD` or the release tag.
+    validations:
+      required: true
+  - type: dropdown
+    id: run-mode
+    attributes:
+      label: How are you running it?
+      options:
+        - CLI (uv run graph-rag ...)
+        - MCP server (make mcp-serve)
+        - docker compose
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS, Python, Neo4j image
+      placeholder: "macOS 15 / Python 3.12.4 / neo4j:2026.07.1"
+    validations:
+      required: true

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint & format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Sync dependencies
+        run: uv sync --all-extras --dev
+      - name: ruff check
+        run: uv run ruff check .
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - name: Sync dependencies
+        run: uv sync --all-extras --dev
+      - name: Cache embedding model
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: models/all-MiniLM-L6-v2
+          key: minilm-l6-v2-v1
+      - name: Fetch embedding model
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: make fetch-model
+      - name: Run pytest
+        # Model is on disk (fetched or restored from cache) — no network needed.
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: uv run pytest -q
