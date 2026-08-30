@@ -8,7 +8,92 @@ phased plan this log tracks progress against.
 
 ---
 
-## 2026-08-26 (session) — Vendor the embedding model for offline/corp-network use
+## 2026-08-30 (session) — Open-source readiness (P0) + de-vendor model + history rewrite
+
+Repo made public. This batch closes the licensing/packaging gaps that
+block promotion, drops the 87 MB model blob from git history, and moves
+agent-instruction files out of the repo.
+
+[CHECKPOINT]
+1. Core Objective: unchanged — Graph RAG KB for coding agents (Neo4j +
+   MCP). This session is packaging/OSS hygiene, no runtime behavior
+   change.
+2. Completed Milestones (all verified — see §3):
+   - LICENSE (Apache-2.0) + NOTICE (credits vendored MiniLM).
+   - pyproject: `license = "Apache-2.0"` (PEP 639), `license-files`,
+     `keywords`, `classifiers`, `[project.urls]`.
+   - `src/graph_rag/py.typed` — confirmed in built wheel.
+   - CONTRIBUTING.md (now carries the full one-class-per-file + style
+     rules, self-contained), CODE_OF_CONDUCT.md (Contributor Covenant
+     2.1), SECURITY.md (loopback / bearer-token model).
+   - `.github/`: workflows/ci.yml (lint job + pytest matrix 3.12/3.13,
+     with an actions/cache step for the embedding model, then
+     HF_HUB_OFFLINE=1 pytest), dependabot.yml (uv+actions+docker),
+     issue templates (bug/feature forms + config.yml), PR template.
+   - CHANGELOG.md (Keep a Changelog).
+   - `.editorconfig`.
+   - `scripts/fetch_model.py` + `make fetch-model` + `make format`.
+   - README rewritten: positioning + "Why" (graph vs plain vector
+     RAG), badges, demo placeholder, one-command Compose quickstart,
+     `claude mcp add` + JSON client snippets, MCP tools table,
+     architecture mermaid, Contributing/License. Old ops/centrality/
+     offline-model content kept, `make fetch-model` folded into the
+     quickstart.
+   - Dockerfile: `COPY README.md LICENSE NOTICE ./` (the final
+     `uv sync` builds project metadata, which now references the
+     license files).
+   - **De-vendored the model**: `git filter-repo --invert-paths
+     --path models/ --path training-docs/dms-ug.pdf --path
+     training-docs/FSX_Windows_Guide.pdf` already run — `.git` went
+     103 MB -> 1.0 MB, commit hashes changed, `origin` remote
+     removed by filter-repo, models/ deleted from worktree.
+     `.gitignore` now has `/models/`; `make fetch-model` restores it
+     (re-run locally this session — models/ back at 87 MB, untracked).
+   - **Agent files out of the repo**: `git rm --cached CLAUDE.md`
+     (file kept on disk); `.gitignore` now ignores CLAUDE.md,
+     AGENTS.md, .cursorrules, .windsurfrules,
+     .github/copilot-instructions.md. AGENTS.md was drafted this
+     session and left on disk (gitignored) as a seed for the user's
+     separate agent-instructions repo. All AGENTS.md/CLAUDE.md
+     references removed from CONTRIBUTING.md, README.md, PR template,
+     CHANGELOG.
+3. Critical Context / verification:
+   - `uv run ruff check .` clean; `ruff format --check .` clean
+     (89 files); `HF_HUB_OFFLINE=1 uv run pytest -q` -> 88 passed;
+     `uv lock --check` OK; `uv build --wheel` METADATA shows
+     `License-Expression: Apache-2.0`, both License-File entries,
+     `graph_rag/py.typed`; `docker compose config -q` OK.
+   - GitHub slug assumed throughout: `tmustafiz/graph-rag`
+     (matches the pre-rewrite `git remote`).
+   - filter-repo hard-resets tracked files — it wiped this session's
+     first pass of edits to Makefile/pyproject/README/CLAUDE.md and
+     the earlier progress.md checkpoint; all re-applied here. Lesson
+     for next time: commit before running filter-repo.
+4. Discarded Paths:
+   - First plan kept AGENTS.md as a tracked canonical policy file —
+     reversed per user: agent-instruction files belong in a separate
+     repo. Convention content moved into CONTRIBUTING.md instead.
+   - Did NOT keep the model vendored in git (chose fetch-on-demand +
+     CI cache over Git LFS or a Release asset).
+   - Did NOT reorganize docs/ or add ARCHITECTURE.md / ROADMAP.md —
+     that's the P1 batch.
+5. Next Step:
+   - User: `git add -A && git commit`, then `git remote add origin
+     https://github.com/tmustafiz/graph-rag.git` and
+     `git push --force --all origin` (+ `--tags`). History was
+     rewritten, so this force-push is expected; anyone with an old
+     clone must re-clone.
+   - Sample-corpus fallout from filter-repo: both PDFs are gone from
+     history AND worktree. `make ingest` was repointed to
+     `src/graph_rag` (dogfood, always present, Apache-2.0).
+     `training-docs/FSX_Windows_Guide.md` remains and is also AWS-
+     copyrighted — decide whether to drop it. `make eval` /
+     `docs/operations.md` still assume the DMS PDF is ingested, so
+     the retrieval eval set needs new expected sources before
+     `make eval` passes again.
+   - Then P1: ARCHITECTURE.md, ROADMAP.md, docs reorg, PyPI publish
+     workflow, MCP-registry submissions, GitHub topics + social
+     preview.
 
 User's corporate network may block `huggingface.co`; this sandbox
 could still reach it, so the model was fetched here and committed

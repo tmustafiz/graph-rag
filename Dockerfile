@@ -8,7 +8,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --extra pdf --no-dev --frozen --no-install-project
 
 COPY src/ src/
-COPY README.md ./
+COPY README.md LICENSE NOTICE ./
 RUN uv sync --extra pdf --no-dev --frozen
 
 ENV PATH="/app/.venv/bin:${PATH}"

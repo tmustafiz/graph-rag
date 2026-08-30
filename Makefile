@@ -1,7 +1,10 @@
-.PHONY: up down logs status install lint test ingest mcp-serve eval
+.PHONY: up down logs status install lint format test ingest mcp-serve eval fetch-model
 
 up:
 	docker compose up -d neo4j
+
+fetch-model:
+	uv run python scripts/fetch_model.py
 
 down:
 	docker compose down
@@ -19,7 +22,7 @@ apply-schema:
 	uv run graph-rag apply-schema
 
 ingest:
-	uv run graph-rag ingest training-docs/dms-ug.pdf
+	uv run graph-rag ingest src/graph_rag
 
 mcp-serve:
 	uv run graph-rag serve-mcp
@@ -29,6 +32,9 @@ eval:
 
 lint:
 	uv run ruff check .
+
+format:
+	uv run ruff format .
 
 test:
 	uv run pytest

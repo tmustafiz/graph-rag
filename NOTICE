@@ -1,0 +1,16 @@
+graph-rag
+Copyright 2026 graph-rag contributors
+
+This product includes software developed by the graph-rag contributors.
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file for
+the full license text.
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+sentence-transformers/all-MiniLM-L6-v2
+  When present under models/all-MiniLM-L6-v2/, these are pre-trained model
+  weights redistributed under the Apache License, Version 2.0.
+  Source: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2

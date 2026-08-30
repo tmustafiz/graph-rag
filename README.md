@@ -1,101 +1,122 @@
 # graph-rag
 
-Graph RAG knowledge base for coding agents. Ingests heterogeneous docs
-(PDF, Markdown, Python, YAML/Checkov) into a Neo4j knowledge graph and
-exposes lookup — plus the agent's own working memory — to coding
-agents over MCP (Streamable HTTP).
+**A local-first Graph RAG knowledge base for coding agents, served over MCP.**
 
-See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the
-full phased plan and architecture, and
-[docs/operations.md](docs/operations.md) for backup/restore and other
-day-2 operational notes.
+[![CI](https://github.com/tmustafiz/graph-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/tmustafiz/graph-rag/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
+[![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-green)](https://modelcontextprotocol.io)
+
+graph-rag ingests the heterogeneous stuff a coding agent needs to reason about —
+service docs (PDF), internal Markdown, your Python source, and YAML policy files
+(Checkov) — into a single **Neo4j knowledge graph**, and exposes it to the agent
+over an **MCP server**: hybrid (vector + full-text) search, table-of-contents
+navigation, exact policy lookup, code-centrality ranking, graph traversal, and
+the agent's own **persistent working memory**.
+
+It runs entirely on your machine. The default embedding model is local, so
+ingestion needs no API key and works offline.
+
+## Why
+
+Plain vector RAG loses structure: it can't tell you *which section* a chunk came
+from, *what calls* a function, or *which policy applies to* `aws_db_instance`.
+graph-rag keeps those relationships as graph edges, so an agent can both search
+semantically **and** traverse — "find the retry section, then show me its parent
+chapter", "rank this codebase's most-depended-upon functions", "give me the
+Checkov rules for this resource type". It also gives the agent a place to
+`remember` decisions and `recall` them in a later session.
+
+## Demo
+
+<!-- TODO: add an asciinema / GIF of an agent calling search_code + recall -->
 
 ## Quickstart
 
-```bash
-cp .env.example .env      # adjust NEO4J_PASSWORD if you like
-make install               # uv sync
-make up                    # start Neo4j via Docker
-make status                 # verify connectivity from the CLI
-make apply-schema           # create constraints, full-text + vector indexes
-make ingest                 # parse, embed, and load training-docs/dms-ug.pdf
-```
-
-Neo4j Browser: http://localhost:7474 (auth: `neo4j` / value of `NEO4J_PASSWORD`).
+Requires [`uv`](https://docs.astral.sh/uv/) and Docker.
 
 ```bash
-make down     # stop Neo4j
-make lint     # ruff
-make test     # pytest
-make eval     # retrieval regression eval against search() (needs make ingest first)
+cp .env.example .env        # adjust NEO4J_PASSWORD if you like
+make install                # uv sync --all-extras
+make fetch-model            # download the local embedding model (~87 MB)
+make up                     # start Neo4j (Docker)
+make apply-schema           # constraints + full-text + vector indexes
+make ingest                 # parse, embed, and load this repo's own source
+make mcp-serve              # MCP server on http://127.0.0.1:8765/mcp
 ```
 
-## Code centrality (PageRank)
+Neo4j Browser: <http://localhost:7474> (`neo4j` / your `NEO4J_PASSWORD`).
 
-`graph-rag compute-centrality` runs GDS PageRank over the `CodeEntity`
-`CALLS`/`IMPORTS` graph, writing each entity's score to
-`CodeEntity.pagerank` — a heavily called/imported entity ranks higher.
-Surfaces what's most central (and riskiest to change) in an ingested
-codebase, exposed via the `get_central_code_entities` MCP tool. Needs
-Python source already ingested (`make ingest` only loads the sample
-PDF — run `uv run graph-rag ingest src/graph_rag` first, or point it
-at your own codebase) and the `graph-data-science` Neo4j plugin
-(already enabled in `docker-compose.yml`):
+Or run everything (Neo4j + MCP server) with Compose:
 
 ```bash
-uv run graph-rag compute-centrality
+docker compose up -d
 ```
 
-Re-run after ingesting code changes — scores aren't updated automatically.
+Other targets: `make down`, `make lint`, `make format`, `make test`, `make eval`.
 
-## Offline embedding model
+## Connect an agent
 
-`models/all-MiniLM-L6-v2/` vendors the sentence-transformers weights
-this repo embeds with (Apache-2.0 licensed, ~87MB), so ingestion and
-`serve-mcp` never need to reach `huggingface.co` — useful on networks
-that block it. `SentenceTransformerEmbedder` loads from this folder
-automatically when present, falling back to downloading
-`sentence-transformers/all-MiniLM-L6-v2` from the Hub otherwise. To
-refresh it (e.g. after a model update upstream):
+The MCP server speaks Streamable HTTP at `http://127.0.0.1:8765/mcp`.
+`.mcp.json` at the repo root already registers it for this project.
+
+**Claude Code**
 
 ```bash
-uv run python -c "
-from huggingface_hub import snapshot_download
-snapshot_download(
-    repo_id='sentence-transformers/all-MiniLM-L6-v2',
-    local_dir='models/all-MiniLM-L6-v2',
-    allow_patterns=['config.json', 'config_sentence_transformers.json',
-        'modules.json', 'sentence_bert_config.json', 'special_tokens_map.json',
-        'tokenizer.json', 'tokenizer_config.json', 'vocab.txt',
-        'model.safetensors', '1_Pooling/*'],
-)
-"
+claude mcp add graph-rag --transport http http://127.0.0.1:8765/mcp
 ```
 
-## Ingesting more than the sample PDF
+**Claude Desktop / Cursor / Windsurf / VS Code** — add to the MCP config:
 
-`graph-rag ingest <path>` accepts a single file or a directory
-(recursed automatically), parses whichever of PDF/Markdown/Python/YAML
-it finds, and upserts into the graph. Re-running it is cheap: any file
-whose content hash hasn't changed since the last ingest is skipped
-entirely (no re-parse, no re-embedding), and re-ingesting a changed
-file removes any Section/Chunk/CodeEntity/PolicyRule it no longer
-produces (e.g. a deleted function).
+```json
+{
+  "mcpServers": {
+    "graph-rag": { "type": "http", "url": "http://127.0.0.1:8765/mcp" }
+  }
+}
+```
+
+Set `MCP_AUTH_TOKEN` in `.env` to require a bearer token (defense in depth; the
+server is bound to `127.0.0.1` regardless — see [SECURITY.md](SECURITY.md)).
+
+## MCP tools
+
+| Tool | What it does |
+| --- | --- |
+| `search` | Hybrid (vector + full-text) search over ingested prose / Markdown / generic-YAML chunks. Does **not** cover Python code or Checkov policy text. |
+| `search_code` | Same hybrid search, over ingested Python functions / classes / modules. |
+| `search_policies` | Hybrid search over Checkov policy content — the fuzzy complement to `find_policies_for`. |
+| `find_policies_for` | **Exact-match** traversal: policies whose `APPLIES_TO` edge names a Terraform resource type precisely (e.g. `aws_db_instance`). No fuzzy fallback. |
+| `get_section` / `get_outline` | Full section text (paginated via `max_chars`) or a source's table-of-contents tree. |
+| `list_sources` | Everything currently ingested (also the `graph-rag://sources` MCP **resource**). |
+| `get_neighbors` | Walk the graph from any node — Source path, Section/Chunk/PolicyRule/AgentMemory id, CodeEntity qualified name, or Concept name — optionally filtered by relationship type. |
+| `get_central_code_entities` | Most-depended-upon code by PageRank over the `CALLS`/`IMPORTS` graph. Empty until `graph-rag compute-centrality` has run. |
+| `cite` | Human-readable citation string for a chunk. |
+| `ingest_path` | (Re-)ingest a file or directory from within a session. |
+| `remember` / `recall` / `forget` | The agent's own working memory, with recency + frequency decay pruning. |
+
+## Ingesting your own content
+
+`graph-rag ingest <path>` takes a file or a directory (recursed), parses
+whichever of PDF / Markdown / Python / YAML it finds, and upserts into the
+graph. Re-running is cheap: a file whose content hash is unchanged since the
+last ingest is skipped entirely, and re-ingesting a changed file removes any
+Section / Chunk / CodeEntity / PolicyRule it no longer produces.
 
 ```bash
-uv run graph-rag ingest src/graph_rag        # ingest this repo's own source
-uv run graph-rag ingest training-docs        # ingest every sample doc/policy
-uv run graph-rag ingest some/file.py --dry-run   # preview without writing
-uv run graph-rag ingest src/graph_rag --watch    # keep re-ingesting on every change (Ctrl+C to stop)
+uv run graph-rag ingest src/graph_rag           # this repo's own source
+uv run graph-rag ingest path/to/docs            # a whole directory
+uv run graph-rag ingest some/file.py --dry-run  # preview, no writes
+uv run graph-rag ingest src/graph_rag --watch   # re-ingest on every change
 ```
 
-A file that fails to parse/embed/write is reported with its error and
-skipped, rather than aborting the rest of a directory ingest — see
+A file that fails to parse/embed/write is reported and skipped rather than
+aborting the batch — see
 [docs/operations.md](docs/operations.md#ingestion-errors-and-logging).
 
-Ingestion is also reachable over plain HTTP once `serve-mcp`/`docker
-compose up` is running — `POST /ingest` alongside the MCP server, for
-triggering it from CI or a pre-commit hook without an MCP client:
+Ingestion is also reachable over plain HTTP while `serve-mcp` / `docker compose
+up` is running, for triggering from CI or a pre-commit hook without an MCP
+client:
 
 ```bash
 curl -X POST http://127.0.0.1:8765/ingest \
@@ -103,51 +124,60 @@ curl -X POST http://127.0.0.1:8765/ingest \
   -d '{"path": "src/graph_rag", "dry_run": false}'
 ```
 
-## MCP server
+## Code centrality (PageRank)
 
-Exposes lookup and agent-memory tools over Streamable HTTP:
-
-- `search` — hybrid (vector + full-text) search over ingested prose/
-  Markdown/generic-YAML chunks. Does **not** cover Python code or
-  Checkov policy text — use `search_code`/`search_policies` for those.
-- `search_code` — the same hybrid search, over this codebase's Python
-  functions/classes/modules.
-- `get_section` / `get_outline` — full section text (paginated via
-  `max_chars`) or a source's table-of-contents tree.
-- `list_sources` — everything currently ingested (also browsable as
-  the `graph-rag://sources` MCP **resource**, without a tool call).
-- `find_policies_for` — **exact-match** traversal: Checkov policies
-  whose `APPLIES_TO` edge names a Terraform resource type precisely
-  (e.g. `aws_db_instance`). No fuzzy fallback.
-- `search_policies` — the semantic/fuzzy complement: hybrid search
-  over Checkov policy content, for when the exact resource type isn't
-  known.
-- `get_neighbors` — walk the graph from any node (Source path,
-  Section/Chunk/PolicyRule/AgentMemory id, CodeEntity qualified_name,
-  or Concept name), optionally filtered by relationship type.
-- `get_central_code_entities` — most-depended-upon code by PageRank
-  over the CALLS/IMPORTS graph. Empty until `graph-rag
-  compute-centrality` has been run (see below).
-- `cite` — human-readable citation string for a chunk.
-- `ingest_path` — (re-)ingest a file or directory from within a
-  session.
-- `remember` / `recall` / `forget` — the agent's own working memory
-  (decisions, corrections, findings), with recency+frequency decay
-  pruning (`graph-rag prune-memory --threshold <score>`) — see Phase
-  11 in the implementation plan for the full design.
-
-Runs locally:
+`graph-rag compute-centrality` runs GDS PageRank over the `CodeEntity`
+`CALLS`/`IMPORTS` graph, writing each entity's score to `CodeEntity.pagerank`
+— a heavily called/imported entity ranks higher, surfacing what's most central
+(and riskiest to change) in an ingested codebase. Exposed via
+`get_central_code_entities`. Needs Python source already ingested and the
+`graph-data-science` Neo4j plugin (enabled in `docker-compose.yml`):
 
 ```bash
-make mcp-serve   # http://127.0.0.1:8765/mcp
+uv run graph-rag ingest src/graph_rag
+uv run graph-rag compute-centrality   # re-run after ingesting code changes
 ```
 
-or as its own `docker-compose` service alongside Neo4j:
+## Offline embedding model
 
-```bash
-docker compose up -d
+The MCP server and ingestion embed with `sentence-transformers/all-MiniLM-L6-v2`
+(Apache-2.0). `make fetch-model` downloads just the PyTorch + tokenizer files
+(~87 MB) into `models/all-MiniLM-L6-v2/` — see
+[scripts/fetch_model.py](scripts/fetch_model.py). `SentenceTransformerEmbedder`
+loads from that folder when present and otherwise pulls the model from the Hub
+at first use, so a checkout without the folder still works as long as it can
+reach `huggingface.co`.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A["Files: PDF / Markdown / Python / YAML"] --> B["Ingestion CLI / API"]
+    B --> C{"Parser registry (by extension)"}
+    C --> C1["PdfParser"]
+    C --> C2["MarkdownParser"]
+    C --> C3["PythonParser (ast)"]
+    C --> C4["YamlParser (Checkov-aware)"]
+    C1 --> D["Structure-aware Chunker"]
+    C2 --> D
+    C3 --> D
+    C4 --> D
+    D --> E["Enricher (embeddings + optional LLM entity/relation extraction)"]
+    E --> F["Graph writer (idempotent upsert by content hash)"]
+    F --> G[("Neo4j (Docker)")]
+    G <--> H["MCP server (Streamable HTTP)"]
+    H <--> I["Coding agent"]
 ```
 
-`.mcp.json` at the repo root already registers it for this project. Bound to
-`127.0.0.1` only; set `MCP_AUTH_TOKEN` in `.env` for an extra bearer-token
-check (defense in depth — see `docs/IMPLEMENTATION_PLAN.md` Phase 3).
+Full design and phase history: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
+Backup/restore and day-2 ops: [docs/operations.md](docs/operations.md).
+
+## Contributing
+
+Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The repo follows
+a strict one-class-per-file layout; the conventions are spelled out there. By
+contributing you agree your work is licensed under Apache-2.0.
+
+## License
+
+[Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for third-party components.
