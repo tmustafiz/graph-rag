@@ -45,7 +45,7 @@ jobs:
         run: uv sync --all-extras --dev
       - name: Cache embedding model
         id: model-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: models/all-MiniLM-L6-v2
           key: minilm-l6-v2-v1
@@ -88,7 +88,7 @@ jobs:
         run: uv sync --all-extras --dev
       - name: Cache embedding model
         id: model-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: models/all-MiniLM-L6-v2
           key: minilm-l6-v2-v1
