@@ -7,6 +7,9 @@
 # ---------------------------------------------------------------------------
 FROM python:3.13-slim-trixie AS builder
 
+# Pull the latest Debian point-release fixes into the (throwaway) build stage.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 # Pinned uv (static binary image — just /uv and /uvx).
 COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /usr/local/bin/uv
 
