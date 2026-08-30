@@ -22,11 +22,15 @@ Requires Python 3.12+, [`uv`](https://docs.astral.sh/uv/), and Docker (for Neo4j
 git clone https://github.com/tmustafiz/graph-rag.git
 cd graph-rag
 cp .env.example .env
-make install        # uv sync --all-extras
-make up             # start Neo4j
+make install                                       # uv sync --all-extras
+make fetch-model                                   # local embedding model (~87 MB)
+make up                                            # start Neo4j
 make apply-schema
-make ingest         # load the sample corpus
+make ingest INGEST_PATH=examples/checkov-policies  # or point at your own docs
 ```
+
+The repo ships no document corpus — `make ingest` requires `INGEST_PATH`. Point
+it at your own files, or at `examples/` to try the tooling.
 
 ## Checks that must pass
 
@@ -39,7 +43,7 @@ make test                       # pytest (88+ tests)
 ```
 
 If you touched chunking, embedding, or ranking, also run the retrieval
-regression eval (needs `make ingest` first):
+regression eval (self-contained — it ingests its own fixture corpus):
 
 ```bash
 make eval

@@ -21,8 +21,14 @@ status:
 apply-schema:
 	uv run graph-rag apply-schema
 
+# Bring your own documents: make ingest INGEST_PATH=/path/to/your/docs
 ingest:
-	uv run graph-rag ingest src/graph_rag
+	@test -n "$(INGEST_PATH)" || { \
+		echo "Set INGEST_PATH to the file or directory to ingest, e.g.:"; \
+		echo "  make ingest INGEST_PATH=~/my-docs"; \
+		echo "  make ingest INGEST_PATH=examples/checkov-policies"; \
+		exit 2; }
+	uv run graph-rag ingest "$(INGEST_PATH)"
 
 mcp-serve:
 	uv run graph-rag serve-mcp

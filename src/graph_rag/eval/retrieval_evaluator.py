@@ -8,6 +8,12 @@ from .eval_case_result import EvalCaseResult
 
 DEFAULT_EVAL_SET_PATH = Path(__file__).parent / "retrieval_eval_set.yaml"
 
+# Fixture corpus the eval is written against. `graph-rag eval-retrieval` ingests
+# this first so the eval is self-contained. Kept repo-root-relative so the
+# ingested Source.path matches `expected_source_path` in the eval set — run
+# `graph-rag eval-retrieval` / `make eval` from the repo root.
+EVAL_CORPUS_DIR = Path("src/graph_rag/eval/corpus")
+
 
 class RetrievalEvaluator:
     """Runs a small hand-written set of retrieval regression cases against

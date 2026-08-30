@@ -5,7 +5,7 @@ import typer
 import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .eval.retrieval_evaluator import RetrievalEvaluator
+from .eval.retrieval_evaluator import EVAL_CORPUS_DIR, RetrievalEvaluator
 from .graph.centrality_analyzer import CentralityAnalyzer
 from .graph.client import check_connectivity, driver_session
 from .graph.graph_writer import GraphWriter
@@ -148,10 +148,22 @@ def eval_retrieval(
         None, "--eval-set", help="Path to a YAML eval-case file (default: the built-in set)."
     ),
 ) -> None:
-    """Run the hand-written retrieval eval set against `search()`; reports pass/fail per case."""
+    """Run the hand-written retrieval eval set against `search()`; reports pass/fail per case.
+
+    Ingests the fixture corpus in `src/graph_rag/eval/corpus/` first (idempotent),
+    so the eval is self-contained. Run from the repo root.
+    """
     cases = RetrievalEvaluator.load_cases(eval_set)
     embedder = SentenceTransformerEmbedder()
     with driver_session() as driver:
+        if not EVAL_CORPUS_DIR.is_dir():
+            typer.secho(
+                f"Eval corpus not found at {EVAL_CORPUS_DIR} — run this from the repo root.",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
+        pipeline = IngestionPipeline(ParserRegistry(), embedder, GraphWriter(driver))
+        pipeline.run(EVAL_CORPUS_DIR)
         results = RetrievalEvaluator(Retriever(driver, embedder)).run(cases)
 
     for result in results:

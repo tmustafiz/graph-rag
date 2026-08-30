@@ -39,3 +39,9 @@ AGENTS.md
 
 # Vendored embedding model (fetch with `make fetch-model`)
 /models/
+
+# Local corpora to ingest — bring your own; nothing to ingest ships in the repo
+# (the small examples/ set is the exception and is tracked)
+/training-docs/
+/corpus/
+/data/

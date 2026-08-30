@@ -61,24 +61,24 @@ def test_build_outline_tree_handles_no_sections() -> None:
 
 def test_format_citation_includes_single_page() -> None:
     row = {
-        "source_path": "training-docs/dms-ug.pdf",
+        "source_path": "docs/service-guide.pdf",
         "breadcrumb": "Concepts > Selection rules",
         "start_page": 42,
         "end_page": 42,
     }
     citation = _format_citation(row)
-    assert citation == "training-docs/dms-ug.pdf — Concepts > Selection rules (p. 42)"
+    assert citation == "docs/service-guide.pdf — Concepts > Selection rules (p. 42)"
 
 
 def test_format_citation_includes_page_range() -> None:
     row = {
-        "source_path": "training-docs/dms-ug.pdf",
+        "source_path": "docs/service-guide.pdf",
         "breadcrumb": "Concepts > Selection rules",
         "start_page": 42,
         "end_page": 44,
     }
     citation = _format_citation(row)
-    assert citation == "training-docs/dms-ug.pdf — Concepts > Selection rules (pp. 42–44)"
+    assert citation == "docs/service-guide.pdf — Concepts > Selection rules (pp. 42–44)"
 
 
 def test_format_citation_omits_pages_when_absent() -> None:

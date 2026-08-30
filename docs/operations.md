@@ -20,9 +20,10 @@ want to wipe the graph and start over.
 Neo4j Community edition (what this project runs) doesn't support the
 online/hot backup feature — the database has to be stopped for a
 consistent dump. A plain volume-level tar archive is simplest here
-since ingestion is fully reproducible from `training-docs/` and this
-repo's own source anyway (a backup is a convenience to skip re-running
-`graph-rag ingest`, not the only copy of anything irreplaceable).
+since the document graph is fully reproducible by re-running
+`graph-rag ingest` against your source files (a backup is a
+convenience to skip re-ingesting, not the only copy of anything
+irreplaceable — except `AgentMemory`, which has no source file).
 
 ```bash
 # 1. Stop Neo4j (keep the volume, just stop the container using it)
@@ -68,8 +69,8 @@ alternative to restoring a backup is simply re-running ingestion after
 
 ```bash
 uv run graph-rag apply-schema
-uv run graph-rag ingest training-docs/
-uv run graph-rag ingest src/
+uv run graph-rag ingest <your-docs>       # whatever you ingested before
+uv run graph-rag ingest src/graph_rag     # if you were dogfooding on the code
 ```
 
 This reconstructs the document graph, but **not** `AgentMemory` nodes
@@ -102,12 +103,13 @@ changing chunking, embedding, or ranking logic to catch regressions
 before they reach an agent:
 
 ```bash
-uv run graph-rag eval-retrieval
+uv run graph-rag eval-retrieval   # or: make eval
 ```
 
-Exits non-zero if any case fails, so it's usable as a CI gate. Needs
-the DMS PDF ingested first (`make ingest`), since the built-in eval
-set's expected sources come from it.
+It first ingests the fixture corpus in `src/graph_rag/eval/corpus/`
+(idempotent), so it's self-contained and independent of whatever else
+you have ingested. Run it from the repo root. Exits non-zero if any
+case fails, so it's usable as a CI gate.
 
 ## Ingestion errors and logging
 

@@ -57,3 +57,45 @@ jobs:
         env:
           HF_HUB_OFFLINE: "1"
         run: uv run pytest -q
+
+  eval:
+    name: Retrieval eval
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:2026.07.1
+        env:
+          NEO4J_AUTH: neo4j/testpassword
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "wget -qO- http://localhost:7474 || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 20
+    env:
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: testpassword
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Sync dependencies
+        run: uv sync --all-extras --dev
+      - name: Cache embedding model
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: models/all-MiniLM-L6-v2
+          key: minilm-l6-v2-v1
+      - name: Fetch embedding model
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: make fetch-model
+      - name: Apply schema and run retrieval eval
+        run: |
+          uv run graph-rag apply-schema
+          uv run graph-rag eval-retrieval

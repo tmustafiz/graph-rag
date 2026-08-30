@@ -1,19 +1,23 @@
 # Hand-written retrieval regression cases, run via `graph-rag eval-retrieval`
-# against Retriever.search(). Each case's expected_source_path/breadcrumb was
-# taken from real Section nodes ingested from training-docs/dms-ug.pdf — catches
-# regressions in chunking/embedding without needing to update on every re-run.
-- query: "How do I create a new AWS DMS replication instance?"
-  expected_source_path: "training-docs/dms-ug.pdf"
-  expected_breadcrumb_contains: "Creating a replication instance"
-- query: "What are selection rules and actions used for in table mapping?"
-  expected_source_path: "training-docs/dms-ug.pdf"
-  expected_breadcrumb_contains: "Selection rules and actions"
-- query: "What DMS terminology and concepts should I understand before starting?"
-  expected_source_path: "training-docs/dms-ug.pdf"
-  expected_breadcrumb_contains: "Terminology and concepts"
-- query: "How do I enable Kerberos authentication on a DMS replication instance?"
-  expected_source_path: "training-docs/dms-ug.pdf"
-  expected_breadcrumb_contains: "Kerberos"
-- query: "How do I use SSL to encrypt connections in AWS DMS?"
-  expected_source_path: "training-docs/dms-ug.pdf"
+# against Retriever.search(). `eval-retrieval` first ingests the fixture corpus
+# in src/graph_rag/eval/corpus/ (idempotent), so this eval is self-contained and
+# does not depend on whatever else you happen to have ingested.
+#
+# expected_source_path is the path as ingested (repo-root-relative — run
+# `make eval` from the repo root). expected_breadcrumb_contains is matched
+# case-insensitively as a substring of the hit's section breadcrumb.
+- query: "How do I create a new Orchard task queue with the admin CLI?"
+  expected_source_path: "src/graph_rag/eval/corpus/task_queue.md"
+  expected_breadcrumb_contains: "Creating a queue"
+- query: "What retry and backoff behavior does a queue use when a task fails?"
+  expected_source_path: "src/graph_rag/eval/corpus/task_queue.md"
+  expected_breadcrumb_contains: "Retry and backoff"
+- query: "What Orchard terminology and concepts should I understand before starting?"
+  expected_source_path: "src/graph_rag/eval/corpus/task_queue.md"
+  expected_breadcrumb_contains: "Concepts and terminology"
+- query: "How does Orchard encrypt connections between workers and the broker in transit?"
+  expected_source_path: "src/graph_rag/eval/corpus/task_queue.md"
   expected_breadcrumb_contains: "Encryption in transit"
+- query: "Which environment variables configure an Orchard broker deployment?"
+  expected_source_path: "src/graph_rag/eval/corpus/deployment.md"
+  expected_breadcrumb_contains: "Environment variables"

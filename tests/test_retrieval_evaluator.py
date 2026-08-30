@@ -29,10 +29,10 @@ def _hit(source_path: str, breadcrumb: str) -> SearchResult:
 
 def test_case_passes_when_expected_hit_is_first() -> None:
     breadcrumb = "Working with an AWS DMS replication instance > Creating a replication instance"
-    hits = [_hit("dms-ug.pdf", breadcrumb)]
+    hits = [_hit("service-guide.pdf", breadcrumb)]
     case = EvalCase(
         query="how do I create a replication instance",
-        expected_source_path="dms-ug.pdf",
+        expected_source_path="service-guide.pdf",
         expected_breadcrumb_contains="Creating a replication instance",
     )
 
@@ -45,11 +45,11 @@ def test_case_passes_when_expected_hit_is_first() -> None:
 def test_case_passes_when_expected_hit_is_not_first() -> None:
     hits = [
         _hit("other.pdf", "unrelated section"),
-        _hit("dms-ug.pdf", "Creating a replication instance"),
+        _hit("service-guide.pdf", "Creating a replication instance"),
     ]
     case = EvalCase(
         query="how do I create a replication instance",
-        expected_source_path="dms-ug.pdf",
+        expected_source_path="service-guide.pdf",
         expected_breadcrumb_contains="Creating a replication instance",
     )
 
@@ -60,10 +60,10 @@ def test_case_passes_when_expected_hit_is_not_first() -> None:
 
 
 def test_case_fails_when_source_path_matches_but_breadcrumb_does_not() -> None:
-    hits = [_hit("dms-ug.pdf", "unrelated section")]
+    hits = [_hit("service-guide.pdf", "unrelated section")]
     case = EvalCase(
         query="how do I create a replication instance",
-        expected_source_path="dms-ug.pdf",
+        expected_source_path="service-guide.pdf",
         expected_breadcrumb_contains="Creating a replication instance",
     )
 
@@ -76,7 +76,7 @@ def test_case_fails_when_source_path_matches_but_breadcrumb_does_not() -> None:
 def test_case_fails_when_no_hits() -> None:
     case = EvalCase(
         query="how do I create a replication instance",
-        expected_source_path="dms-ug.pdf",
+        expected_source_path="service-guide.pdf",
         expected_breadcrumb_contains="Creating a replication instance",
     )
 
@@ -88,4 +88,4 @@ def test_case_fails_when_no_hits() -> None:
 def test_load_cases_reads_the_built_in_eval_set() -> None:
     cases = RetrievalEvaluator.load_cases()
     assert len(cases) >= 5
-    assert all(case.expected_source_path == "training-docs/dms-ug.pdf" for case in cases)
+    assert all(case.expected_source_path.startswith("src/graph_rag/eval/corpus/") for case in cases)

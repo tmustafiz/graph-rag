@@ -1,0 +1,15 @@
+metadata:
+  id: "CKV2_CUSTOM_2"
+  name: "Ensure RDS instances are not publicly accessible"
+  category: "NETWORKING"
+  severity: "CRITICAL"
+  guideline: "Set publicly_accessible to false and rely on VPC-internal access via security groups."
+scope:
+  provider: "aws"
+definition:
+  cond_type: "attribute"
+  resource_types:
+    - "aws_db_instance"
+  attribute: "publicly_accessible"
+  operator: "equals"
+  value: false

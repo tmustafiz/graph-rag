@@ -41,9 +41,13 @@ make install                # uv sync --all-extras
 make fetch-model            # download the local embedding model (~87 MB)
 make up                     # start Neo4j (Docker)
 make apply-schema           # constraints + full-text + vector indexes
-make ingest                 # parse, embed, and load this repo's own source
+make ingest INGEST_PATH=examples/checkov-policies   # or point at your own docs
 make mcp-serve              # MCP server on http://127.0.0.1:8765/mcp
 ```
+
+graph-rag ships **no document corpus** — you bring the files to ingest.
+`examples/` holds a few small samples to try the tooling against; everything
+else is yours.
 
 Neo4j Browser: <http://localhost:7474> (`neo4j` / your `NEO4J_PASSWORD`).
 

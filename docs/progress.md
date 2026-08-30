@@ -8,6 +8,69 @@ phased plan this log tracks progress against.
 
 ---
 
+## 2026-08-30 (session) — Decouple document corpus from the repo + self-contained eval
+
+Follow-up to the P0 batch. Documents to ingest are now entirely
+user-provided; `training-docs/` is out of the repo; `make eval` no
+longer depends on a specific ingested doc.
+
+[CHECKPOINT]
+1. Core Objective: unchanged. This change is repo hygiene — no runtime
+   behavior change beyond the eval command self-ingesting its fixture.
+2. Completed Milestones (verified end-to-end against live Neo4j):
+   - `git mv training-docs/checkov-policies/*.yaml examples/checkov-policies/`
+     (3 hand-written CKV2_CUSTOM policies — originals, kept tracked).
+     Added `examples/README.md`.
+   - `git rm --cached training-docs/FSX_Windows_Guide.md` (AWS-
+     copyrighted; file left on disk, gitignored). `training-docs/`
+     now fully untracked; `.gitignore` adds `/training-docs/`,
+     `/corpus/`, `/data/`.
+   - Makefile `ingest` target now REQUIRES `INGEST_PATH` — prints a
+     usage hint and exits 2 if unset. `make ingest INGEST_PATH=…`.
+   - `make eval` is self-contained: `eval-retrieval` ingests
+     `src/graph_rag/eval/corpus/` (new — two original Markdown
+     fixtures about a fictional "Orchard" task queue) before running.
+     `EVAL_CORPUS_DIR = Path("src/graph_rag/eval/corpus")` in
+     `retrieval_evaluator.py` (repo-root-relative so the ingested
+     `Source.path` matches `expected_source_path`; command must be
+     run from repo root — it errors clearly otherwise).
+   - `retrieval_eval_set.yaml` rewritten: 5 cases against the Orchard
+     fixtures. Verified: `graph-rag eval-retrieval` → 5/5 PASS
+     (ranks 1-2). `make ingest INGEST_PATH=examples/checkov-policies`
+     → 3 policy rules. `make ingest` (no arg) → guard fires, exit 2.
+   - Tests: `test_retrieval_evaluator.py` assertion updated to
+     `startswith("src/graph_rag/eval/corpus/")`; fake-fixture string
+     `dms-ug.pdf` → `service-guide.pdf` in that file and
+     `test_retriever.py`. 88 pytest still pass.
+   - New CI job `eval` in ci.yml — Neo4j 2026.07.1 service container
+     (no plugins needed; only centrality_analyzer uses gds.*),
+     cached model, `apply-schema` + `eval-retrieval`.
+   - Prose updated: README (quickstart uses `INGEST_PATH=examples/…`,
+     new "ships no corpus" note), CONTRIBUTING (setup block, eval
+     note), operations.md (backup/rebuild/eval sections).
+     `docs/IMPLEMENTATION_PLAN.md` left as historical record.
+3. Critical Context:
+   - `ruff check`/`format --check` clean (91 files); `pytest -q` 88
+     passed; `eval-retrieval` 5/5 against live Neo4j; `ci.yml` parses.
+   - `training-docs/FSX_Windows_Guide.md` still on disk (gitignored)
+     and still in git history — a further filter-repo pass would be
+     needed to purge it from history if that matters.
+   - Decisions (user-chosen): keep the 3 Checkov policies in
+     `examples/` (nothing else ships); `make ingest` requires
+     `INGEST_PATH` rather than defaulting.
+4. Discarded Paths:
+   - Considered defaulting `make ingest` to `src/graph_rag` or
+     `examples/` — user chose the explicit-required-var form.
+   - Considered a suffix/`endswith` match in RetrievalEvaluator to
+     make eval cases path-portable — kept exact match + the
+     run-from-repo-root convention (smaller change).
+5. Next Step: same as the P0 checkpoint below — commit, re-add
+   `origin`, force-push. Then P1 (ARCHITECTURE.md, ROADMAP.md, PyPI
+   publish workflow, MCP-registry submissions, GitHub topics + social
+   preview).
+
+---
+
 ## 2026-08-30 (session) — Open-source readiness (P0) + de-vendor model + history rewrite
 
 Repo made public. This batch closes the licensing/packaging gaps that

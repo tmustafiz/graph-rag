@@ -22,10 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snippets, tools table, architecture diagram).
 - The embedding model is no longer vendored in git — fetch it with
   `make fetch-model` (falls back to a first-use Hub download otherwise).
+- The repo ships no document corpus. `make ingest` now requires
+  `INGEST_PATH` (`make ingest INGEST_PATH=…`); bring your own files.
+- `graph-rag eval-retrieval` / `make eval` is self-contained: it ingests a
+  small fixture corpus (`src/graph_rag/eval/corpus/`) before running, so it no
+  longer depends on a specific document being ingested first. Added a CI job
+  that runs it against a Neo4j service container.
 
 ### Removed
 - Agent-instruction files (`CLAUDE.md`, `AGENTS.md`) are no longer tracked here;
   they live in a separate repository.
+- `training-docs/` is no longer tracked. The three sample Checkov policies moved
+  to `examples/checkov-policies/`; the bundled AWS PDFs are gone (also purged
+  from git history).
 
 ## [0.1.0] - 2026-08-26
 
