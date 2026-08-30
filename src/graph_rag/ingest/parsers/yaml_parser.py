@@ -13,9 +13,8 @@ class YamlParser:
     generic YAML, a single implicit `Section` chunked by top-level key.
 
     A document is treated as a Checkov custom policy when it has a
-    `metadata.id` field (per the schema documented in
-    `docs/IMPLEMENTATION_PLAN.md` Phase 6); everything else falls back to
-    structural chunking so it still gets parsed and embedded.
+    `metadata.id` field; everything else falls back to structural
+    chunking so it still gets parsed and embedded.
     """
 
     @staticmethod

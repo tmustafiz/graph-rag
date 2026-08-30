@@ -63,7 +63,7 @@ Compose's default naming (here, `graph-rag_neo4j_data`) — confirm with
 
 ## Rebuilding from scratch instead of restoring
 
-Since ingestion is idempotent and content-hash-driven (Phase 7), an
+Since ingestion is idempotent and content-hash-driven, an
 alternative to restoring a backup is simply re-running ingestion after
 `docker compose down -v && docker compose up -d`:
 

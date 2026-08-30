@@ -89,12 +89,21 @@ Adding a parser: implement the `Parser` protocol in
 - Update `CHANGELOG.md` under `[Unreleased]` and add/adjust tests.
 - The PR template checklist should be green before requesting review.
 
-## Progress log
+## Planning
 
-`docs/progress.md` is the running project state across sessions. When you
-complete something substantial or hit a natural breakpoint, append a
-timestamped `[CHECKPOINT]` entry (most-recent-first) noting what's done and
-verified, decisions worth preserving, and the next step.
+Planning lives on GitHub, not in the repo:
+
+- [Roadmap board](https://github.com/users/tmustafiz/projects/6) and
+  [milestones](https://github.com/tmustafiz/graph-rag/milestones) for what's
+  planned and when.
+- [Issues](https://github.com/tmustafiz/graph-rag/issues) for individual work
+  items — use the `area:` labels.
+- [Discussions](https://github.com/tmustafiz/graph-rag/discussions) for open
+  questions and proposals.
+
+Capture design decisions and context in the issue and the PR that implements it,
+so the "why" is discoverable from history. See also
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Reporting security issues
 

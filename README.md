@@ -173,7 +173,8 @@ flowchart TD
     H <--> I["Coding agent"]
 ```
 
-Full design and phase history: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
+Design and component breakdown: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Roadmap and planning: [docs/ROADMAP.md](docs/ROADMAP.md).
 Backup/restore and day-2 ops: [docs/operations.md](docs/operations.md).
 
 ## Contributing

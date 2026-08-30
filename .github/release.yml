@@ -1,0 +1,31 @@
+# Configures GitHub's "Generate release notes" button and the notes attached to
+# published releases. Categories are matched by PR label, top to bottom.
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - wontfix
+    authors:
+      - dependabot
+  categories:
+    - title: Features
+      labels:
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+    - title: Build, CI & Ops
+      labels:
+        - "type: chore"
+        - "area: ops"
+    - title: Documentation
+      labels:
+        - documentation
+        - "area: docs"
+    - title: Dependencies
+      labels:
+        - dependencies
+    - title: Other changes
+      labels:
+        - "*"

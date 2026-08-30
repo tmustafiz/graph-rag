@@ -5,7 +5,7 @@ from neo4j import Driver
 from graph_rag.settings import settings
 
 # Uniqueness constraints — one per node type that ingestion upserts on.
-# See docs/IMPLEMENTATION_PLAN.md Phase 1 for the full node/relationship taxonomy.
+# See docs/ARCHITECTURE.md for the full node/relationship taxonomy.
 CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT source_path IF NOT EXISTS FOR (n:Source) REQUIRE n.path IS UNIQUE",
     "CREATE CONSTRAINT section_id IF NOT EXISTS FOR (n:Section) REQUIRE n.id IS UNIQUE",
