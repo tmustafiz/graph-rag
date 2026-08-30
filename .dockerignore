@@ -1,11 +1,16 @@
 .venv
 .git
+.github
 .pytest_cache
 .ruff_cache
 .mypy_cache
 __pycache__
 *.pyc
 .env
+models
+tests
+examples
+scripts
 training-docs
 docs
 .claude

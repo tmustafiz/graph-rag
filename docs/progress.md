@@ -8,6 +8,70 @@ phased plan this log tracks progress against.
 
 ---
 
+## 2026-08-30 (session) — Distroless multi-stage Dockerfile (low-CVE)
+
+Replaced the single-stage `python:3.12-slim` image with a hardened
+multi-stage build, verified end-to-end.
+
+[CHECKPOINT]
+1. Core Objective: unchanged. Container hardening only.
+2. Completed Milestones (verified):
+   - `Dockerfile` — 2 stages:
+     - builder `python:3.13-slim-trixie` + pinned `uv 0.12.5`
+       (`COPY --from=ghcr.io/astral-sh/uv:0.12.5`). Installs a
+       standalone CPython 3.13 to `/opt/python`
+       (`UV_PYTHON_PREFERENCE=only-managed`), strips its bundled
+       `pip`/`ensurepip`/`test`/`idlelib`, then `uv sync --extra pdf
+       --no-dev --frozen --no-editable` (deps layer, then project
+       layer) with a BuildKit cache mount and `UV_LINK_MODE=copy`.
+     - runtime `gcr.io/distroless/cc-debian13:nonroot` — copies
+       `/opt/python` and `/app/.venv` (chown nonroot). `cc` (not
+       `base`) is required: torch's `_C` needs `libstdc++.so.6`.
+       `ENTRYPOINT ["/app/.venv/bin/graph-rag"]`, `CMD ["serve-mcp"]`.
+   - `.dockerignore` — added `models`, `tests`, `examples`, `scripts`,
+     `.github`.
+   - Verified: image builds; `graph-rag --help` works; `import
+     torch, sentence_transformers, fastapi, mcp, neo4j, pymupdf` OK
+     (torch 2.13.0+cpu); runs as uid 65532; `/bin/sh` absent;
+     `status` reaches the compose Neo4j; `serve-mcp` boots and MCP
+     `initialize` returns HTTP 200 (model bind-mounted at
+     `/app/.venv/lib/python3.13/models/all-MiniLM-L6-v2`).
+   - CVE scan (Trivy): old `python:3.12-slim` base = 2C/5H/10M/31L+2?;
+     new image = 0C/0H/10M/7L+2? — all residual are LOW/MEDIUM in the
+     Debian 13.6 base packages. The msgpack 1.1.2 / setuptools 70.3.0
+     HIGHs seen mid-work were `pip/_vendor` copies inside the
+     standalone CPython — gone once bundled pip is stripped. `uv.lock`
+     unchanged (venv already had clean setuptools 84.0.0; no msgpack).
+3. Critical Context:
+   - Image built on Apple Silicon → `linux/arm64`. Cloud deploy needs
+     `docker build --platform linux/amd64` (or buildx multi-arch).
+   - The standalone-CPython symlink trick only works because
+     `/opt/python` lands at the SAME absolute path in both stages.
+   - `SentenceTransformerEmbedder._VENDORED_MODEL_DIR` resolves to
+     `/app/.venv/lib/python3.13/models/all-MiniLM-L6-v2` in this
+     layout (parents[4] of the installed module) — non-obvious; the
+     container has no model unless that path is mounted or HF is
+     reachable. Same "no model shipped" situation as the old image.
+   - `docker-compose.yml` `mcp-server` still builds from `.` with no
+     `command:` override, so ENTRYPOINT+CMD → `graph-rag serve-mcp`.
+     It mounts no model dir — first run needs network or a mount.
+4. Discarded Paths:
+   - `gcr.io/distroless/base-debian13` — torch fails: no libstdc++.
+   - `gcr.io/distroless/python3-debian13` (distro Python) — venv
+     interpreter-path mismatch; standalone CPython is cleaner and
+     unpins us from Debian's Python minor.
+   - `alpine` — no musl wheels for torch.
+   - `uv lock --upgrade-package msgpack setuptools` — no-op; the
+     HIGHs were in bundled pip, not the lock.
+5. Next Step: commit (Dockerfile + .dockerignore + CHANGELOG). Then
+   the Dependabot triage from earlier (merge #2/#3/#4, recreate #5,
+   close #1 — the 3.14 bump is moot now, base is distroless). Optional
+   follow-ups: `--platform linux/amd64` in a release build, a
+   `docker scout`/trivy CI step, sort out container model
+   provisioning.
+
+---
+
 ## 2026-08-30 (session) — Decouple document corpus from the repo + self-contained eval
 
 Follow-up to the P0 batch. Documents to ingest are now entirely

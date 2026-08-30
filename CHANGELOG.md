@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   small fixture corpus (`src/graph_rag/eval/corpus/`) before running, so it no
   longer depends on a specific document being ingested first. Added a CI job
   that runs it against a Neo4j service container.
+- The `Dockerfile` is now a multi-stage build: the app venv is built against a
+  standalone CPython 3.13 and copied into `gcr.io/distroless/cc-debian13:nonroot`
+  — no shell, no package manager, non-root by default. Base-OS High/Critical
+  CVEs go from 2C/5H to 0; the runtime image scans clean at High/Critical.
 
 ### Removed
 - Agent-instruction files (`CLAUDE.md`, `AGENTS.md`) are no longer tracked here;
