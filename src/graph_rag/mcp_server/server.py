@@ -18,8 +18,9 @@ from .models import (
 from .retriever import Retriever
 
 INSTRUCTIONS = (
-    "Look up ingested documentation (currently the AWS DMS User Guide), this "
-    "repo's own Python source, and Checkov policies. `search` covers ingested "
+    "Look up whatever has been ingested into this knowledge base — prose/"
+    "Markdown documentation, Python source, and Checkov policies. Call "
+    "`list_sources` first to see what's actually available. `search` covers ingested "
     "prose/Markdown/generic-YAML chunks ONLY — it does not cover Python code "
     "or Checkov policy text; use `search_code` for a natural-language "
     "question about this codebase's functions/classes, and `search_policies` "
