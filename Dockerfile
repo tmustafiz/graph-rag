@@ -5,7 +5,7 @@
 # CPython (python-build-standalone, via uv) so the runtime image needs no
 # system Python at all.
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim-trixie AS builder
+FROM python:3.14-slim-trixie AS builder
 
 # Pull the latest Debian point-release fixes into the (throwaway) build stage.
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
