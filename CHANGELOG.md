@@ -8,9 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Published to PyPI — `uvx graph-rag` / `uv tool install graph-rag` /
-  `pipx install graph-rag`, no clone needed. `.github/workflows/release.yml`
+- Published to PyPI as **`grag-mcp`** — `uvx grag-mcp` / `uv tool install grag-mcp` /
+  `pipx install grag-mcp`, no clone needed. `.github/workflows/release.yml`
   builds and publishes via Trusted Publishing on a `vX.Y.Z` tag push.
+  (The importable package stays `graph_rag`; the CLI command is `grag-mcp`.)
+- CI job that builds the Docker image and scans it with Trivy, failing on
+  fixable HIGH/CRITICAL CVEs. Also runs weekly so newly-disclosed CVEs against
+  an unchanged image are caught.
 - `graph-rag serve-mcp --stdio` — serve the MCP server over stdio for clients
   that launch it as a subprocess (Claude Desktop, etc.). HTTP stays the default.
 - `docs/ARCHITECTURE.md` (present-tense design + component map) and
@@ -26,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/fetch_model.py` and `make fetch-model` for the local embedding model.
 
 ### Changed
+- All `docker compose` base images are overridable via `.env`
+  (`NEO4J_IMAGE`, `BUILDER_IMAGE`, `RUNTIME_IMAGE`) so restricted
+  environments can build against an approved hardened registry without
+  editing tracked files. Defaults are unchanged. See docs/operations.md.
 - README restructured for first-time visitors (positioning, client setup
   snippets, tools table, architecture diagram).
 - The embedding model is no longer vendored in git — fetch it with

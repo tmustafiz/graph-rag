@@ -1,17 +1,35 @@
 # syntax=docker/dockerfile:1
 
+# Base images are overridable so the image can be built against whatever
+# hardened registry a restricted environment mandates (Docker Hardened Images,
+# Chainguard, an internal mirror, ...). Defaults are what CI builds and scans.
+#   BUILDER_IMAGE  needs a shell + glibc — uv installs a glibc standalone CPython.
+#   RUNTIME_IMAGE  needs glibc + libgcc + libstdc++ + ca-certificates (torch's
+#                  C++ runtime); a non-root, shell-less image is ideal.
+# See docs/operations.md "Restricted / hardened-registry environments".
+ARG BUILDER_IMAGE=python:3.14-slim-trixie
+ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian13:nonroot
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.5
+
+# Pinned uv as its own stage so the binary source is overridable (UV_IMAGE) —
+# e.g. a local scratch image built from the uv release tarball if ghcr.io is
+# unreachable.
+FROM ${UV_IMAGE} AS uv
+
 # ---------------------------------------------------------------------------
 # Builder: resolve deps and build the app venv against a self-contained
 # CPython (python-build-standalone, via uv) so the runtime image needs no
 # system Python at all.
 # ---------------------------------------------------------------------------
-FROM python:3.14-slim-trixie AS builder
+FROM ${BUILDER_IMAGE} AS builder
 
-# Pull the latest Debian point-release fixes into the (throwaway) build stage.
-RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+# Pull the latest point-release fixes into the (throwaway) build stage. Skipped
+# automatically on a base with no apt (e.g. an already-patched hardened image).
+RUN if command -v apt-get >/dev/null 2>&1; then \
+        apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*; \
+    fi
 
-# Pinned uv (static binary image — just /uv and /uvx).
-COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /usr/local/bin/uv
+COPY --from=uv /uv /usr/local/bin/uv
 
 ENV UV_PYTHON_INSTALL_DIR=/opt/python \
     UV_PYTHON_PREFERENCE=only-managed \
@@ -48,7 +66,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # + ca-certificates + tzdata. No shell, no package manager, no system Python.
 # Runs as the non-root user (uid 65532).
 # ---------------------------------------------------------------------------
-FROM gcr.io/distroless/cc-debian13:nonroot
+FROM ${RUNTIME_IMAGE}
 
 # The interpreter the venv's scripts and symlinks resolve to (same path as in
 # the builder, so the venv stays valid).

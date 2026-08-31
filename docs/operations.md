@@ -111,6 +111,72 @@ It first ingests the fixture corpus in `src/graph_rag/eval/corpus/`
 you have ingested. Run it from the repo root. Exits non-zero if any
 case fails, so it's usable as a CI gate.
 
+## Restricted / hardened-registry environments
+
+Some organizations only allow pulling from an approved hardened-image
+registry (Docker Hardened Images at `dhi.io`, Chainguard at `cgr.dev`,
+an internal mirror, ...). Every base image `docker compose` uses is
+overridable through `.env` so you never edit tracked files:
+
+| Variable | Default | What it is |
+| --- | --- | --- |
+| `NEO4J_IMAGE` | `neo4j:2026.07.1` | the Neo4j database container |
+| `BUILDER_IMAGE` | `python:3.14-slim-trixie` | build stage of the app image |
+| `RUNTIME_IMAGE` | `gcr.io/distroless/cc-debian13:nonroot` | runtime stage of the app image |
+| `UV_IMAGE` | `ghcr.io/astral-sh/uv:0.12.5` | source of the `uv` binary copied into the build stage |
+
+```bash
+# .env
+NEO4J_IMAGE=dhi.io/neo4j:2026.07.1
+BUILDER_IMAGE=dhi.io/python:3.14-dev
+RUNTIME_IMAGE=dhi.io/python:3.14
+UV_IMAGE=<your-registry>/uv:0.12.5
+```
+
+`docker login <registry>` first if the registry needs auth (`dhi.io`
+does). The `*_IMAGE` build args are passed by `docker compose build`; to
+build the image directly:
+
+```bash
+docker build \
+  --build-arg BUILDER_IMAGE=dhi.io/python:3.14-dev \
+  --build-arg RUNTIME_IMAGE=dhi.io/python:3.14 \
+  --build-arg UV_IMAGE=<your-registry>/uv:0.12.5 \
+  -t graph-rag .
+```
+
+If no approved registry carries `uv`, publish a minimal image to your
+own registry that puts the `uv` binary at `/uv` (from the release
+tarball or a vendored copy) and point `UV_IMAGE` at that.
+
+Constraints on substitutes:
+
+- **`BUILDER_IMAGE`** — needs a shell and glibc. `uv` installs a glibc
+  `python-build-standalone` interpreter into it, so a musl/Alpine base
+  won't work. A `-dev` hardened tag (shell + package manager) is the
+  right choice here.
+- **`RUNTIME_IMAGE`** — needs glibc, `libgcc`, `libstdc++`
+  (torch's C++ runtime) and `ca-certificates`. The `Dockerfile` copies
+  the venv with `--chown=nonroot:nonroot` and expects the base to run as
+  a non-root user; the common hardened bases (distroless, Chainguard,
+  DHI) all use `nonroot` / uid 65532, but if yours differs, adjust the
+  `--chown` and add a `USER` line.
+- **Neo4j** — the substitute must honour `NEO4J_AUTH`. Two more things
+  the stock image gives you that a hardened one may not: the
+  `docker-compose.yml` healthcheck shells out to `wget` (swap it for
+  `bin/cypher-shell` or a `CMD` the image actually has if `wget` is
+  gone), and `NEO4J_PLUGINS` triggers a boot-time shell script that
+  downloads the APOC + GDS jars. If that auto-download is missing, bake
+  the plugins into a thin derived image instead:
+
+  ```dockerfile
+  FROM dhi.io/neo4j:2026.07.1
+  COPY apoc-*-core.jar gds-*.jar /var/lib/neo4j/plugins/
+  ```
+
+  and drop `NEO4J_PLUGINS` from the compose environment. GDS is only
+  needed for `compute-centrality`.
+
 ## Ingestion errors and logging
 
 `graph-rag ingest`/the `ingest_path` MCP tool log a start/end summary
