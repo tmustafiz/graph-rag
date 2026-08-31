@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `graph-rag serve-mcp --stdio` — serve the MCP server over stdio for clients
+  that launch it as a subprocess (Claude Desktop, etc.). HTTP stays the default.
 - `docs/ARCHITECTURE.md` (present-tense design + component map) and
   `docs/ROADMAP.md` (pointer to the GitHub project board / milestones).
 - `.github/release.yml` so GitHub release notes are auto-categorized by label.
