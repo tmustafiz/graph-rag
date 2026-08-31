@@ -137,7 +137,10 @@ and hard-deletes ones past a grace window.
   both.
 - **Image:** multi-stage `Dockerfile` — the app venv is built against a
   standalone CPython and copied into `gcr.io/distroless/cc-debian13:nonroot`
-  (no shell, no package manager, non-root).
+  (no shell, no package manager, non-root). Every base image (`BUILDER_IMAGE`,
+  `RUNTIME_IMAGE`, `UV_IMAGE`, `NEO4J_IMAGE`) is overridable for environments
+  restricted to an approved hardened registry — see
+  [operations.md](operations.md#restricted--hardened-registry-environments).
 - **Neo4j:** Community edition with the APOC and Graph Data Science plugins
   (GDS is only needed for `compute-centrality`).
 

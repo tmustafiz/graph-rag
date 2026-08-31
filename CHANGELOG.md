@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/fetch_model.py` and `make fetch-model` for the local embedding model.
 
 ### Changed
+- All `docker compose` base images are overridable via `.env`
+  (`NEO4J_IMAGE`, `BUILDER_IMAGE`, `RUNTIME_IMAGE`) so restricted
+  environments can build against an approved hardened registry without
+  editing tracked files. Defaults are unchanged. See docs/operations.md.
 - README restructured for first-time visitors (positioning, client setup
   snippets, tools table, architecture diagram).
 - The embedding model is no longer vendored in git — fetch it with
