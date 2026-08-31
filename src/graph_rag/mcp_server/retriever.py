@@ -315,7 +315,7 @@ class Retriever:
     def get_central_code_entities(self, top_k: int = 10) -> list[CodeCentralityResult]:
         """The most central `CodeEntity` nodes by PageRank over the
         `CALLS`/`IMPORTS` graph (see `CentralityAnalyzer` /
-        `graph-rag compute-centrality`) — empty until that's been run at
+        `grag-mcp compute-centrality`) — empty until that's been run at
         least once.
         """
         with self._driver.session() as session:

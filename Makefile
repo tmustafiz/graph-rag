@@ -16,10 +16,10 @@ install:
 	uv sync --all-extras
 
 status:
-	uv run graph-rag status
+	uv run grag-mcp status
 
 apply-schema:
-	uv run graph-rag apply-schema
+	uv run grag-mcp apply-schema
 
 # Bring your own documents: make ingest INGEST_PATH=/path/to/your/docs
 ingest:
@@ -28,13 +28,13 @@ ingest:
 		echo "  make ingest INGEST_PATH=~/my-docs"; \
 		echo "  make ingest INGEST_PATH=examples/checkov-policies"; \
 		exit 2; }
-	uv run graph-rag ingest "$(INGEST_PATH)"
+	uv run grag-mcp ingest "$(INGEST_PATH)"
 
 mcp-serve:
-	uv run graph-rag serve-mcp
+	uv run grag-mcp serve-mcp
 
 eval:
-	uv run graph-rag eval-retrieval
+	uv run grag-mcp eval-retrieval
 
 lint:
 	uv run ruff check .

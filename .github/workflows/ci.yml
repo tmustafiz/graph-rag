@@ -101,8 +101,8 @@ jobs:
         run: make fetch-model
       - name: Apply schema and run retrieval eval
         run: |
-          uv run graph-rag apply-schema
-          uv run graph-rag eval-retrieval
+          uv run grag-mcp apply-schema
+          uv run grag-mcp eval-retrieval
 
   image:
     name: Image build & CVE scan

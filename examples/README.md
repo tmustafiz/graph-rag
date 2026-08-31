@@ -1,7 +1,7 @@
 # examples/
 
 Small, original sample inputs for trying graph-rag's features. graph-rag does
-**not** ship a document corpus — you point `graph-rag ingest` at your own files
+**not** ship a document corpus — you point `grag-mcp ingest` at your own files
 (see the "Bring your own documents" section of the top-level README). This
 folder only holds enough to exercise the tooling on a fresh clone.
 
@@ -12,7 +12,7 @@ copied from Checkov's catalog. Ingest them to try `find_policies_for` and
 `search_policies`:
 
 ```bash
-uv run graph-rag ingest examples/checkov-policies
+uv run grag-mcp ingest examples/checkov-policies
 ```
 
 Then, from an MCP client:

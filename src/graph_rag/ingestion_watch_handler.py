@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class IngestionWatchHandler(FileSystemEventHandler):
     """Re-ingests a single file via `IngestionPipeline` on every create/modify
-    filesystem event — the reaction half of `graph-rag ingest --watch`.
+    filesystem event — the reaction half of `grag-mcp ingest --watch`.
 
     Relies on `IngestionPipeline`'s own content-hash skip and per-file error
     handling, so a duplicate or unrelated event is cheap, not just ignored.

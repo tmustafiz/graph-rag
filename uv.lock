@@ -248,7 +248,7 @@ wheels = [
 ]
 
 [[package]]
-name = "graph-rag"
+name = "grag-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

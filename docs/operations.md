@@ -21,7 +21,7 @@ Neo4j Community edition (what this project runs) doesn't support the
 online/hot backup feature — the database has to be stopped for a
 consistent dump. A plain volume-level tar archive is simplest here
 since the document graph is fully reproducible by re-running
-`graph-rag ingest` against your source files (a backup is a
+`grag-mcp ingest` against your source files (a backup is a
 convenience to skip re-ingesting, not the only copy of anything
 irreplaceable — except `AgentMemory`, which has no source file).
 
@@ -68,9 +68,9 @@ alternative to restoring a backup is simply re-running ingestion after
 `docker compose down -v && docker compose up -d`:
 
 ```bash
-uv run graph-rag apply-schema
-uv run graph-rag ingest <your-docs>       # whatever you ingested before
-uv run graph-rag ingest src/graph_rag     # if you were dogfooding on the code
+uv run grag-mcp apply-schema
+uv run grag-mcp ingest <your-docs>       # whatever you ingested before
+uv run grag-mcp ingest src/graph_rag     # if you were dogfooding on the code
 ```
 
 This reconstructs the document graph, but **not** `AgentMemory` nodes
@@ -96,14 +96,14 @@ loopback address and `MCP_AUTH_TOKEN` gate as the MCP server itself.
 
 ## Retrieval regression eval
 
-`graph-rag eval-retrieval` runs a small hand-written set of questions
+`grag-mcp eval-retrieval` runs a small hand-written set of questions
 with known-correct sources/sections (`src/graph_rag/eval/retrieval_eval_set.yaml`)
 against `search()` and reports pass/fail per case — run it after
 changing chunking, embedding, or ranking logic to catch regressions
 before they reach an agent:
 
 ```bash
-uv run graph-rag eval-retrieval   # or: make eval
+uv run grag-mcp eval-retrieval   # or: make eval
 ```
 
 It first ingests the fixture corpus in `src/graph_rag/eval/corpus/`
@@ -142,7 +142,7 @@ docker build \
   --build-arg BUILDER_IMAGE=dhi.io/python:3.14-dev \
   --build-arg RUNTIME_IMAGE=dhi.io/python:3.14 \
   --build-arg UV_IMAGE=<your-registry>/uv:0.12.5 \
-  -t graph-rag .
+  -t grag-mcp .
 ```
 
 If no approved registry carries `uv`, publish a minimal image to your
@@ -179,7 +179,7 @@ Constraints on substitutes:
 
 ## Ingestion errors and logging
 
-`graph-rag ingest`/the `ingest_path` MCP tool log a start/end summary
+`grag-mcp ingest`/the `ingest_path` MCP tool log a start/end summary
 (files processed, skipped, failed) at INFO level, and log a full
 traceback for any file that fails to parse/embed/write at ERROR level
 — that file is recorded in the results with `error` set rather than

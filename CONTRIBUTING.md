@@ -113,9 +113,9 @@ token is stored anywhere).
 
 One-time setup (maintainer, on PyPI):
 
-1. Create the `graph-rag` project's trusted publisher at
+1. Create the `grag-mcp` project's trusted publisher at
    <https://pypi.org/manage/account/publishing/>: owner `tmustafiz`, repo
-   `graph-rag`, workflow `release.yml`, environment `pypi`.
+   `grag-mcp`, workflow `release.yml`, environment `pypi`.
 2. In the GitHub repo, add an Environment named `pypi` (Settings → Environments).
    Optionally restrict it to tag pushes and add required reviewers.
 3. Optional dry-run path: repeat for `test.pypi.org` with environment `testpypi`.

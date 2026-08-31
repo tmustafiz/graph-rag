@@ -1,4 +1,4 @@
-# Hand-written retrieval regression cases, run via `graph-rag eval-retrieval`
+# Hand-written retrieval regression cases, run via `grag-mcp eval-retrieval`
 # against Retriever.search(). `eval-retrieval` first ingests the fixture corpus
 # in src/graph_rag/eval/corpus/ (idempotent), so this eval is self-contained and
 # does not depend on whatever else you happen to have ingested.

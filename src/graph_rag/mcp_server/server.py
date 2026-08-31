@@ -36,7 +36,7 @@ INSTRUCTIONS = (
     "Section/Chunk/PolicyRule/AgentMemory id, CodeEntity qualified_name, or "
     "Concept name). `get_central_code_entities` ranks code by PageRank over "
     "the CALLS/IMPORTS graph — use it to find what's most depended-upon (and "
-    "riskiest to change) in this codebase; empty until `graph-rag "
+    "riskiest to change) in this codebase; empty until `grag-mcp "
     "compute-centrality` has been run at least once. `cite` returns a "
     "human-readable citation string for a chunk. `ingest_path` (re-)ingests "
     "a file or directory after it changes. Use `remember`/`recall`/`forget` "
@@ -125,7 +125,7 @@ def build_server(
     def get_central_code_entities(top_k: int = 10) -> list[CodeCentralityResult]:
         """Most central `CodeEntity` nodes by PageRank over the CALLS/IMPORTS
         graph — what's most heavily depended-upon (and riskiest to change).
-        Empty until `graph-rag compute-centrality` has been run at least once.
+        Empty until `grag-mcp compute-centrality` has been run at least once.
         """
         return retriever.get_central_code_entities(top_k)
 
