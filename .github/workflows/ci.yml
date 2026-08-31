@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Weekly, so a CVE disclosed against an otherwise-unchanged image still trips
+    # the `image` job (Mondays 07:00 UTC).
+    - cron: "0 7 * * 1"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -99,3 +103,36 @@ jobs:
         run: |
           uv run graph-rag apply-schema
           uv run graph-rag eval-retrieval
+
+  image:
+    name: Image build & CVE scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build runtime image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: graph-rag:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        # Pull the vuln DB from ECR, not GHCR, to dodge anonymous-pull rate limits.
+        env:
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db
+        with:
+          image-ref: graph-rag:ci
+          format: table
+          severity: HIGH,CRITICAL
+          # Only block on CVEs that actually have a fix — an unfixable base CVE
+          # shouldn't wedge every PR. Flip to false to tighten.
+          ignore-unfixed: true
+          exit-code: "1"
