@@ -105,6 +105,34 @@ Capture design decisions and context in the issue and the PR that implements it,
 so the "why" is discoverable from history. See also
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Releasing
+
+Publishing is automated by `.github/workflows/release.yml` using PyPI
+[Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC — no API
+token is stored anywhere).
+
+One-time setup (maintainer, on PyPI):
+
+1. Create the `graph-rag` project's trusted publisher at
+   <https://pypi.org/manage/account/publishing/>: owner `tmustafiz`, repo
+   `graph-rag`, workflow `release.yml`, environment `pypi`.
+2. In the GitHub repo, add an Environment named `pypi` (Settings → Environments).
+   Optionally restrict it to tag pushes and add required reviewers.
+3. Optional dry-run path: repeat for `test.pypi.org` with environment `testpypi`.
+
+Cutting a release:
+
+1. Bump `version` in `pyproject.toml`, move the `CHANGELOG.md` `[Unreleased]`
+   items under a new `[x.y.z]` heading, and open/merge that PR.
+2. Tag the merge commit and push:
+   ```bash
+   git tag vX.Y.Z && git push origin vX.Y.Z
+   ```
+   The workflow checks the tag matches `pyproject.toml`, builds the
+   wheel + sdist, runs `twine check`, and publishes to PyPI.
+3. To rehearse against TestPyPI first, run the workflow manually
+   (Actions → Release → Run workflow → target `testpypi`).
+
 ## Reporting security issues
 
 Do **not** open a public issue for security problems — see `SECURITY.md`.

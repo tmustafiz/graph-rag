@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Published to PyPI — `uvx graph-rag` / `uv tool install graph-rag` /
+  `pipx install graph-rag`, no clone needed. `.github/workflows/release.yml`
+  builds and publishes via Trusted Publishing on a `vX.Y.Z` tag push.
 - `graph-rag serve-mcp --stdio` — serve the MCP server over stdio for clients
   that launch it as a subprocess (Claude Desktop, etc.). HTTP stays the default.
 - `docs/ARCHITECTURE.md` (present-tense design + component map) and

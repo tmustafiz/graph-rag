@@ -31,7 +31,30 @@ Checkov rules for this resource type". It also gives the agent a place to
 
 <!-- TODO: add an asciinema / GIF of an agent calling search_code + recall -->
 
-## Quickstart
+## Install
+
+From PyPI, no clone needed — run it straight with [`uv`](https://docs.astral.sh/uv/):
+
+```bash
+uvx graph-rag --help                       # one-off, no install
+uvx 'graph-rag[pdf]' serve-mcp --stdio     # with PDF ingestion support
+```
+
+or install the `graph-rag` command onto your PATH:
+
+```bash
+uv tool install 'graph-rag[pdf]'    # or: pipx install 'graph-rag[pdf]'
+```
+
+You still need a Neo4j instance (APOC + GDS plugins) reachable at `NEO4J_URI` /
+`NEO4J_USER` / `NEO4J_PASSWORD` — see [docker-compose.yml](docker-compose.yml)
+for a ready-made one. The `[pdf]` extra pulls in PyMuPDF (AGPL-licensed); leave
+it off if you only ingest Markdown / Python / YAML.
+
+On Linux, pass `--torch-backend=cpu` (`uvx --torch-backend=cpu …`) unless you
+want the multi-gigabyte CUDA build of PyTorch — the embedding model runs on CPU.
+
+## Quickstart (from a clone)
 
 Requires [`uv`](https://docs.astral.sh/uv/) and Docker.
 

@@ -1,3 +1,8 @@
+import builtins
+from pathlib import Path
+
+import pytest
+
 from graph_rag.ingest.parsers.pdf_parser import PdfParser
 
 # [level, title, start_page]
@@ -46,3 +51,21 @@ def test_section_ids_are_stable_and_ordered() -> None:
         "doc.pdf::s0003",
     ]
     assert [s.order for s in sections] == [0, 1, 2, 3]
+
+
+def test_parse_without_pymupdf_raises_actionable_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The `pdf` extra is optional, so importing the parser must not require
+    pymupdf — only calling `parse()` on a PDF does, and then with a message
+    that names the extra.
+    """
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: object, **kwargs: object):  # noqa: ANN202
+        if name == "pymupdf":
+            raise ModuleNotFoundError("No module named 'pymupdf'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(RuntimeError, match=r"'pdf' extra"):
+        PdfParser().parse(Path("whatever.pdf"))

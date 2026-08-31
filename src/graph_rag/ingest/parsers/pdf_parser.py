@@ -1,12 +1,13 @@
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
-
-import pymupdf
+from typing import TYPE_CHECKING, cast
 
 from ..chunker import Chunker
 from ..models import Chunk, ParsedDocument, Section, Source
+
+if TYPE_CHECKING:
+    import pymupdf
 
 
 class PdfParser:
@@ -22,6 +23,14 @@ class PdfParser:
         return path.suffix.lower() == ".pdf"
 
     def parse(self, path: Path) -> ParsedDocument:
+        try:
+            import pymupdf
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Parsing PDFs needs the optional 'pdf' extra. Install it with "
+                "`pip install 'graph-rag[pdf]'` (or `uv sync --extra pdf`)."
+            ) from exc
+
         content = path.read_bytes()
         source = Source(
             path=str(path),
@@ -80,7 +89,7 @@ class PdfParser:
         return sections
 
     @staticmethod
-    def _extract_text(doc: pymupdf.Document, start_page: int, end_page: int) -> str:
+    def _extract_text(doc: "pymupdf.Document", start_page: int, end_page: int) -> str:
         # start_page/end_page are 1-indexed (from the TOC); pymupdf pages are 0-indexed.
         # get_text("text") always returns str; the stub's overloads are keyed dynamically
         # and can't narrow on the literal, hence the cast.
