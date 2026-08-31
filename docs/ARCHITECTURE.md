@@ -107,16 +107,22 @@ Graph-native tools sit alongside search: `get_section` / `get_outline`
 
 ## MCP server
 
-Served over **Streamable HTTP** as a long-lived process (its own compose
-service) so the embedding model and the Neo4j driver pool stay warm across agent
-sessions.
+`graph-rag serve-mcp` runs over **Streamable HTTP** by default — a long-lived
+process (its own compose service) so the embedding model and the Neo4j driver
+pool stay warm across agent sessions. `--stdio` switches to the stdio transport
+for clients that spawn the server per session; it shares the same tool wiring
+(`build_server` in `mcp_server/server.py`) but skips the HTTP app, the
+`POST /ingest` route, and the auth-token gate.
 
-Security posture (see [SECURITY.md](../SECURITY.md)):
+Security posture of the HTTP transport (see [SECURITY.md](../SECURITY.md)):
 
 - Binds `127.0.0.1` by default; `docker-compose.yml` publishes on loopback only.
 - Origin / DNS-rebinding protection is always on (`TransportSecuritySettings` in
   `cli.py`), even when `MCP_HOST=0.0.0.0` inside a container.
 - Optional `MCP_AUTH_TOKEN` bearer check as defense in depth.
+
+stdio has no network surface — the client owns the process's stdin/stdout — so
+those controls don't apply.
 
 ## Agent memory
 

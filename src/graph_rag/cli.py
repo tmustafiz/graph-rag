@@ -179,22 +179,21 @@ def eval_retrieval(
 
 
 @app.command(name="serve-mcp")
-def serve_mcp() -> None:
-    """Run the MCP server (Streamable HTTP) for coding-agent lookups."""
-    # Explicit (not left to the SDK's host-based default) so Origin/DNS-rebinding
-    # protection stays on even when MCP_HOST=0.0.0.0 (e.g. binding inside a container
-    # for Docker's port-forwarding to reach it, while the host-side publish still
-    # restricts external access to 127.0.0.1).
-    transport_security = TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=["127.0.0.1:*", "localhost:*", f"{settings.mcp_host}:*"],
-        allowed_origins=[
-            "http://127.0.0.1:*",
-            "http://localhost:*",
-            f"http://{settings.mcp_host}:*",
-        ],
-    )
+def serve_mcp(
+    stdio: bool = typer.Option(
+        False,
+        "--stdio",
+        help="Serve over stdio instead of Streamable HTTP, for MCP clients that "
+        "launch the server as a subprocess (Claude Desktop, etc.). No network "
+        "socket, no auth-token gate, and no POST /ingest endpoint.",
+    ),
+) -> None:
+    """Run the MCP server for coding-agent lookups.
 
+    Defaults to Streamable HTTP (a long-lived, container-friendly listener on
+    MCP_HOST:MCP_PORT). Pass --stdio for a zero-config drop-in that the client
+    spawns per session and talks to over stdin/stdout.
+    """
     embedder = SentenceTransformerEmbedder()
     with driver_session() as driver:
         retriever = Retriever(driver, embedder)
@@ -202,9 +201,31 @@ def serve_mcp() -> None:
         ingestion_pipeline = IngestionPipeline(ParserRegistry(), embedder, writer)
         memory_writer = MemoryWriter(driver, embedder)
         memory_recaller = MemoryRecaller(driver, embedder)
-        mcp_app = build_server(
-            retriever, ingestion_pipeline, memory_writer, memory_recaller
-        ).streamable_http_app(host=settings.mcp_host, transport_security=transport_security)
+        server = build_server(retriever, ingestion_pipeline, memory_writer, memory_recaller)
+
+        if stdio:
+            # stdout is the JSON-RPC channel in stdio mode — keep the status
+            # line on stderr so it can't corrupt the protocol stream.
+            typer.echo("graph-rag MCP server ready on stdio", err=True)
+            server.run(transport="stdio")
+            return
+
+        # Explicit (not left to the SDK's host-based default) so Origin/DNS-rebinding
+        # protection stays on even when MCP_HOST=0.0.0.0 (e.g. binding inside a container
+        # for Docker's port-forwarding to reach it, while the host-side publish still
+        # restricts external access to 127.0.0.1).
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", f"{settings.mcp_host}:*"],
+            allowed_origins=[
+                "http://127.0.0.1:*",
+                "http://localhost:*",
+                f"http://{settings.mcp_host}:*",
+            ],
+        )
+        mcp_app = server.streamable_http_app(
+            host=settings.mcp_host, transport_security=transport_security
+        )
         app = build_http_app(mcp_app, ingestion_pipeline)
         if settings.mcp_auth_token:
             app = BearerTokenMiddleware(app, token=settings.mcp_auth_token)

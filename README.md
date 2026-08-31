@@ -83,6 +83,24 @@ claude mcp add graph-rag --transport http http://127.0.0.1:8765/mcp
 Set `MCP_AUTH_TOKEN` in `.env` to require a bearer token (defense in depth; the
 server is bound to `127.0.0.1` regardless — see [SECURITY.md](SECURITY.md)).
 
+### stdio transport
+
+For clients that launch the server as a subprocess instead of connecting over
+HTTP, run `graph-rag serve-mcp --stdio` — no port, no auth token, no
+`POST /ingest`. Point the client's command at it:
+
+```json
+{
+  "mcpServers": {
+    "graph-rag": { "command": "graph-rag", "args": ["serve-mcp", "--stdio"] }
+  }
+}
+```
+
+Use `uv run graph-rag …` (or an absolute path to the entry point) as the
+`command` if `graph-rag` isn't on the client's `PATH`. Neo4j still has to be
+reachable at `NEO4J_URI`.
+
 ## MCP tools
 
 | Tool | What it does |
