@@ -1,10 +1,12 @@
 services:
   neo4j:
     # Overridable so a restricted environment can point at an approved hardened
-    # image (e.g. NEO4J_IMAGE=dhi.io/neo4j:2026.07.1, a Chainguard tag, or an
-    # internal mirror). See docs/operations.md "Restricted / hardened-registry
-    # environments". Must be a Community-edition Neo4j that honours NEO4J_AUTH
-    # and (unless you bake plugins in) NEO4J_PLUGINS.
+    # image (e.g. NEO4J_IMAGE=dhi.io/neo4j:5-dev — DHI tracks the Neo4j 5.x
+    # line, not CalVer — a Chainguard tag, or an internal mirror). See
+    # docs/operations.md "Restricted / hardened-registry environments" for the
+    # healthcheck/plugin adjustments a shell-less image needs. Must be a
+    # Community-edition Neo4j that honours NEO4J_AUTH and (unless you bake
+    # plugins in) NEO4J_PLUGINS.
     image: ${NEO4J_IMAGE:-neo4j:2026.07.1}
     container_name: graph-rag-neo4j
     ports:

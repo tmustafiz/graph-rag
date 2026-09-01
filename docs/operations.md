@@ -127,20 +127,29 @@ overridable through `.env` so you never edit tracked files:
 
 ```bash
 # .env
-NEO4J_IMAGE=dhi.io/neo4j:2026.07.1
-BUILDER_IMAGE=dhi.io/python:3.14-dev
-RUNTIME_IMAGE=dhi.io/python:3.14
+NEO4J_IMAGE=dhi.io/neo4j:5-dev
+BUILDER_IMAGE=dhi.io/python:3.13-dev
+RUNTIME_IMAGE=dhi.io/python:3.13
 UV_IMAGE=<your-registry>/uv:0.12.5
 ```
 
-`docker login <registry>` first if the registry needs auth (`dhi.io`
-does). The `*_IMAGE` build args are passed by `docker compose build`; to
-build the image directly:
+`docker login <registry>` first if the registry needs auth. For Docker
+Hardened Images that means `docker login dhi.io` with a DHI subscription;
+community access pulls `dhi.io/<image>:<tag>`, while Select/Enterprise
+subscribers mirror the repos into their own Docker Hub org and pull
+`<your-org>/<image>:<tag>` instead. DHI's Neo4j repository tracks the
+Neo4j **5.x** line on a `debian-13` base (`5-dev`, `5.26-dev`, ...), not
+the CalVer tags (`2026.07.1`) the Docker Official `neo4j` image uses — so
+pin `dhi.io/neo4j:5-dev`, not a `2026.*` tag. APOC and GDS jar versions
+must then match that 5.x server line.
+
+The `*_IMAGE` build args are passed by `docker compose build`; to build
+the image directly:
 
 ```bash
 docker build \
-  --build-arg BUILDER_IMAGE=dhi.io/python:3.14-dev \
-  --build-arg RUNTIME_IMAGE=dhi.io/python:3.14 \
+  --build-arg BUILDER_IMAGE=dhi.io/python:3.13-dev \
+  --build-arg RUNTIME_IMAGE=dhi.io/python:3.13 \
   --build-arg UV_IMAGE=<your-registry>/uv:0.12.5 \
   -t grag-mcp .
 ```
@@ -161,21 +170,44 @@ Constraints on substitutes:
   a non-root user; the common hardened bases (distroless, Chainguard,
   DHI) all use `nonroot` / uid 65532, but if yours differs, adjust the
   `--chown` and add a `USER` line.
-- **Neo4j** — the substitute must honour `NEO4J_AUTH`. Two more things
-  the stock image gives you that a hardened one may not: the
-  `docker-compose.yml` healthcheck shells out to `wget` (swap it for
-  `bin/cypher-shell` or a `CMD` the image actually has if `wget` is
-  gone), and `NEO4J_PLUGINS` triggers a boot-time shell script that
-  downloads the APOC + GDS jars. If that auto-download is missing, bake
-  the plugins into a thin derived image instead:
+- **Neo4j** — the substitute must honour `NEO4J_AUTH`. Pick the tag
+  variant deliberately:
+
+  - **`dhi.io/neo4j:5-dev`** keeps a shell and package manager, so the
+    stock entrypoint's `NEO4J_PLUGINS` boot script (it downloads the
+    APOC + GDS jars) and a shell healthcheck still work. It ships
+    `neo4j-admin` and `cypher-shell` but **not** `wget`, so the
+    `docker-compose.yml` healthcheck still has to change (below). This is
+    the pragmatic choice for a database container and still scans at
+    0 CVEs.
+  - **`dhi.io/neo4j:5`** (runtime, non-dev) has no shell or package
+    manager and runs non-root. `NEO4J_PLUGINS` auto-download won't run
+    and `CMD-SHELL` healthchecks won't work — you must bake the plugins
+    in (below) and use an exec-form healthcheck.
+
+  Swap the healthcheck in `docker-compose.yml` for one the image has:
+
+  ```yaml
+  healthcheck:
+    test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD}",
+           "--non-interactive", "RETURN 1"]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+  ```
+
+  If the plugin auto-download is unavailable (runtime tag, or an
+  air-gapped host that can't reach `github.com`), bake the jars into a
+  thin derived image instead:
 
   ```dockerfile
-  FROM dhi.io/neo4j:2026.07.1
+  FROM dhi.io/neo4j:5-dev
   COPY apoc-*-core.jar gds-*.jar /var/lib/neo4j/plugins/
   ```
 
-  and drop `NEO4J_PLUGINS` from the compose environment. GDS is only
-  needed for `compute-centrality`.
+  build it, point `NEO4J_IMAGE` at it, and drop `NEO4J_PLUGINS` from the
+  compose environment (keep `NEO4J_dbms_security_procedures_unrestricted`).
+  GDS is only needed for `compute-centrality`; APOC is used more broadly.
 
 ## Ingestion errors and logging
 
