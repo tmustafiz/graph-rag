@@ -8,10 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Published to PyPI as **`grag-mcp`** — `uvx grag-mcp` / `uv tool install grag-mcp` /
+  `pipx install grag-mcp`, no clone needed. `.github/workflows/release.yml`
+  builds and publishes via Trusted Publishing on a `vX.Y.Z` tag push.
+  (The importable package stays `graph_rag`; the CLI command is `grag-mcp`.)
 - CI job that builds the Docker image and scans it with Trivy, failing on
   fixable HIGH/CRITICAL CVEs. Also runs weekly so newly-disclosed CVEs against
   an unchanged image are caught.
-- `graph-rag serve-mcp --stdio` — serve the MCP server over stdio for clients
+- `grag-mcp serve-mcp --stdio` — serve the MCP server over stdio for clients
   that launch it as a subprocess (Claude Desktop, etc.). HTTP stays the default.
 - `docs/ARCHITECTURE.md` (present-tense design + component map) and
   `docs/ROADMAP.md` (pointer to the GitHub project board / milestones).
@@ -36,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `make fetch-model` (falls back to a first-use Hub download otherwise).
 - The repo ships no document corpus. `make ingest` now requires
   `INGEST_PATH` (`make ingest INGEST_PATH=…`); bring your own files.
-- `graph-rag eval-retrieval` / `make eval` is self-contained: it ingests a
+- `grag-mcp eval-retrieval` / `make eval` is self-contained: it ingests a
   small fixture corpus (`src/graph_rag/eval/corpus/`) before running, so it no
   longer depends on a specific document being ingested first. Added a CI job
   that runs it against a Neo4j service container.

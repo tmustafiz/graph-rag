@@ -10,7 +10,7 @@ from .ingestion_watch_handler import IngestionWatchHandler
 class IngestionWatcher:
     """Blocks, re-ingesting `path` via `IngestionPipeline` on every filesystem
     change, until interrupted (Ctrl+C) — the long-running half of
-    `graph-rag ingest --watch`, for continuous local dev.
+    `grag-mcp ingest --watch`, for continuous local dev.
     """
 
     def __init__(self, pipeline: IngestionPipeline, dry_run: bool = False) -> None:

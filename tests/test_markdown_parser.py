@@ -54,7 +54,7 @@ Some intro prose here that is short.
 Run this:
 
 ```bash
-pip install graph-rag
+pip install grag-mcp
 ```
 
 # Reference

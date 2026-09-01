@@ -70,7 +70,7 @@ flowchart TD
 - `(CodeEntity)-[:CALLS]->(CodeEntity)`, `(CodeEntity)-[:IMPORTS]->(CodeEntity)`
 - `(Source)-[:DEFINES]->(PolicyRule)`, `(PolicyRule)-[:APPLIES_TO]->(Concept)`
 
-**Indexes** (`graph-rag apply-schema`)
+**Indexes** (`grag-mcp apply-schema`)
 
 - Uniqueness constraints on every node key above.
 - Vector indexes (cosine, 384-d) on `Chunk`, `CodeEntity`, `PolicyRule`, `AgentMemory` `.embedding`.
@@ -79,7 +79,7 @@ flowchart TD
 
 ## Ingestion
 
-`graph-rag ingest <path>` (file or directory, recursive) → `ParserRegistry`
+`grag-mcp ingest <path>` (file or directory, recursive) → `ParserRegistry`
 picks a parser by extension → `Chunker` → `Enricher` (embeddings) →
 `GraphWriter` upserts.
 
@@ -107,7 +107,7 @@ Graph-native tools sit alongside search: `get_section` / `get_outline`
 
 ## MCP server
 
-`graph-rag serve-mcp` runs over **Streamable HTTP** by default — a long-lived
+`grag-mcp serve-mcp` runs over **Streamable HTTP** by default — a long-lived
 process (its own compose service) so the embedding model and the Neo4j driver
 pool stay warm across agent sessions. `--stdio` switches to the stdio transport
 for clients that spawn the server per session; it shares the same tool wiring
@@ -127,7 +127,7 @@ those controls don't apply.
 ## Agent memory
 
 `remember` / `recall` / `forget` store `AgentMemory` nodes (embedded, so
-`recall` is semantic). `graph-rag prune-memory --threshold <score>` soft-deletes
+`recall` is semantic). `grag-mcp prune-memory --threshold <score>` soft-deletes
 memories whose recency + access-frequency decay score falls below the threshold
 and hard-deletes ones past a grace window.
 

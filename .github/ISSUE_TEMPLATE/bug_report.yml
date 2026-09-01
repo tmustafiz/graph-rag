@@ -20,7 +20,7 @@ body:
       description: Exact commands / MCP calls / inputs. A minimal repro helps a lot.
       placeholder: |
         1. make up && make apply-schema
-        2. uv run graph-rag ingest ...
+        2. uv run grag-mcp ingest ...
         3. ...
     validations:
       required: true
@@ -41,7 +41,7 @@ body:
     attributes:
       label: How are you running it?
       options:
-        - CLI (uv run graph-rag ...)
+        - CLI (uv run grag-mcp ...)
         - MCP server (make mcp-serve)
         - docker compose
         - Other / not sure

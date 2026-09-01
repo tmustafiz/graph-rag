@@ -31,7 +31,32 @@ Checkov rules for this resource type". It also gives the agent a place to
 
 <!-- TODO: add an asciinema / GIF of an agent calling search_code + recall -->
 
-## Quickstart
+## Install
+
+The PyPI package is [`grag-mcp`](https://pypi.org/project/grag-mcp/) (the name
+`graph-rag` was taken); it installs a `grag-mcp` command. No clone needed — run
+it straight with [`uv`](https://docs.astral.sh/uv/):
+
+```bash
+uvx grag-mcp --help                       # one-off, no install
+uvx 'grag-mcp[pdf]' serve-mcp --stdio     # with PDF ingestion support
+```
+
+or install the `grag-mcp` command onto your PATH:
+
+```bash
+uv tool install 'grag-mcp[pdf]'    # or: pipx install 'grag-mcp[pdf]'
+```
+
+You still need a Neo4j instance (APOC + GDS plugins) reachable at `NEO4J_URI` /
+`NEO4J_USER` / `NEO4J_PASSWORD` — see [docker-compose.yml](docker-compose.yml)
+for a ready-made one. The `[pdf]` extra pulls in PyMuPDF (AGPL-licensed); leave
+it off if you only ingest Markdown / Python / YAML.
+
+On Linux, pass `--torch-backend=cpu` (`uvx --torch-backend=cpu …`) unless you
+want the multi-gigabyte CUDA build of PyTorch — the embedding model runs on CPU.
+
+## Quickstart (from a clone)
 
 Requires [`uv`](https://docs.astral.sh/uv/) and Docker.
 
@@ -86,19 +111,19 @@ server is bound to `127.0.0.1` regardless — see [SECURITY.md](SECURITY.md)).
 ### stdio transport
 
 For clients that launch the server as a subprocess instead of connecting over
-HTTP, run `graph-rag serve-mcp --stdio` — no port, no auth token, no
+HTTP, run `grag-mcp serve-mcp --stdio` — no port, no auth token, no
 `POST /ingest`. Point the client's command at it:
 
 ```json
 {
   "mcpServers": {
-    "graph-rag": { "command": "graph-rag", "args": ["serve-mcp", "--stdio"] }
+    "graph-rag": { "command": "grag-mcp", "args": ["serve-mcp", "--stdio"] }
   }
 }
 ```
 
-Use `uv run graph-rag …` (or an absolute path to the entry point) as the
-`command` if `graph-rag` isn't on the client's `PATH`. Neo4j still has to be
+Use `uv run grag-mcp …` (or an absolute path to the entry point) as the
+`command` if `grag-mcp` isn't on the client's `PATH`. Neo4j still has to be
 reachable at `NEO4J_URI`.
 
 ## MCP tools
@@ -112,24 +137,24 @@ reachable at `NEO4J_URI`.
 | `get_section` / `get_outline` | Full section text (paginated via `max_chars`) or a source's table-of-contents tree. |
 | `list_sources` | Everything currently ingested (also the `graph-rag://sources` MCP **resource**). |
 | `get_neighbors` | Walk the graph from any node — Source path, Section/Chunk/PolicyRule/AgentMemory id, CodeEntity qualified name, or Concept name — optionally filtered by relationship type. |
-| `get_central_code_entities` | Most-depended-upon code by PageRank over the `CALLS`/`IMPORTS` graph. Empty until `graph-rag compute-centrality` has run. |
+| `get_central_code_entities` | Most-depended-upon code by PageRank over the `CALLS`/`IMPORTS` graph. Empty until `grag-mcp compute-centrality` has run. |
 | `cite` | Human-readable citation string for a chunk. |
 | `ingest_path` | (Re-)ingest a file or directory from within a session. |
 | `remember` / `recall` / `forget` | The agent's own working memory, with recency + frequency decay pruning. |
 
 ## Ingesting your own content
 
-`graph-rag ingest <path>` takes a file or a directory (recursed), parses
+`grag-mcp ingest <path>` takes a file or a directory (recursed), parses
 whichever of PDF / Markdown / Python / YAML it finds, and upserts into the
 graph. Re-running is cheap: a file whose content hash is unchanged since the
 last ingest is skipped entirely, and re-ingesting a changed file removes any
 Section / Chunk / CodeEntity / PolicyRule it no longer produces.
 
 ```bash
-uv run graph-rag ingest src/graph_rag           # this repo's own source
-uv run graph-rag ingest path/to/docs            # a whole directory
-uv run graph-rag ingest some/file.py --dry-run  # preview, no writes
-uv run graph-rag ingest src/graph_rag --watch   # re-ingest on every change
+uv run grag-mcp ingest src/graph_rag           # this repo's own source
+uv run grag-mcp ingest path/to/docs            # a whole directory
+uv run grag-mcp ingest some/file.py --dry-run  # preview, no writes
+uv run grag-mcp ingest src/graph_rag --watch   # re-ingest on every change
 ```
 
 A file that fails to parse/embed/write is reported and skipped rather than
@@ -148,7 +173,7 @@ curl -X POST http://127.0.0.1:8765/ingest \
 
 ## Code centrality (PageRank)
 
-`graph-rag compute-centrality` runs GDS PageRank over the `CodeEntity`
+`grag-mcp compute-centrality` runs GDS PageRank over the `CodeEntity`
 `CALLS`/`IMPORTS` graph, writing each entity's score to `CodeEntity.pagerank`
 — a heavily called/imported entity ranks higher, surfacing what's most central
 (and riskiest to change) in an ingested codebase. Exposed via
@@ -156,8 +181,8 @@ curl -X POST http://127.0.0.1:8765/ingest \
 `graph-data-science` Neo4j plugin (enabled in `docker-compose.yml`):
 
 ```bash
-uv run graph-rag ingest src/graph_rag
-uv run graph-rag compute-centrality   # re-run after ingesting code changes
+uv run grag-mcp ingest src/graph_rag
+uv run grag-mcp compute-centrality   # re-run after ingesting code changes
 ```
 
 ## Offline embedding model

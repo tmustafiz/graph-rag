@@ -1,5 +1,5 @@
 [project]
-name = "graph-rag"
+name = "grag-mcp"
 version = "0.1.0"
 description = "Graph RAG knowledge base for coding agents, backed by Neo4j and exposed over MCP"
 readme = "README.md"
@@ -14,6 +14,7 @@ keywords = [
     "model-context-protocol",
     "rag",
     "graph-rag",
+    "grag-mcp",
     "neo4j",
     "knowledge-graph",
     "retrieval",
@@ -65,7 +66,7 @@ Issues = "https://github.com/tmustafiz/graph-rag/issues"
 Changelog = "https://github.com/tmustafiz/graph-rag/blob/main/CHANGELOG.md"
 
 [project.scripts]
-graph-rag = "graph_rag.cli:app"
+grag-mcp = "graph_rag.cli:app"
 
 # Embeddings run on CPU (local dev machines, and the mcp-server container have no
 # GPU) — without this, Linux resolves PyPI's default CUDA-enabled torch wheel,
@@ -81,6 +82,11 @@ explicit = true
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Distribution is `grag-mcp` but the import package is `graph_rag`, so the
+# src-layout auto-detection can't infer it — point at it explicitly.
+[tool.hatch.build.targets.wheel]
+packages = ["src/graph_rag"]
 
 [tool.ruff]
 line-length = 100

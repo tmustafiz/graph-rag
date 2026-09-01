@@ -25,7 +25,7 @@ from .unsupported_file_type_error import UnsupportedFileTypeError
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = typer.Typer(
-    name="graph-rag",
+    name="grag-mcp",
     help="Graph RAG knowledge base for coding agents (Neo4j-backed, exposed over MCP).",
     no_args_is_help=True,
 )
@@ -206,7 +206,7 @@ def serve_mcp(
         if stdio:
             # stdout is the JSON-RPC channel in stdio mode — keep the status
             # line on stderr so it can't corrupt the protocol stream.
-            typer.echo("graph-rag MCP server ready on stdio", err=True)
+            typer.echo("grag-mcp MCP server ready on stdio", err=True)
             server.run(transport="stdio")
             return
 

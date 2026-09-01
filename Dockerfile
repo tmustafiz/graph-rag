@@ -77,5 +77,5 @@ ENV PATH="/app/.venv/bin:${PATH}"
 WORKDIR /app
 EXPOSE 8765
 
-ENTRYPOINT ["/app/.venv/bin/graph-rag"]
+ENTRYPOINT ["/app/.venv/bin/grag-mcp"]
 CMD ["serve-mcp"]
