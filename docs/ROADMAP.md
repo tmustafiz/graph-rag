@@ -17,9 +17,9 @@ Planning for graph-rag happens on GitHub, not in this repo.
 
 Roughly what the near-term milestones are organized around:
 
-- **Packaging & distribution** — PyPI / `uvx`, multi-arch image, CVE-scanned
-  releases.
-- **Client reach** — stdio transport, more MCP-registry listings.
+- **Packaging & distribution** — PyPI / `uvx` and CVE-scanned images shipped;
+  next is a multi-arch (`arm64` + `amd64`) image published on release.
+- **Client reach** — stdio transport shipped; next is more MCP-registry listings.
 - **Lower the trial barrier** — optional embedded graph backend so Neo4j/Docker
   isn't mandatory; simpler container model provisioning.
 - **Retrieval quality** — reranking, query rewriting, a bigger eval set with
