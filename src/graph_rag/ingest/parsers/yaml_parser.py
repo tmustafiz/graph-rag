@@ -39,9 +39,16 @@ class YamlParser:
         policy_rules: list[PolicyRule] = []
         generic_documents: list[dict] = []
         for document in documents:
-            if self._is_checkov_policy(document):
-                policy_rules.append(self._build_policy_rule(document, source.path))
+            rule = (
+                self._build_policy_rule(document, source.path)
+                if self._is_checkov_policy(document)
+                else None
+            )
+            if rule is not None:
+                policy_rules.append(rule)
             elif isinstance(document, dict):
+                # Looks-like-a-policy but unusable (e.g. non-scalar id), or just
+                # generic YAML — either way, chunk it structurally.
                 generic_documents.append(document)
 
         sections: list[Section] = []
@@ -68,22 +75,38 @@ class YamlParser:
 
     @staticmethod
     def _is_checkov_policy(document: Any) -> bool:
+        # A Checkov custom policy always carries a `definition` (the check
+        # logic); requiring it keeps unrelated YAML that happens to have a
+        # `metadata.id` (k8s manifests, Helm values, ...) out of this path.
         return (
             isinstance(document, dict)
             and isinstance(document.get("metadata"), dict)
             and "id" in document["metadata"]
+            and "definition" in document
         )
 
     @staticmethod
-    def _build_policy_rule(document: dict, file_path: str) -> PolicyRule:
+    def _scalar(value: Any) -> str | None:
+        """A YAML scalar as a string; `None` for a missing or structured
+        (list/dict) value, so a malformed policy field degrades to absent
+        instead of raising and failing the whole file.
+        """
+        if value is None or isinstance(value, (list, dict)):
+            return None
+        return str(value)
+
+    @staticmethod
+    def _build_policy_rule(document: dict, file_path: str) -> PolicyRule | None:
         metadata = document["metadata"]
         scope = document.get("scope") if isinstance(document.get("scope"), dict) else {}
-        policy_id = str(metadata["id"])
-        name = metadata.get("name")
-        category = metadata.get("category")
-        severity = metadata.get("severity")
-        guideline = metadata.get("guideline")
-        provider = scope.get("provider")
+        policy_id = YamlParser._scalar(metadata.get("id"))
+        if not policy_id:
+            return None
+        name = YamlParser._scalar(metadata.get("name"))
+        category = YamlParser._scalar(metadata.get("category"))
+        severity = YamlParser._scalar(metadata.get("severity"))
+        guideline = YamlParser._scalar(metadata.get("guideline"))
+        provider = YamlParser._scalar(scope.get("provider"))
         resource_types = YamlParser._collect_resource_types(document.get("definition"))
 
         return PolicyRule(
