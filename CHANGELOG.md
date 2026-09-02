@@ -53,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `nonroot` name so the runtime base is interchangeable; torch runs
   on `dhi.io/python:3` despite it having no system `libgomp` (the wheel
   bundles OpenMP).
+- Opt-in `neo4j-browser` Compose service (`--profile browser`, port
+  7475) — the Neo4j Browser web app served by nginx from static files,
+  for hardened `NEO4J_IMAGE`s that ship without it.
 - README restructured for first-time visitors (positioning, client setup
   snippets, tools table, architecture diagram).
 - The embedding model is no longer vendored in git — fetch it with
