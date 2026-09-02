@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/fetch_model.py` and `make fetch-model` for the local embedding model.
 
 ### Changed
+- The YAML parser no longer fails a whole file when a Checkov policy has a
+  non-scalar (list/dict) value where a string is expected — `name`, `category`,
+  `severity`, `guideline`, and `provider` degrade to absent, and a policy whose
+  `metadata.id` isn't a scalar falls back to generic chunking. `_is_checkov_policy`
+  now also requires a `definition`, so unrelated YAML with a stray `metadata.id`
+  isn't misrouted.
 - All `docker compose` base images are overridable via `.env`
   (`NEO4J_IMAGE`, `BUILDER_IMAGE`, `RUNTIME_IMAGE`, `UV_IMAGE`) so
   restricted environments can build against an approved hardened registry

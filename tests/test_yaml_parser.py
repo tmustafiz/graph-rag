@@ -80,6 +80,70 @@ def test_multi_document_yaml_produces_one_policy_rule_each(tmp_path: Path) -> No
     assert ids == {"CKV2_CUSTOM_1", "CKV2_CUSTOM_2"}
 
 
+def test_non_scalar_metadata_fields_degrade_to_none_instead_of_failing(tmp_path: Path) -> None:
+    policy = """
+metadata:
+  id: "CKV2_CUSTOM_9"
+  name: ["ensure", "encrypted"]
+  category: {a: b}
+  severity: 3
+scope:
+  provider: ["aws", "gcp"]
+definition:
+  cond_type: "attribute"
+  resource_types:
+    - "aws_db_instance"
+"""
+    path = tmp_path / "messy_policy.yaml"
+    path.write_text(policy)
+
+    document = YamlParser().parse(path)
+
+    assert len(document.policy_rules) == 1
+    rule = document.policy_rules[0]
+    assert rule.id == "CKV2_CUSTOM_9"
+    assert rule.name is None
+    assert rule.category is None
+    assert rule.severity == "3"  # scalar int coerced
+    assert rule.provider is None
+    assert rule.resource_types == ["aws_db_instance"]
+
+
+def test_policy_with_non_scalar_id_falls_back_to_generic_chunking(tmp_path: Path) -> None:
+    policy = """
+metadata:
+  id: ["CKV2_CUSTOM_1", "CKV2_CUSTOM_2"]
+  name: "bad id"
+definition:
+  cond_type: "attribute"
+"""
+    path = tmp_path / "bad_id.yaml"
+    path.write_text(policy)
+
+    document = YamlParser().parse(path)
+
+    assert document.policy_rules == []
+    assert len(document.sections) == 1
+    assert len(document.chunks) == 2  # metadata + definition
+
+
+def test_yaml_with_metadata_id_but_no_definition_is_not_a_policy(tmp_path: Path) -> None:
+    manifest = """
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  id: some-config
+  name: my-config
+"""
+    path = tmp_path / "configmap.yaml"
+    path.write_text(manifest)
+
+    document = YamlParser().parse(path)
+
+    assert document.policy_rules == []
+    assert len(document.chunks) == 3  # apiVersion + kind + metadata
+
+
 def test_generic_yaml_falls_back_to_structural_chunking_by_top_level_key(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text(_GENERIC_YAML)
