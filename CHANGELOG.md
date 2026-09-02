@@ -35,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restricted environments can build against an approved hardened registry
   (e.g. Docker Hardened Images) without editing tracked files. Defaults
   are unchanged. See docs/operations.md.
+- The Neo4j service now runs unchanged on `dhi.io/neo4j:2026` (Docker
+  Hardened Image): the healthcheck uses `cypher-shell` instead of `wget`,
+  `NEO4J_PLUGINS` is overridable (set it empty for images with no
+  `wget`/`awk`), and the plugins volume mounts at Neo4j's default plugin
+  dir so preloaded APOC/GDS jars load without an entrypoint-written
+  `server.directories.plugins`.
+- The app image builds and runs on Docker Hardened Images end to end
+  (`BUILDER_IMAGE=dhi.io/python:3-dev`, `RUNTIME_IMAGE=dhi.io/python:3`).
+  The `Dockerfile` now chowns and `USER`s by numeric uid 65532 instead of
+  the `nonroot` name so the runtime base is interchangeable; torch runs
+  on `dhi.io/python:3` despite it having no system `libgomp` (the wheel
+  bundles OpenMP).
 - README restructured for first-time visitors (positioning, client setup
   snippets, tools table, architecture diagram).
 - The embedding model is no longer vendored in git — fetch it with

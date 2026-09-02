@@ -1,12 +1,14 @@
 services:
   neo4j:
     # Overridable so a restricted environment can point at an approved hardened
-    # image (e.g. NEO4J_IMAGE=dhi.io/neo4j:5-dev — DHI tracks the Neo4j 5.x
-    # line, not CalVer — a Chainguard tag, or an internal mirror). See
-    # docs/operations.md "Restricted / hardened-registry environments" for the
-    # healthcheck/plugin adjustments a shell-less image needs. Must be a
-    # Community-edition Neo4j that honours NEO4J_AUTH and (unless you bake
-    # plugins in) NEO4J_PLUGINS.
+    # image (e.g. NEO4J_IMAGE=dhi.io/neo4j:2026 — the Docker Hardened Image,
+    # Community edition, same CalVer stream — a Chainguard tag, or an internal
+    # mirror). Must be Community edition and honour NEO4J_AUTH. The DHI runtime
+    # image ships no wget/curl and no awk, so its entrypoint can neither
+    # auto-download NEO4J_PLUGINS nor translate NEO4J_* config env vars into
+    # neo4j.conf — set NEO4J_PLUGINS= in .env and preload the jars into the
+    # neo4j_plugins volume. See docs/operations.md "Restricted /
+    # hardened-registry environments".
     image: ${NEO4J_IMAGE:-neo4j:2026.07.1}
     container_name: graph-rag-neo4j
     ports:
@@ -14,25 +16,41 @@ services:
       - "127.0.0.1:7687:7687" # bolt
     environment:
       NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme-local-dev}"
-      NEO4J_PLUGINS: '["apoc", "graph-data-science"]'
+      # The stock image's entrypoint downloads these on boot. Set NEO4J_PLUGINS=
+      # in .env for an image with no wget (e.g. the DHI runtime image) and let
+      # the jars already in the neo4j_plugins volume load from the classpath.
+      NEO4J_PLUGINS: '${NEO4J_PLUGINS-["apoc", "graph-data-science"]}'
+      # Honoured by the stock image; the DHI image (no awk) ignores it, which is
+      # fine here — the GDS procedures this project calls don't need it, and the
+      # code calls no APOC procedures.
       NEO4J_dbms_security_procedures_unrestricted: "apoc.*,gds.*"
     volumes:
       - neo4j_data:/data
-      - neo4j_plugins:/plugins
+      # Mounted at Neo4j's default plugin dir (on the JVM classpath) rather than
+      # /plugins, so jars load without an entrypoint-set server.directories.
+      # plugins — which the DHI image can't write. The stock image downloads
+      # NEO4J_PLUGINS here too when /plugins doesn't exist.
+      - neo4j_plugins:/var/lib/neo4j/plugins
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      # cypher-shell (not wget) so the check works on both the stock and the
+      # hardened images; it also verifies Bolt + auth, not just the HTTP port.
+      test:
+        ["CMD", "cypher-shell", "-u", "${NEO4J_USER:-neo4j}",
+         "-p", "${NEO4J_PASSWORD:-changeme-local-dev}", "RETURN 1"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 15
 
   mcp-server:
     build:
       context: .
       args:
-        # Override to build against approved hardened base images. Constraints:
-        # BUILDER_IMAGE needs a shell + glibc (uv installs a glibc standalone
-        # CPython into it); RUNTIME_IMAGE needs glibc + libgcc + libstdc++ +
-        # ca-certificates (torch's C++ runtime). See docs/operations.md.
+        # Override to build against approved hardened base images (e.g.
+        # BUILDER_IMAGE=dhi.io/python:3-dev, RUNTIME_IMAGE=dhi.io/python:3).
+        # BUILDER is a throwaway stage — needs a shell + glibc, doesn't ship.
+        # RUNTIME ships — needs glibc + libgcc + libstdc++ + libssl/libffi/libz
+        # + ca-certificates and uid 65532; its own Python (if any) is unused.
+        # See docs/operations.md.
         BUILDER_IMAGE: ${BUILDER_IMAGE:-python:3.14-slim-trixie}
         RUNTIME_IMAGE: ${RUNTIME_IMAGE:-gcr.io/distroless/cc-debian13:nonroot}
         UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.12.5}

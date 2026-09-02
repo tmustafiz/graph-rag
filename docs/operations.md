@@ -127,9 +127,10 @@ overridable through `.env` so you never edit tracked files:
 
 ```bash
 # .env
-NEO4J_IMAGE=dhi.io/neo4j:5-dev
-BUILDER_IMAGE=dhi.io/python:3.13-dev
-RUNTIME_IMAGE=dhi.io/python:3.13
+NEO4J_IMAGE=dhi.io/neo4j:2026
+NEO4J_PLUGINS=
+BUILDER_IMAGE=dhi.io/python:3-dev
+RUNTIME_IMAGE=dhi.io/python:3
 UV_IMAGE=<your-registry>/uv:0.12.5
 ```
 
@@ -137,22 +138,28 @@ UV_IMAGE=<your-registry>/uv:0.12.5
 Hardened Images that means `docker login dhi.io` with a DHI subscription;
 community access pulls `dhi.io/<image>:<tag>`, while Select/Enterprise
 subscribers mirror the repos into their own Docker Hub org and pull
-`<your-org>/<image>:<tag>` instead. DHI's Neo4j repository tracks the
-Neo4j **5.x** line on a `debian-13` base (`5-dev`, `5.26-dev`, ...), not
-the CalVer tags (`2026.07.1`) the Docker Official `neo4j` image uses — so
-pin `dhi.io/neo4j:5-dev`, not a `2026.*` tag. APOC and GDS jar versions
-must then match that 5.x server line.
+`<your-org>/<image>:<tag>` instead. DHI's Neo4j image is the **Community**
+edition on the same CalVer stream as the Docker Official image
+(`dhi.io/neo4j:2026` == `2026.07.1-debian13`, `variant=runtime`), runs as
+uid 7474, and scans at 0 CVEs. It ships `bash`, `cypher-shell`,
+`neo4j-admin` and a JRE, but **no `wget`/`curl` and no `awk`** — see the
+Neo4j constraints below, which `docker-compose.yml` and `.env` already
+account for.
 
 The `*_IMAGE` build args are passed by `docker compose build`; to build
 the image directly:
 
 ```bash
 docker build \
-  --build-arg BUILDER_IMAGE=dhi.io/python:3.13-dev \
-  --build-arg RUNTIME_IMAGE=dhi.io/python:3.13 \
+  --build-arg BUILDER_IMAGE=dhi.io/python:3-dev \
+  --build-arg RUNTIME_IMAGE=dhi.io/python:3 \
   --build-arg UV_IMAGE=<your-registry>/uv:0.12.5 \
   -t grag-mcp .
 ```
+
+Pin the minor (`dhi.io/python:3.14`) rather than the floating `3` for a
+reproducible runtime layer once you know which minor your registry
+carries.
 
 If no approved registry carries `uv`, publish a minimal image to your
 own registry that puts the `uv` binary at `/uv` (from the release
@@ -160,54 +167,76 @@ tarball or a vendored copy) and point `UV_IMAGE` at that.
 
 Constraints on substitutes:
 
-- **`BUILDER_IMAGE`** — needs a shell and glibc. `uv` installs a glibc
+- **`BUILDER_IMAGE`** — a throwaway build stage; it does **not** ship in
+  the final image and isn't in the Trivy scan, so its CVEs don't reach
+  the artifact — override it only for registry-policy or build-time
+  supply-chain reasons. Needs a shell and glibc: `uv` installs a glibc
   `python-build-standalone` interpreter into it, so a musl/Alpine base
-  won't work. A `-dev` hardened tag (shell + package manager) is the
-  right choice here.
-- **`RUNTIME_IMAGE`** — needs glibc, `libgcc`, `libstdc++`
-  (torch's C++ runtime) and `ca-certificates`. The `Dockerfile` copies
-  the venv with `--chown=nonroot:nonroot` and expects the base to run as
-  a non-root user; the common hardened bases (distroless, Chainguard,
-  DHI) all use `nonroot` / uid 65532, but if yours differs, adjust the
-  `--chown` and add a `USER` line.
-- **Neo4j** — the substitute must honour `NEO4J_AUTH`. Pick the tag
-  variant deliberately:
+  won't work. `dhi.io/python:3-dev` (root, `bash`, `apt`, debian-13)
+  drops straight in — the stage's own Python version is irrelevant, `uv`
+  installs CPython 3.13 separately.
+- **`RUNTIME_IMAGE`** — this one ships. Needs glibc, `libgcc_s`,
+  `libstdc++` (torch's C++ runtime), `libssl` / `libffi` / `libz` /
+  `libexpat` (the standalone CPython's stdlib modules), and
+  `ca-certificates`. It does **not** need Python — the app runs on the
+  CPython 3.13 copied from the builder into `/opt/python`. The
+  `Dockerfile` copies the venv with `--chown=65532:65532` and sets
+  `USER 65532`; both `gcr.io/distroless/cc-debian13:nonroot` (the
+  default) and `dhi.io/python:3` use that uid. `dhi.io/python:3` works
+  (verified: torch/numpy/sentence-transformers import and run) even
+  though it has no system `libgomp` — the PyTorch CPU wheel bundles its
+  own OpenMP. Its bundled Python 3.14 goes unused, costing ~70 MB over
+  distroless. If your base uses a different uid, change both the
+  `--chown` and the `USER` line.
+- **Neo4j** — the substitute must be **Community** edition and honour
+  `NEO4J_AUTH`. `dhi.io/neo4j:2026` works with the tweaks already baked
+  into `docker-compose.yml`, but two missing tools change how you feed it
+  config:
 
-  - **`dhi.io/neo4j:5-dev`** keeps a shell and package manager, so the
-    stock entrypoint's `NEO4J_PLUGINS` boot script (it downloads the
-    APOC + GDS jars) and a shell healthcheck still work. It ships
-    `neo4j-admin` and `cypher-shell` but **not** `wget`, so the
-    `docker-compose.yml` healthcheck still has to change (below). This is
-    the pragmatic choice for a database container and still scans at
-    0 CVEs.
-  - **`dhi.io/neo4j:5`** (runtime, non-dev) has no shell or package
-    manager and runs non-root. `NEO4J_PLUGINS` auto-download won't run
-    and `CMD-SHELL` healthchecks won't work — you must bake the plugins
-    in (below) and use an exec-form healthcheck.
+  - **No `wget`/`curl`.** The stock entrypoint downloads `NEO4J_PLUGINS`
+    (APOC, GDS) on boot with `wget`; the DHI image can't. Set
+    `NEO4J_PLUGINS=` in `.env` to stop it trying, and preload the jars
+    into the `neo4j_plugins` volume instead (below). The compose file
+    mounts that volume at `/var/lib/neo4j/plugins` — Neo4j's default
+    plugin dir, on the JVM classpath — so any jar dropped there loads
+    with no further config.
+  - **No `awk`.** The entrypoint's loop that turns `NEO4J_server_*` /
+    `NEO4J_dbms_*` environment variables into `neo4j.conf` lines is
+    `set | grep ^NEO4J_ | awk …` and silently produces nothing without
+    `awk`. Only `NEO4J_AUTH`, `NEO4J_PLUGINS` (as a trigger),
+    `NEO4J_EDITION` and `NEO4J_ACCEPT_LICENSE_AGREEMENT` are handled
+    directly. **Any other Neo4j setting you need must come from a file** —
+    a full `neo4j.conf` bind-mounted over `/var/lib/neo4j/conf/neo4j.conf`,
+    a script pointed at by `EXTENSION_SCRIPT` that appends to it, or a
+    derived image. This project needs none: the GDS procedures
+    `compute-centrality` calls (`gds.graph.project`, `gds.pageRank.write`,
+    `gds.graph.drop`) run without `dbms.security.procedures.unrestricted`,
+    and the code calls no APOC procedures, so the
+    `NEO4J_dbms_security_procedures_unrestricted` line in the compose file
+    is a harmless no-op here.
+  - **Healthcheck.** `docker-compose.yml` already uses `cypher-shell`
+    (present in both images) rather than `wget`.
 
-  Swap the healthcheck in `docker-compose.yml` for one the image has:
+  Preload APOC + GDS into the volume once. Simplest: bring the stack up
+  on the **stock** image first (`NEO4J_IMAGE` unset) so its entrypoint
+  downloads the jars into `graph-rag_neo4j_plugins`, then `docker compose
+  down`, set `NEO4J_IMAGE=dhi.io/neo4j:2026` + `NEO4J_PLUGINS=` in `.env`,
+  and `docker compose up -d` again — the volume keeps the jars. Air-gapped,
+  copy jars you already have straight into the volume:
 
-  ```yaml
-  healthcheck:
-    test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD}",
-           "--non-interactive", "RETURN 1"]
-    interval: 10s
-    timeout: 5s
-    retries: 10
+  ```bash
+  docker run --rm -v graph-rag_neo4j_plugins:/plugins -v "$PWD":/host busybox \
+    sh -c 'cp /host/apoc-*.jar /plugins/apoc.jar &&
+           cp /host/graph-data-science-*.jar /plugins/graph-data-science.jar'
   ```
 
-  If the plugin auto-download is unavailable (runtime tag, or an
-  air-gapped host that can't reach `github.com`), bake the jars into a
-  thin derived image instead:
+  For a fully self-contained artifact, bake them into a derived image
+  instead:
 
   ```dockerfile
-  FROM dhi.io/neo4j:5-dev
-  COPY apoc-*-core.jar gds-*.jar /var/lib/neo4j/plugins/
+  FROM dhi.io/neo4j:2026
+  COPY apoc-*.jar graph-data-science-*.jar /var/lib/neo4j/plugins/
   ```
-
-  build it, point `NEO4J_IMAGE` at it, and drop `NEO4J_PLUGINS` from the
-  compose environment (keep `NEO4J_dbms_security_procedures_unrestricted`).
-  GDS is only needed for `compute-centrality`; APOC is used more broadly.
 
 ## Ingestion errors and logging
 

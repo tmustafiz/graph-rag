@@ -4,8 +4,11 @@
 # hardened registry a restricted environment mandates (Docker Hardened Images,
 # Chainguard, an internal mirror, ...). Defaults are what CI builds and scans.
 #   BUILDER_IMAGE  needs a shell + glibc — uv installs a glibc standalone CPython.
-#   RUNTIME_IMAGE  needs glibc + libgcc + libstdc++ + ca-certificates (torch's
-#                  C++ runtime); a non-root, shell-less image is ideal.
+#                  e.g. dhi.io/python:3-dev
+#   RUNTIME_IMAGE  needs glibc + libgcc + libstdc++ + libssl/libffi/libz +
+#                  ca-certificates, and a non-root user; shell-less is ideal.
+#                  e.g. dhi.io/python:3 (its own Python is unused — the app runs
+#                  on the standalone CPython copied from the builder).
 # See docs/operations.md "Restricted / hardened-registry environments".
 ARG BUILDER_IMAGE=python:3.14-slim-trixie
 ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian13:nonroot
@@ -62,20 +65,23 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --extra pdf --no-dev --frozen --no-editable
 
 # ---------------------------------------------------------------------------
-# Runtime: distroless "cc" — glibc + libgcc + libstdc++ (torch's C++ runtime)
-# + ca-certificates + tzdata. No shell, no package manager, no system Python.
-# Runs as the non-root user (uid 65532).
+# Runtime: needs glibc + libgcc + libstdc++ (torch's C++ runtime) + libssl /
+# libffi / libz (the standalone CPython's stdlib) + ca-certificates, a
+# non-root user, and ideally no shell or package manager. distroless "cc"
+# (the default) and dhi.io/python:3 both fit — both run as uid 65532.
 # ---------------------------------------------------------------------------
 FROM ${RUNTIME_IMAGE}
 
 # The interpreter the venv's scripts and symlinks resolve to (same path as in
 # the builder, so the venv stays valid).
 COPY --from=builder /opt/python /opt/python
-COPY --from=builder --chown=nonroot:nonroot /app/.venv /app/.venv
+# Numeric uid/gid (not the "nonroot" name) so the chown resolves on any base.
+COPY --from=builder --chown=65532:65532 /app/.venv /app/.venv
 
 ENV PATH="/app/.venv/bin:${PATH}"
 WORKDIR /app
 EXPOSE 8765
+USER 65532
 
 ENTRYPOINT ["/app/.venv/bin/grag-mcp"]
 CMD ["serve-mcp"]
