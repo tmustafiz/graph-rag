@@ -1,0 +1,67 @@
+# Pre-provisions the environment for the GitHub Copilot coding agent so it
+# starts with dependencies, the embedding model, and Neo4j already in place.
+# GitHub runs the job named exactly `copilot-setup-steps` before the agent
+# session; the resulting environment (including the running Neo4j container)
+# carries into the session. Also runnable by hand via the Actions tab.
+name: Copilot setup steps
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    env:
+      # Matches docker-compose.yml's defaults (no .env in CI).
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: changeme-local-dev
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies (all extras + dev)
+        run: uv sync --all-extras --dev
+
+      - name: Cache embedding model
+        id: model-cache
+        uses: actions/cache@v6
+        with:
+          path: models/all-MiniLM-L6-v2
+          key: minilm-l6-v2-v1
+
+      - name: Fetch embedding model
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        env:
+          HF_HUB_OFFLINE: "0"
+        run: make fetch-model
+
+      - name: Start Neo4j (APOC + GDS auto-install from the stock image)
+        run: |
+          docker compose up -d neo4j
+          for _ in $(seq 1 30); do
+            if docker compose exec -T neo4j cypher-shell \
+                 -u "$NEO4J_USER" -p "$NEO4J_PASSWORD" "RETURN 1" >/dev/null 2>&1; then
+              echo "Neo4j ready"; exit 0
+            fi
+            sleep 4
+          done
+          echo "Neo4j did not become ready in time" >&2
+          docker compose logs neo4j
+          exit 1
+
+      - name: Apply schema
+        run: uv run grag-mcp apply-schema
+
+      - name: Smoke-check
+        run: |
+          uv run ruff check .
+          uv run grag-mcp status

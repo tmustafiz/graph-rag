@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Tracked agent configuration: `AGENTS.md` (cross-agent guide),
+  `.github/copilot-instructions.md` (auto-loaded by GitHub Copilot),
+  `.github/prompts/*.prompt.md` (setup / run / deploy / add-a-parser /
+  cut-a-release recipes), and `.github/workflows/copilot-setup-steps.yml`
+  (pre-provisions the Copilot coding agent's environment). `CLAUDE.md` and the
+  editor rule-files stay in a separate repo.
 - Published to PyPI as **`grag-mcp`** — `uvx grag-mcp` / `uv tool install grag-mcp` /
   `pipx install grag-mcp`, no clone needed. `.github/workflows/release.yml`
   builds and publishes via Trusted Publishing on a `vX.Y.Z` tag push.

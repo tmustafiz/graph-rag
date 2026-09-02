@@ -14,6 +14,15 @@ by submitting a contribution you agree it is licensed under the same terms.
 
 Please open an issue to discuss anything non-trivial before sending a large PR.
 
+### Working with an AI coding agent
+
+[`AGENTS.md`](AGENTS.md) is the cross-agent guide (conventions, layout,
+verification, PR workflow). GitHub Copilot picks up
+[`.github/copilot-instructions.md`](.github/copilot-instructions.md)
+automatically, `.github/prompts/` has task recipes (setup, run, deploy, add a
+parser, cut a release), and `.github/workflows/copilot-setup-steps.yml`
+pre-provisions the Copilot coding agent's environment.
+
 ## Development setup
 
 Requires Python 3.12+, [`uv`](https://docs.astral.sh/uv/), and Docker (for Neo4j).

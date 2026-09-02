@@ -30,12 +30,11 @@ htmlcov/
 # Local tooling state
 .claude/
 
-# Agent-instruction files live in a separate repo, not here
+# AGENTS.md and .github/copilot-instructions.md are tracked (Copilot + cross-agent
+# guide). CLAUDE.md and the editor rule-files are maintained in a separate repo.
 CLAUDE.md
-AGENTS.md
 .cursorrules
 .windsurfrules
-.github/copilot-instructions.md
 
 # Vendored embedding model (fetch with `make fetch-model`)
 /models/
