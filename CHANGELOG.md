@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/fetch_model.py` and `make fetch-model` for the local embedding model.
 
 ### Changed
+- The PDF parser cuts section bodies at the `(page, y)` coordinates of the
+  outline destinations instead of at page boundaries. Previously, when several
+  headings shared a page, each leaf section re-extracted and re-embedded the
+  whole page — on the sample FSx guide that was 46% of chunks byte-identical to
+  another. It also drops recurring running headers/footers, NFKC-normalizes text
+  (so `ﬁle` → `file`), keeps a parent heading's preamble instead of discarding
+  it, and no longer produces an empty result for a PDF that has no outline.
 - The YAML parser no longer fails a whole file when a Checkov policy has a
   non-scalar (list/dict) value where a string is expected — `name`, `category`,
   `severity`, `guideline`, and `provider` degrade to absent, and a policy whose

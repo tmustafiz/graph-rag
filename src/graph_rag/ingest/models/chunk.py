@@ -2,7 +2,7 @@ from pydantic import BaseModel
 
 
 class Chunk(BaseModel):
-    """Atomic retrievable unit of text belonging to a single leaf `Section`."""
+    """Atomic retrievable unit of text belonging to a single `Section`."""
 
     id: str
     section_id: str
