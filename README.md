@@ -56,6 +56,13 @@ it off if you only ingest Markdown / Python / YAML.
 On Linux, pass `--torch-backend=cpu` (`uvx --torch-backend=cpu …`) unless you
 want the multi-gigabyte CUDA build of PyTorch — the embedding model runs on CPU.
 
+A prebuilt runtime image (`linux/amd64` + `linux/arm64`, embedding model baked
+in) is published on each release:
+
+```bash
+docker pull ghcr.io/tmustafiz/graph-rag:latest
+```
+
 ## Quickstart (from a clone)
 
 Requires [`uv`](https://docs.astral.sh/uv/) and Docker.
