@@ -115,6 +115,32 @@ It first ingests the fixture corpus in `src/graph_rag/eval/corpus/`
 and independent of whatever else you have ingested. Run it from the repo
 root. Exits non-zero if any case fails, so it's usable as a CI gate.
 
+`--rerank` additionally runs the whole set through the cross-encoder reranker
+and prints a baseline-vs-reranked rank comparison — useful when tuning the
+reranker or its candidate window.
+
+## Reranking (optional)
+
+`GRAG_RERANK=1` turns on a cross-encoder second stage for `search`,
+`search_code`, and `search_policies`: after hybrid search fuses and shortlists,
+`cross-encoder/ms-marco-MiniLM-L-6-v2` re-scores those candidates by reading the
+query and each document together, and that order is what's returned. It's off by
+default and adds ~1 model load at startup plus a few tens of milliseconds per
+query on CPU.
+
+The model is **not** in the Docker image. Make it available one of these ways:
+
+```bash
+make fetch-reranker                    # vendors it into models/ms-marco-MiniLM-L-6-v2/
+export GRAG_RERANK_MODEL=/opt/models/my-reranker   # or point at any dir / Hub id
+```
+
+In a container, set `GRAG_RERANK=1` and either mount the model at
+`/opt/models/ms-marco-MiniLM-L-6-v2` or set `GRAG_RERANK_MODEL`; with neither,
+first use falls back to `huggingface.co`. When reranking is on, a hit's `score`
+is the raw cross-encoder logit (unbounded, can be negative), not the usual
+`[0, 1]` fused score.
+
 ## Pruning agent memory
 
 `AgentMemory` nodes (`remember` / `recall`) grow without bound unless

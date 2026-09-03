@@ -100,6 +100,14 @@ as `0.7 * vector + 0.3 * full-text` after min-max normalization (see
 `retriever.combine_scores`). Candidates are over-fetched (`top_k * multiplier`)
 before fusion and truncation.
 
+Setting `GRAG_RERANK=1` inserts a cross-encoder pass between fusion and
+truncation: `CrossEncoderReranker` re-scores the fused shortlist by reading the
+query and each candidate together (`retriever._maybe_rerank`), and that order
+wins. Off by default; the model is resolved like the embedder
+(`GRAG_RERANK_MODEL` env → mounted image dir → `models/` in a checkout → Hub id)
+and is not baked into the image. See the README "Reranking" section for the
+before/after eval numbers.
+
 Graph-native tools sit alongside search: `get_section` / `get_outline`
 (hierarchy walk), `get_neighbors` (traverse from any node), `find_policies_for`
 (exact `APPLIES_TO` traversal), `get_central_code_entities` (PageRank order),

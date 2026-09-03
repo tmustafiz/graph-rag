@@ -1,10 +1,14 @@
-.PHONY: up down logs status install lint format test ingest mcp-serve eval fetch-model prune
+.PHONY: up down logs status install lint format test ingest mcp-serve eval fetch-model fetch-reranker prune
 
 up:
 	docker compose up -d neo4j
 
 fetch-model:
 	uv run python scripts/fetch_model.py
+
+# Optional: only needed to run the cross-encoder reranker (GRAG_RERANK=1) offline.
+fetch-reranker:
+	uv run python scripts/fetch_reranker.py
 
 down:
 	docker compose down

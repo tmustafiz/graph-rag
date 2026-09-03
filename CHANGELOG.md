@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Optional cross-encoder reranking for `search` / `search_code` /
+  `search_policies`. Set `GRAG_RERANK=1` to re-score the fused hybrid-search
+  shortlist with `cross-encoder/ms-marco-MiniLM-L-6-v2` (read query + document
+  together) before truncating to `top_k`. Off by default; the model is not baked
+  into the image — `make fetch-reranker` vendors it, or point `GRAG_RERANK_MODEL`
+  at a directory / Hub id. `grag-mcp eval-retrieval --rerank` prints a
+  baseline-vs-reranked comparison; a naive-vector / hybrid / hybrid+rerank table
+  is in the README. When reranking is on, a hit's `score` is the raw
+  cross-encoder logit rather than the `[0, 1]` fused score.
+  ([#14](https://github.com/tmustafiz/graph-rag/issues/14))
+
 ### Changed
 - `grag-mcp prune-memory` runs with no arguments — the decay score is now
   `(1 + access_count) * exp(-days_since_last_recall / 30)` (reads

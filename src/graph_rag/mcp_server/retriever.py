@@ -7,6 +7,7 @@ from neo4j.exceptions import ClientError
 
 from graph_rag.ingest.embedders import Embedder
 
+from .cross_encoder_reranker import CrossEncoderReranker
 from .models import (
     CodeCentralityResult,
     CodeSearchResult,
@@ -171,9 +172,15 @@ CANDIDATE_MULTIPLIER = 4
 class Retriever:
     """Read-only Neo4j queries backing the MCP server's tools."""
 
-    def __init__(self, driver: Driver, embedder: Embedder) -> None:
+    def __init__(
+        self,
+        driver: Driver,
+        embedder: Embedder,
+        reranker: CrossEncoderReranker | None = None,
+    ) -> None:
         self._driver = driver
         self._embedder = embedder
+        self._reranker = reranker
 
     @staticmethod
     def _fulltext_scores(
@@ -188,6 +195,29 @@ class Retriever:
         except ClientError as exc:
             logger.warning("full-text search skipped for %r: %s", params.get("query"), exc)
             return {}
+
+    def _maybe_rerank(
+        self,
+        query: str,
+        ranked_ids: list[str],
+        documents: dict[str, str],
+        fused_scores: dict[str, float],
+    ) -> tuple[list[str], dict[str, float]]:
+        """With a reranker configured, re-score the fused shortlist with the
+        cross-encoder and return it ordered best-first alongside
+        `{id: rerank_score}`; without one, return the fused order and scores
+        untouched.
+        """
+        if self._reranker is None or not ranked_ids:
+            return ranked_ids, fused_scores
+        scores = dict(
+            zip(
+                ranked_ids,
+                self._reranker.rerank(query, [documents[rid] for rid in ranked_ids]),
+                strict=True,
+            )
+        )
+        return sorted(ranked_ids, key=lambda rid: scores[rid], reverse=True), scores
 
     def search(
         self,
@@ -226,6 +256,12 @@ class Retriever:
             {chunk_id: row["score"] for chunk_id, row in by_id.items()}, fulltext_scores
         )
         ranked_ids = sorted(combined_scores, key=lambda cid: combined_scores[cid], reverse=True)
+        ranked_ids, scores = self._maybe_rerank(
+            query,
+            ranked_ids,
+            {cid: _prose_document(by_id[cid]) for cid in ranked_ids},
+            combined_scores,
+        )
         return [
             SearchResult(
                 chunk_id=cid,
@@ -235,7 +271,7 @@ class Retriever:
                 source_type=by_id[cid]["source_type"],
                 start_page=by_id[cid]["start_page"],
                 end_page=by_id[cid]["end_page"],
-                score=combined_scores[cid],
+                score=scores[cid],
             )
             for cid in ranked_ids[:top_k]
         ]
@@ -388,6 +424,9 @@ class Retriever:
             {qn: row["score"] for qn, row in by_id.items()}, fulltext_scores
         )
         ranked_ids = sorted(combined_scores, key=lambda qn: combined_scores[qn], reverse=True)
+        ranked_ids, scores = self._maybe_rerank(
+            query, ranked_ids, {qn: _code_document(by_id[qn]) for qn in ranked_ids}, combined_scores
+        )
         return [
             CodeSearchResult(
                 qualified_name=qn,
@@ -398,7 +437,7 @@ class Retriever:
                 file_path=by_id[qn]["file_path"],
                 start_line=by_id[qn]["start_line"],
                 end_line=by_id[qn]["end_line"],
-                score=combined_scores[qn],
+                score=scores[qn],
             )
             for qn in ranked_ids[:top_k]
         ]
@@ -429,6 +468,12 @@ class Retriever:
             {pid: row["score"] for pid, row in by_id.items()}, fulltext_scores
         )
         ranked_ids = sorted(combined_scores, key=lambda pid: combined_scores[pid], reverse=True)
+        ranked_ids, scores = self._maybe_rerank(
+            query,
+            ranked_ids,
+            {pid: _policy_document(by_id[pid]) for pid in ranked_ids},
+            combined_scores,
+        )
         return [
             PolicyResult(
                 id=pid,
@@ -439,7 +484,7 @@ class Retriever:
                 provider=by_id[pid]["provider"],
                 source_path=by_id[pid]["source_path"],
                 resource_types=by_id[pid]["resource_types"],
-                score=combined_scores[pid],
+                score=scores[pid],
             )
             for pid in ranked_ids[:top_k]
         ]
@@ -455,6 +500,24 @@ def combine_scores(
         chunk_id: VECTOR_WEIGHT * score + FULLTEXT_WEIGHT * fulltext_norm.get(chunk_id, 0.0)
         for chunk_id, score in vector_norm.items()
     }
+
+
+def _prose_document(row: dict[str, Any]) -> str:
+    """The text a cross-encoder scores a prose hit against. The section
+    breadcrumb is prepended so the reranker sees the structural context that
+    hybrid search gets from the graph, not just the bare chunk body.
+    """
+    return f"{row['breadcrumb']}\n\n{row['text']}"
+
+
+def _code_document(row: dict[str, Any]) -> str:
+    """The text a cross-encoder scores a code hit against — name, signature, docstring."""
+    return " ".join(part for part in (row["name"], row["signature"], row["docstring"]) if part)
+
+
+def _policy_document(row: dict[str, Any]) -> str:
+    """The text a cross-encoder scores a policy hit against — name and guideline."""
+    return " ".join(part for part in (row["name"], row["guideline"]) if part)
 
 
 def _min_max_normalize(scores: dict[str, float]) -> dict[str, float]:

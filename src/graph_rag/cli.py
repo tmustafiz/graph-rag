@@ -5,6 +5,7 @@ import typer
 import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
 
+from .eval.eval_case_result import EvalCaseResult
 from .eval.retrieval_evaluator import EVAL_CORPUS_DIR, RetrievalEvaluator
 from .graph.centrality_analyzer import CentralityAnalyzer
 from .graph.client import check_connectivity, driver_session
@@ -16,6 +17,7 @@ from .ingest.parser_registry import ParserRegistry
 from .ingestion_pipeline import IngestionPipeline
 from .ingestion_watcher import IngestionWatcher
 from .mcp_server.bearer_token_middleware import BearerTokenMiddleware
+from .mcp_server.cross_encoder_reranker import CrossEncoderReranker, build_reranker
 from .mcp_server.retriever import Retriever
 from .mcp_server.server import build_server
 from .memory import MemoryPruner, MemoryRecaller, MemoryWriter
@@ -179,6 +181,12 @@ def eval_retrieval(
     eval_set: Path | None = typer.Option(  # noqa: B008
         None, "--eval-set", help="Path to a YAML eval-case file (default: the built-in set)."
     ),
+    rerank: bool = typer.Option(
+        False,
+        "--rerank",
+        help="Also run a cross-encoder reranked pass and print a baseline-vs-reranked "
+        "comparison. Loads the reranker model (see `make fetch-reranker`).",
+    ),
 ) -> None:
     """Run the hand-written retrieval eval set against `search()`; reports pass/fail per case.
 
@@ -196,18 +204,50 @@ def eval_retrieval(
             raise typer.Exit(code=1)
         pipeline = IngestionPipeline(ParserRegistry(), embedder, GraphWriter(driver))
         pipeline.run(EVAL_CORPUS_DIR)
-        results = RetrievalEvaluator(Retriever(driver, embedder)).run(cases)
+        baseline = RetrievalEvaluator(Retriever(driver, embedder)).run(cases)
+        reranked = (
+            RetrievalEvaluator(Retriever(driver, embedder, CrossEncoderReranker())).run(cases)
+            if rerank
+            else None
+        )
 
+    if reranked is None:
+        _print_eval_results(baseline)
+        _exit_on_eval_failures(baseline)
+        return
+
+    typer.echo("query                                                         baseline  reranked")
+    for base_result, rerank_result in zip(baseline, reranked, strict=True):
+        typer.echo(
+            f"{base_result.case.query[:58]:<58}  "
+            f"{_rank_cell(base_result):>8}  {_rank_cell(rerank_result):>8}"
+        )
+    base_passed = sum(1 for result in baseline if result.passed)
+    rerank_passed = sum(1 for result in reranked if result.passed)
+    typer.echo(f"\nbaseline: {base_passed}/{len(baseline)} passed")
+    typer.echo(f"reranked: {rerank_passed}/{len(reranked)} passed")
+    _exit_on_eval_failures(reranked)
+
+
+def _rank_cell(result: EvalCaseResult) -> str:
+    if not result.passed:
+        return "FAIL"
+    return f"#{result.best_rank}" if result.best_rank is not None else "-"
+
+
+def _print_eval_results(results: list[EvalCaseResult]) -> None:
     for result in results:
         status = "PASS" if result.passed else "FAIL"
         color = typer.colors.GREEN if result.passed else typer.colors.RED
         rank_note = f" (rank {result.best_rank})" if result.best_rank is not None else ""
         tool_note = "" if result.case.tool == "search" else f" [{result.case.tool}]"
         typer.secho(f"[{status}]{tool_note} {result.case.query}{rank_note}", fg=color)
-
-    passed = sum(1 for r in results if r.passed)
+    passed = sum(1 for result in results if result.passed)
     typer.echo(f"{passed}/{len(results)} passed.")
-    if passed < len(results):
+
+
+def _exit_on_eval_failures(results: list[EvalCaseResult]) -> None:
+    if any(not result.passed for result in results):
         raise typer.Exit(code=1)
 
 
@@ -229,7 +269,7 @@ def serve_mcp(
     """
     embedder = SentenceTransformerEmbedder()
     with driver_session() as driver:
-        retriever = Retriever(driver, embedder)
+        retriever = Retriever(driver, embedder, build_reranker())
         writer = GraphWriter(driver)
         ingestion_pipeline = IngestionPipeline(ParserRegistry(), embedder, writer)
         memory_writer = MemoryWriter(driver, embedder)

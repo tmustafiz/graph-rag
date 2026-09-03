@@ -12,4 +12,7 @@ class PolicyResult(BaseModel):
     provider: str | None = None
     source_path: str | None = None
     resource_types: list[str] = Field(default_factory=list)
-    score: float | None = None  # set by `search_policies`; always `None` from `find_policies_for`
+    # Set by `search_policies` (always `None` from `find_policies_for`): fused
+    # vector+full-text relevance in [0, 1], or a raw cross-encoder logit
+    # (unbounded, can be negative) when reranking is enabled.
+    score: float | None = None

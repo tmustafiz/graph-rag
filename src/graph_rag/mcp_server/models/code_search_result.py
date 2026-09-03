@@ -12,4 +12,6 @@ class CodeSearchResult(BaseModel):
     file_path: str | None = None
     start_line: int | None = None
     end_line: int | None = None
+    # Fused vector+full-text relevance in [0, 1] normally; a raw cross-encoder
+    # logit (unbounded, can be negative) when reranking is enabled.
     score: float
