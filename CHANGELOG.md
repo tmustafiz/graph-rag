@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The retrieval eval (`grag-mcp eval-retrieval`) covers `search_code` and
   `search_policies`, not just prose `search`, plus negative cases and the
-  `top_k` boundary — 5 cases over 2 fixtures grew to 14 over 4. An `EvalCase`
+  `top_k` boundary — 5 cases over 2 fixtures grew to 13 over 4. An `EvalCase`
   now carries a `tool` and an `expect_match` flag; the fixture corpus gains a
   `scheduler.py` module and a `policies.yaml`. Existing eval-set rows are
   unchanged (they default to `tool: search`).
