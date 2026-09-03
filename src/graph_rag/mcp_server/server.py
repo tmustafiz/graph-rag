@@ -158,9 +158,23 @@ def build_server(
         )
 
     @server.tool()
-    def recall(query: str, top_k: int = 5) -> list[AgentMemoryResult]:
-        """Hybrid (vector + full-text) search over your own remembered memories."""
-        return memory_recaller.recall(query, top_k)
+    def recall(
+        query: str,
+        top_k: int = 5,
+        kind: str | None = None,
+        about_qualified_name: str | None = None,
+        session_id: str | None = None,
+    ) -> list[AgentMemoryResult]:
+        """Hybrid (vector + full-text) search over your own remembered memories,
+        ranked by semantic relevance plus a boost for `importance=True` memories
+        and for ones you recall often and recently.
+
+        Optional filters: `kind`
+        ("decision"|"correction"|"finding"|"preference"|"fact"),
+        `about_qualified_name` (only memories linked to that `CodeEntity`), and
+        `session_id` (only memories saved in that session).
+        """
+        return memory_recaller.recall(query, top_k, kind, about_qualified_name, session_id)
 
     @server.tool()
     def forget(memory_id: str) -> None:

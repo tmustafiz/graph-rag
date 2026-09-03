@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `recall` ranks by semantic relevance **plus** a flat boost for
+  `importance=True` memories and a recency/frequency boost (a saturating
+  function of `access_count` decayed by time since last recall) — previously
+  those signals only fed pruning. `recall` also takes optional `kind`,
+  `about_qualified_name`, and `session_id` filters, returns `last_accessed_at`
+  and `access_count` on each hit, only reinforces hits above a similarity
+  floor, and no longer 500s on a query with Lucene metacharacters.
+
 ## [0.2.0] - 2026-09-03
 
 ### Added
