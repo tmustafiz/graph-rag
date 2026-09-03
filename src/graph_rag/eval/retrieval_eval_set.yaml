@@ -1,11 +1,24 @@
 # Hand-written retrieval regression cases, run via `grag-mcp eval-retrieval`
-# against Retriever.search(). `eval-retrieval` first ingests the fixture corpus
-# in src/graph_rag/eval/corpus/ (idempotent), so this eval is self-contained and
-# does not depend on whatever else you happen to have ingested.
+# against the `Retriever` search methods. `eval-retrieval` first ingests the
+# fixture corpus in src/graph_rag/eval/corpus/ (idempotent), so this eval is
+# self-contained and does not depend on whatever else you happen to have
+# ingested.
 #
-# expected_source_path is the path as ingested (repo-root-relative — run
-# `make eval` from the repo root). expected_breadcrumb_contains is matched
-# case-insensitively as a substring of the hit's section breadcrumb.
+# Each row is an EvalCase:
+#   tool:          search (default) | search_code | search_policies
+#   query:         the natural-language query
+#   top_k:         how many hits to consider (default 5)
+#   expect_match:  true (default) — the expectation must be found in the top_k
+#                  false          — a negative case: it must NOT be found
+#   expected_source_path / expected_breadcrumb_contains   (tool: search)
+#   expected_qualified_name_contains                      (tool: search_code)
+#   expected_policy_id                                    (tool: search_policies)
+# expected_source_path is the path as ingested (repo-root-relative — run from
+# the repo root). *_contains fields match case-insensitively as substrings.
+# Negative cases target `search`: the code / policy fixtures are too small for
+# "absent from the top_k" to mean anything (every node comes back).
+
+# --- tool: search (prose / Markdown) -----------------------------------------
 - query: "How do I create a new Orchard task queue with the admin CLI?"
   expected_source_path: "src/graph_rag/eval/corpus/task_queue.md"
   expected_breadcrumb_contains: "Creating a queue"
@@ -21,3 +34,39 @@
 - query: "Which environment variables configure an Orchard broker deployment?"
   expected_source_path: "src/graph_rag/eval/corpus/deployment.md"
   expected_breadcrumb_contains: "Environment variables"
+# top_k boundary: a strong case must still rank first when only one hit is kept.
+- query: "How does Orchard encrypt worker-to-broker traffic in transit?"
+  top_k: 1
+  expected_source_path: "src/graph_rag/eval/corpus/task_queue.md"
+  expected_breadcrumb_contains: "Encryption in transit"
+# negatives: nothing in the corpus covers these.
+- query: "How do I configure a Kubernetes Ingress with TLS termination and path rewriting?"
+  expect_match: false
+  expected_source_path: "src/graph_rag/eval/corpus/task_queue.md"
+  expected_breadcrumb_contains: "Creating a queue"
+- query: "Set up Prometheus scraping and a Grafana dashboard for request latency."
+  expect_match: false
+  expected_source_path: "src/graph_rag/eval/corpus/deployment.md"
+  expected_breadcrumb_contains: "Environment variables"
+
+# --- tool: search_code -----------------------------------------------------
+- query: "which function puts a crashed worker's tasks back into circulation"
+  tool: search_code
+  expected_qualified_name_contains: "scheduler.LeaseScheduler.reclaim_expired_leases"
+- query: "how does the scheduler decide a task is poison and should be dead-lettered"
+  tool: search_code
+  expected_qualified_name_contains: "scheduler.LeaseScheduler.is_poisoned"
+- query: "check whether a lease has passed its deadline"
+  tool: search_code
+  expected_qualified_name_contains: "scheduler.Lease.is_expired"
+
+# --- tool: search_policies -----------------------------------------------
+- query: "policy that a queue must reclaim stuck tasks from a dead worker"
+  tool: search_policies
+  expected_policy_id: "ORCHARD_CUSTOM_1"
+- query: "require encrypted TLS connections from workers to the broker"
+  tool: search_policies
+  expected_policy_id: "ORCHARD_CUSTOM_2"
+- query: "cap how many times a task is retried before dead-lettering"
+  tool: search_policies
+  expected_policy_id: "ORCHARD_CUSTOM_3"

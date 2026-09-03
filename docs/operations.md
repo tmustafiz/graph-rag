@@ -96,20 +96,24 @@ loopback address and `MCP_AUTH_TOKEN` gate as the MCP server itself.
 
 ## Retrieval regression eval
 
-`grag-mcp eval-retrieval` runs a small hand-written set of questions
-with known-correct sources/sections (`src/graph_rag/eval/retrieval_eval_set.yaml`)
-against `search()` and reports pass/fail per case — run it after
-changing chunking, embedding, or ranking logic to catch regressions
-before they reach an agent:
+`grag-mcp eval-retrieval` runs a small hand-written set of cases
+(`src/graph_rag/eval/retrieval_eval_set.yaml`) against `search`,
+`search_code`, and `search_policies` — each case names a `tool`, a query,
+and the hit it expects (by source + breadcrumb, qualified name, or policy
+id), or sets `expect_match: false` for a query that should turn up
+nothing. It reports pass/fail per case — run it after changing chunking,
+embedding, or ranking logic to catch regressions before they reach an
+agent:
 
 ```bash
 uv run grag-mcp eval-retrieval   # or: make eval
 ```
 
 It first ingests the fixture corpus in `src/graph_rag/eval/corpus/`
-(idempotent), so it's self-contained and independent of whatever else
-you have ingested. Run it from the repo root. Exits non-zero if any
-case fails, so it's usable as a CI gate.
+(prose Markdown, a `scheduler.py` module for `search_code`, and
+`policies.yaml` for `search_policies`; idempotent), so it's self-contained
+and independent of whatever else you have ingested. Run it from the repo
+root. Exits non-zero if any case fails, so it's usable as a CI gate.
 
 ## Restricted / hardened-registry environments
 

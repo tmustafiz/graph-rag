@@ -4,7 +4,7 @@ from .eval_case import EvalCase
 
 
 class EvalCaseResult(BaseModel):
-    """Outcome of running one `EvalCase` against `Retriever.search()`."""
+    """Outcome of running one `EvalCase` against a `Retriever` search method."""
 
     case: EvalCase
     passed: bool
