@@ -11,6 +11,9 @@ models
 tests
 examples
 scripts
+# ...except the model-fetch script, which the builder stage runs to vendor the
+# embedding model into the image.
+!scripts/fetch_model.py
 training-docs
 docs
 .claude
