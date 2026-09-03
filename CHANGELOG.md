@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `grag-mcp prune-memory` runs with no arguments — the decay score is now
+  `(1 + access_count) * exp(-days_since_last_recall / 30)` (reads
+  `last_accessed_at`, which nothing used before), with a default `--threshold`
+  of `0.5` (a never-recalled memory decays out ~3 weeks after creation; a
+  reinforced one lasts months). Adds `--dry-run` (list what would be
+  soft/hard-deleted, write nothing), `--list-important` (review the
+  never-decaying `importance=True` memories), a `make prune` target, and a
+  scheduling recipe in `docs/operations.md`.
 - `recall` ranks by semantic relevance **plus** a flat boost for
   `importance=True` memories and a recency/frequency boost (a saturating
   function of `access_count` decayed by time since last recall) — previously

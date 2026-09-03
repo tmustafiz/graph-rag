@@ -1,4 +1,4 @@
-.PHONY: up down logs status install lint format test ingest mcp-serve eval fetch-model
+.PHONY: up down logs status install lint format test ingest mcp-serve eval fetch-model prune
 
 up:
 	docker compose up -d neo4j
@@ -35,6 +35,10 @@ mcp-serve:
 
 eval:
 	uv run grag-mcp eval-retrieval
+
+# Decay-prune agent memory (safe to run on a schedule — see docs/operations.md).
+prune:
+	uv run grag-mcp prune-memory
 
 lint:
 	uv run ruff check .

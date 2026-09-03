@@ -19,6 +19,7 @@ from .mcp_server.bearer_token_middleware import BearerTokenMiddleware
 from .mcp_server.retriever import Retriever
 from .mcp_server.server import build_server
 from .memory import MemoryPruner, MemoryRecaller, MemoryWriter
+from .memory.memory_pruner import DEFAULT_GRACE_DAYS, DEFAULT_THRESHOLD
 from .settings import settings
 from .unsupported_file_type_error import UnsupportedFileTypeError
 
@@ -109,19 +110,50 @@ def ingest(
 @app.command(name="prune-memory")
 def prune_memory(
     threshold: float = typer.Option(
-        ...,
+        DEFAULT_THRESHOLD,
         "--threshold",
-        help="Decay score threshold; memories scoring below this are soft-deleted.",
+        help="Decay score below which a non-important memory is soft-deleted.",
     ),
     grace_days: int = typer.Option(
-        30, "--grace-days", help="Days a soft-deleted memory is kept before hard-delete."
+        DEFAULT_GRACE_DAYS,
+        "--grace-days",
+        help="Days a soft-deleted memory is kept before hard-delete.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be pruned; write nothing."
+    ),
+    list_important: bool = typer.Option(
+        False,
+        "--list-important",
+        help="Instead of pruning, list the importance=True memories (they never decay).",
     ),
 ) -> None:
-    """Soft-delete low recency+frequency-score memories; hard-delete ones past the grace window."""
+    """Soft-delete memories whose recency-weighted score has decayed below the
+    threshold; hard-delete ones archived past the grace window. Runs with no
+    arguments — the defaults are sane. Schedule it (see docs/operations.md).
+    """
     with driver_session() as driver:
-        result = MemoryPruner(driver).prune(threshold, grace_days=grace_days)
+        pruner = MemoryPruner(driver)
+        if list_important:
+            important = pruner.list_important()
+            for memory in important:
+                typer.echo(
+                    f"{memory.id}  [{memory.kind}]  accessed×{memory.access_count}  "
+                    f"{memory.content[:80]}"
+                )
+            typer.secho(f"{len(important)} important memories.", fg=typer.colors.GREEN)
+            return
+
+        result = pruner.prune(threshold, grace_days=grace_days, dry_run=dry_run)
+    verb = "Would soft-delete" if dry_run else "Soft-deleted"
+    hard_verb = "would hard-delete" if dry_run else "hard-deleted"
+    if dry_run:
+        for memory_id in result.soft_deleted:
+            typer.echo(f"  soft: {memory_id}")
+        for memory_id in result.hard_deleted:
+            typer.echo(f"  hard: {memory_id}")
     typer.secho(
-        f"Soft-deleted {result.soft_deleted} memories, hard-deleted {result.hard_deleted}.",
+        f"{verb} {result.soft_deleted_count} memories, {hard_verb} {result.hard_deleted_count}.",
         fg=typer.colors.GREEN,
     )
 
