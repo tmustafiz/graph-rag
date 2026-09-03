@@ -1,4 +1,44 @@
-from graph_rag.mcp_server.retriever import _build_outline_tree, _format_citation, combine_scores
+from neo4j.exceptions import ClientError
+
+from graph_rag.mcp_server.retriever import (
+    Retriever,
+    _build_outline_tree,
+    _escape_lucene,
+    _format_citation,
+    combine_scores,
+)
+
+
+def test_escape_lucene_neutralizes_metacharacters() -> None:
+    assert _escape_lucene("Set-FSxSmbServerConfiguration") == r"Set\-FSxSmbServerConfiguration"
+    assert _escape_lucene("ingest --dry-run") == r"ingest \-\-dry\-run"
+    assert _escape_lucene("resource:aws_db_instance") == r"resource\:aws_db_instance"
+    assert _escape_lucene("call foo() then bar()") == r"call foo\(\) then bar\(\)"
+    assert _escape_lucene("a && b || !c") == r"a \&\& b \|\| \!c"
+
+
+def test_escape_lucene_leaves_plain_text_untouched() -> None:
+    assert _escape_lucene("how do I create a queue") == "how do I create a queue"
+
+
+class _RaisingSession:
+    def run(self, *_args: object, **_kwargs: object) -> object:
+        raise ClientError("Encountered ' - ' at line 1")
+
+
+class _RowsSession:
+    def run(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        return [{"chunk_id": "c1", "score": 3.0}, {"chunk_id": "c2", "score": 1.0}]
+
+
+def test_fulltext_scores_degrades_to_empty_on_parser_error() -> None:
+    scores = Retriever._fulltext_scores(_RaisingSession(), "CYPHER", {"query": "a-b"}, "chunk_id")
+    assert scores == {}
+
+
+def test_fulltext_scores_returns_score_map_on_success() -> None:
+    scores = Retriever._fulltext_scores(_RowsSession(), "CYPHER", {"query": "ab"}, "chunk_id")
+    assert scores == {"c1": 3.0, "c2": 1.0}
 
 
 def test_combine_scores_ranks_pure_vector_hit_by_normalized_similarity() -> None:
