@@ -64,6 +64,12 @@ COPY README.md LICENSE NOTICE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --extra pdf --no-dev --frozen --no-editable
 
+# Vendor the embedding model so the runtime never calls huggingface.co on first
+# use. fetch_model.py pulls just the ~87 MB of PyTorch + tokenizer files the
+# sentence-transformers runtime needs, into /app/models/all-MiniLM-L6-v2/.
+COPY scripts/fetch_model.py scripts/fetch_model.py
+RUN /app/.venv/bin/python scripts/fetch_model.py
+
 # ---------------------------------------------------------------------------
 # Runtime: needs glibc + libgcc + libstdc++ (torch's C++ runtime) + libssl /
 # libffi / libz (the standalone CPython's stdlib) + ca-certificates, a
@@ -77,6 +83,9 @@ FROM ${RUNTIME_IMAGE}
 COPY --from=builder /opt/python /opt/python
 # Numeric uid/gid (not the "nonroot" name) so the chown resolves on any base.
 COPY --from=builder --chown=65532:65532 /app/.venv /app/.venv
+# The embedding model, vendored in the builder above. SentenceTransformerEmbedder
+# resolves /opt/models/all-MiniLM-L6-v2 before falling back to the Hub.
+COPY --from=builder --chown=65532:65532 /app/models /opt/models
 
 ENV PATH="/app/.venv/bin:${PATH}"
 WORKDIR /app

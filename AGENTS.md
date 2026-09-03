@@ -27,7 +27,10 @@ traversal, and the agent's own persistent working memory.
 
 It runs entirely on the developer's machine. The default embedding model
 (`sentence-transformers/all-MiniLM-L6-v2`) is local, so ingestion needs no API
-key and works offline once the model is fetched.
+key and works offline once the model is fetched. `SentenceTransformerEmbedder`
+resolves it from `GRAG_EMBEDDING_MODEL` (dir or Hub id), then the copy baked
+into the Docker image (`/opt/models/...`), then `models/` in a checkout, then
+the Hub.
 
 Adding support for a new file type must be a small, isolated change — a new
 parser class registered in the parser registry — never a rewrite.
@@ -129,7 +132,8 @@ src/graph_rag/
 tests/                       pytest
 docs/                        ARCHITECTURE.md, operations.md, ROADMAP.md
 examples/checkov-policies/   the only sample data that ships
-scripts/fetch_model.py       downloads the embedding model into models/
+scripts/fetch_model.py       downloads the embedding model into models/ (the
+                             Dockerfile builder runs it to bake it into /opt/models)
 Dockerfile                   multi-stage: builder venv → distroless/cc runtime
 docker-compose.yml           neo4j + mcp-server
 ```

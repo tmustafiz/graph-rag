@@ -190,10 +190,14 @@ uv run grag-mcp compute-centrality   # re-run after ingesting code changes
 The MCP server and ingestion embed with `sentence-transformers/all-MiniLM-L6-v2`
 (Apache-2.0). `make fetch-model` downloads just the PyTorch + tokenizer files
 (~87 MB) into `models/all-MiniLM-L6-v2/` — see
-[scripts/fetch_model.py](scripts/fetch_model.py). `SentenceTransformerEmbedder`
-loads from that folder when present and otherwise pulls the model from the Hub
-at first use, so a checkout without the folder still works as long as it can
-reach `huggingface.co`.
+[scripts/fetch_model.py](scripts/fetch_model.py). The Docker image bakes the same
+files in at `/opt/models/all-MiniLM-L6-v2`, so `docker compose up` needs no
+network for embeddings.
+
+`SentenceTransformerEmbedder` resolves the model in this order: the
+`GRAG_EMBEDDING_MODEL` env var (a local directory or a Hub repo id), the copy
+baked into the image, the `models/all-MiniLM-L6-v2/` folder in a checkout, and
+finally the Hub repo id — the only branch that needs `huggingface.co`.
 
 ## Architecture
 

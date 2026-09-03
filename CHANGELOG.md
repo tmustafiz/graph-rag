@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/fetch_model.py` and `make fetch-model` for the local embedding model.
 
 ### Changed
+- The Docker image bakes the embedding model in at `/opt/models/all-MiniLM-L6-v2`
+  (the builder stage runs `scripts/fetch_model.py`), so `docker compose up` needs
+  no `huggingface.co` access for embeddings. `SentenceTransformerEmbedder` now
+  resolves the model via `GRAG_EMBEDDING_MODEL` (a directory or a Hub repo id) →
+  the baked-in image copy → `models/` in a checkout → the Hub id, replacing a
+  `Path(__file__).parents[4]` lookup that silently missed in the installed wheel
+  layout and always fell through to the Hub.
 - The PDF parser cuts section bodies at the `(page, y)` coordinates of the
   outline destinations instead of at page boundaries. Previously, when several
   headings shared a page, each leaf section re-extracted and re-embedded the
