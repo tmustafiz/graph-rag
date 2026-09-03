@@ -2,7 +2,12 @@ from pydantic import BaseModel
 
 
 class CodeSearchResult(BaseModel):
-    """One hybrid (vector + full-text) search hit over `CodeEntity` nodes."""
+    """One hybrid (vector + full-text) search hit over `CodeEntity` nodes.
+
+    Hits are ordered by `score` (the fused relevance) unless `rerank_score` is
+    present, in which case that is the ordering signal and `score` is retained
+    only as the pre-rerank value.
+    """
 
     qualified_name: str
     name: str

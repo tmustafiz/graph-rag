@@ -50,6 +50,17 @@ def test_maybe_rerank_breaks_ties_on_the_fused_score() -> None:
     assert ids == ["b", "a"]  # equal rerank scores (len 4), fused score decides
 
 
+def test_maybe_rerank_keeps_input_order_when_rerank_and_fused_scores_all_tie() -> None:
+    # rerank scores tie (all docs length 4) and fused scores tie, so the only
+    # remaining tiebreak is `sorted()`'s stability: the fused-ranked input order.
+    retriever = _retriever_with_reranker(_LengthReranker())
+    fused = {"x": 0.5, "y": 0.5, "z": 0.5}
+    ids, _ = retriever._maybe_rerank(
+        "q", ["y", "z", "x"], {"y": "yyyy", "z": "zzzz", "x": "xxxx"}, fused
+    )
+    assert ids == ["y", "z", "x"]
+
+
 def test_maybe_rerank_handles_an_empty_shortlist() -> None:
     retriever = _retriever_with_reranker(_LengthReranker())
     assert retriever._maybe_rerank("q", [], {}, {}) == ([], {})

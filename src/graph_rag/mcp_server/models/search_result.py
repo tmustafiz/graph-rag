@@ -2,7 +2,12 @@ from pydantic import BaseModel
 
 
 class SearchResult(BaseModel):
-    """One hybrid (vector + full-text) search hit, with citation context."""
+    """One hybrid (vector + full-text) search hit, with citation context.
+
+    Hits are ordered by `score` (the fused relevance) unless `rerank_score` is
+    present, in which case that is the ordering signal and `score` is retained
+    only as the pre-rerank value.
+    """
 
     chunk_id: str
     text: str

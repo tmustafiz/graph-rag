@@ -137,8 +137,11 @@ one of these ways:
 ```bash
 make fetch-reranker                    # vendors it into models/ms-marco-MiniLM-L-6-v2/
 export GRAG_RERANK_MODEL=/opt/models/my-reranker   # a local dir...
-export GRAG_RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2   # ...or a Hub id, to allow a pull
+export GRAG_RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2   # ...or a Hub id — the explicit opt-in to an online pull
 ```
+
+`GRAG_RERANK_MODEL` set to a Hub id is the *only* path that reaches
+`huggingface.co`; there is no fallback that does so on its own.
 
 In a container, set `GRAG_RERANK=1` and either mount the model at
 `/opt/models/ms-marco-MiniLM-L-6-v2` or set `GRAG_RERANK_MODEL`. When reranking

@@ -215,12 +215,17 @@ the query and each shortlisted document together and re-scores them directly —
 more accurate, but only affordable over the ~20 candidates hybrid search already
 narrowed to. It applies to `search`, `search_code`, and `search_policies`.
 
-Off by default. The model is **not** baked into the Docker image and there is no
-implicit Hub download: run `make fetch-reranker` to vendor it into
-`models/ms-marco-MiniLM-L-6-v2/`, or point `GRAG_RERANK_MODEL` at a local
-directory (or, to opt into an online pull, a Hub repo id). With `GRAG_RERANK=1`
-set and no model resolvable, the server fails at **startup** with an actionable
-message rather than at the first query.
+Off by default. The model is **not** baked into the Docker image, and nothing
+downloads it implicitly. Make it resolvable in one of two ways:
+
+- `make fetch-reranker` — vendors it into `models/ms-marco-MiniLM-L-6-v2/`
+  (also picked up at `/opt/models/ms-marco-MiniLM-L-6-v2` in a container);
+- `GRAG_RERANK_MODEL=<path>` — a local directory, **or** a Hub repo id such as
+  `cross-encoder/ms-marco-MiniLM-L-6-v2`, which is the *explicit* opt-in to an
+  online pull.
+
+With `GRAG_RERANK=1` set and neither in place, the server fails at **startup**
+with a message naming these fixes — not at the first query.
 
 Reranking reorders the shortlist by the cross-encoder score, with the fused
 score breaking ties. Each hit keeps its `score` (the `[0, 1]` fused value,

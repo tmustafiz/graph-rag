@@ -2,7 +2,13 @@ from pydantic import BaseModel, Field
 
 
 class PolicyResult(BaseModel):
-    """One Checkov policy returned by the `find_policies_for` tool."""
+    """One Checkov policy returned by `find_policies_for` or `search_policies`.
+
+    From `search_policies`, hits are ordered by `score` (the fused relevance)
+    unless `rerank_score` is present, in which case that is the ordering signal
+    and `score` is retained only as the pre-rerank value. `find_policies_for` is
+    an exact-match traversal and sets neither.
+    """
 
     id: str
     name: str | None = None
