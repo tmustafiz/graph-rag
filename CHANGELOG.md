@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A multi-arch (`linux/amd64` + `linux/arm64`) runtime image published to
+  `ghcr.io/tmustafiz/graph-rag` on every `vX.Y.Z` tag (new `image` job in
+  `release.yml`). Tags: `X.Y.Z`, `X.Y`, `sha-…`, and `latest` for a
+  non-prerelease release.
 - Tracked agent configuration: `AGENTS.md` (cross-agent guide),
   `.github/copilot-instructions.md` (auto-loaded by GitHub Copilot),
   `.github/prompts/*.prompt.md` (setup / run / deploy / add-a-parser /
