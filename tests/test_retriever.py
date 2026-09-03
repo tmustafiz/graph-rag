@@ -28,19 +28,26 @@ def _retriever_with_reranker(reranker: object) -> Retriever:
 def test_maybe_rerank_is_a_passthrough_without_a_reranker() -> None:
     retriever = _retriever_with_reranker(None)
     fused = {"a": 0.9, "b": 0.4}
-    ids, scores = retriever._maybe_rerank("q", ["a", "b"], {"a": "x", "b": "y"}, fused)
+    ids, rerank_scores = retriever._maybe_rerank("q", ["a", "b"], {"a": "x", "b": "y"}, fused)
     assert ids == ["a", "b"]
-    assert scores is fused
+    assert rerank_scores == {}
 
 
 def test_maybe_rerank_reorders_by_cross_encoder_score() -> None:
     retriever = _retriever_with_reranker(_LengthReranker())
     fused = {"a": 0.9, "b": 0.4}
-    ids, scores = retriever._maybe_rerank(
+    ids, rerank_scores = retriever._maybe_rerank(
         "q", ["a", "b"], {"a": "short", "b": "much longer document"}, fused
     )
     assert ids == ["b", "a"]  # "b" has the longer document, so it wins
-    assert scores == {"a": 5.0, "b": 20.0}
+    assert rerank_scores == {"a": 5.0, "b": 20.0}
+
+
+def test_maybe_rerank_breaks_ties_on_the_fused_score() -> None:
+    retriever = _retriever_with_reranker(_LengthReranker())
+    fused = {"a": 0.4, "b": 0.9}  # "b" is the stronger hybrid hit
+    ids, _ = retriever._maybe_rerank("q", ["a", "b"], {"a": "same", "b": "diff"}, fused)
+    assert ids == ["b", "a"]  # equal rerank scores (len 4), fused score decides
 
 
 def test_maybe_rerank_handles_an_empty_shortlist() -> None:

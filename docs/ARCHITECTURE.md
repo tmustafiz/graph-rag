@@ -95,18 +95,25 @@ and `POST /ingest` (for CI / pre-commit hooks with no MCP client).
 ## Retrieval
 
 `search` / `search_code` / `search_policies` run **hybrid retrieval**: a vector
-similarity query and a full-text query over the same candidate set, score-fused
-as `0.7 * vector + 0.3 * full-text` after min-max normalization (see
-`retriever.combine_scores`). Candidates are over-fetched (`top_k * multiplier`)
-before fusion and truncation.
+similarity query fetches the candidate set (`top_k * multiplier`), and a
+full-text query over the same corpus contributes a boost, score-fused as
+`0.7 * vector + 0.3 * full-text` after min-max normalization (see
+`retriever.combine_scores`), then truncated to `top_k`.
+
+The vector query defines the candidate set: full-text only re-weights ids the
+vector search already surfaced. A hit that full-text alone would find but the
+bi-encoder ranks outside `top_k * multiplier` is not recovered — and, since the
+reranker also sees only that shortlist, not recovered by reranking either.
 
 Setting `GRAG_RERANK=1` inserts a cross-encoder pass between fusion and
 truncation: `CrossEncoderReranker` re-scores the fused shortlist by reading the
-query and each candidate together (`retriever._maybe_rerank`), and that order
-wins. Off by default; the model is resolved like the embedder
-(`GRAG_RERANK_MODEL` env → mounted image dir → `models/` in a checkout → Hub id)
-and is not baked into the image. See the README "Reranking" section for the
-before/after eval numbers.
+query and each candidate together (`retriever._maybe_rerank`) and reorders by
+that score, with the fused score breaking ties. Each hit then carries both
+`score` (the fused value, unchanged) and `rerank_score` (the raw logit). Off by
+default; the model must resolve to a local copy (`GRAG_RERANK_MODEL` env →
+mounted image dir → `models/` in a checkout) or construction fails at startup —
+it is not baked into the image and there is no implicit Hub download. See the
+README "Reranking" section for the before/after eval numbers.
 
 Graph-native tools sit alongside search: `get_section` / `get_outline`
 (hierarchy walk), `get_neighbors` (traverse from any node), `find_policies_for`

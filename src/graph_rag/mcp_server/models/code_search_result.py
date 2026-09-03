@@ -12,6 +12,10 @@ class CodeSearchResult(BaseModel):
     file_path: str | None = None
     start_line: int | None = None
     end_line: int | None = None
-    # Fused vector+full-text relevance in [0, 1] normally; a raw cross-encoder
-    # logit (unbounded, can be negative) when reranking is enabled.
+    # Fused vector + full-text relevance, min-max normalized to [0, 1]. Always
+    # the ordering signal unless `rerank_score` is set.
     score: float
+    # Raw cross-encoder logit (unbounded, can be negative), set only when
+    # `GRAG_RERANK` is on. When present it is what the hits are ordered by;
+    # `score` still carries the pre-rerank fused value.
+    rerank_score: float | None = None

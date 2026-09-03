@@ -25,6 +25,22 @@ ALLOW_PATTERNS = [
     "pytorch_model.bin",
 ]
 
+# Files that must exist afterwards for the model to load offline. One weights
+# file is enough (the repo ships both formats).
+REQUIRED_FILES = ["config.json", "tokenizer_config.json", "vocab.txt"]
+REQUIRED_WEIGHTS = ["model.safetensors", "pytorch_model.bin"]
+
+
+def _verify() -> None:
+    missing = [name for name in REQUIRED_FILES if not (TARGET_DIR / name).is_file()]
+    if not any((TARGET_DIR / name).is_file() for name in REQUIRED_WEIGHTS):
+        missing.append(" or ".join(REQUIRED_WEIGHTS))
+    if missing:
+        raise SystemExit(
+            f"Download incomplete — {TARGET_DIR} is missing: {', '.join(missing)}. "
+            "Delete the directory and re-run."
+        )
+
 
 def main() -> None:
     TARGET_DIR.mkdir(parents=True, exist_ok=True)
@@ -33,6 +49,7 @@ def main() -> None:
         local_dir=str(TARGET_DIR),
         allow_patterns=ALLOW_PATTERNS,
     )
+    _verify()
     print(f"Reranker files written to {TARGET_DIR}")
 
 

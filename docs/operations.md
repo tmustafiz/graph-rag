@@ -124,22 +124,26 @@ reranker or its candidate window.
 `GRAG_RERANK=1` turns on a cross-encoder second stage for `search`,
 `search_code`, and `search_policies`: after hybrid search fuses and shortlists,
 `cross-encoder/ms-marco-MiniLM-L-6-v2` re-scores those candidates by reading the
-query and each document together, and that order is what's returned. It's off by
-default and adds ~1 model load at startup plus a few tens of milliseconds per
-query on CPU.
+query and each document together and reorders by that score (the fused score
+breaks ties). It's off by default and adds ~1 model load at startup plus a few
+tens of milliseconds per query on CPU. Note the reranker only sees the vector
+shortlist, so it can't rescue a hit that only full-text search would surface.
 
-The model is **not** in the Docker image. Make it available one of these ways:
+The model is **not** in the Docker image, and there is no implicit
+`huggingface.co` download — if reranking is enabled and no model resolves, the
+process exits at **startup** with a message naming the fix. Make it available
+one of these ways:
 
 ```bash
 make fetch-reranker                    # vendors it into models/ms-marco-MiniLM-L-6-v2/
-export GRAG_RERANK_MODEL=/opt/models/my-reranker   # or point at any dir / Hub id
+export GRAG_RERANK_MODEL=/opt/models/my-reranker   # a local dir...
+export GRAG_RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2   # ...or a Hub id, to allow a pull
 ```
 
 In a container, set `GRAG_RERANK=1` and either mount the model at
-`/opt/models/ms-marco-MiniLM-L-6-v2` or set `GRAG_RERANK_MODEL`; with neither,
-first use falls back to `huggingface.co`. When reranking is on, a hit's `score`
-is the raw cross-encoder logit (unbounded, can be negative), not the usual
-`[0, 1]` fused score.
+`/opt/models/ms-marco-MiniLM-L-6-v2` or set `GRAG_RERANK_MODEL`. When reranking
+is on, each hit keeps its `[0, 1]` `score` (the fused value) and adds a
+`rerank_score` — the raw cross-encoder logit (unbounded, can be negative).
 
 ## Pruning agent memory
 

@@ -204,20 +204,24 @@ class Retriever:
         fused_scores: dict[str, float],
     ) -> tuple[list[str], dict[str, float]]:
         """With a reranker configured, re-score the fused shortlist with the
-        cross-encoder and return it ordered best-first alongside
-        `{id: rerank_score}`; without one, return the fused order and scores
-        untouched.
+        cross-encoder and return it ordered by that score (the fused score
+        breaks ties, so the hybrid signal still decides otherwise-equal hits),
+        alongside `{id: rerank_score}`. Without one, return the fused order
+        and an empty rerank-score map.
         """
         if self._reranker is None or not ranked_ids:
-            return ranked_ids, fused_scores
-        scores = dict(
+            return ranked_ids, {}
+        rerank_scores = dict(
             zip(
                 ranked_ids,
                 self._reranker.rerank(query, [documents[rid] for rid in ranked_ids]),
                 strict=True,
             )
         )
-        return sorted(ranked_ids, key=lambda rid: scores[rid], reverse=True), scores
+        ordered = sorted(
+            ranked_ids, key=lambda rid: (rerank_scores[rid], fused_scores[rid]), reverse=True
+        )
+        return ordered, rerank_scores
 
     def search(
         self,
@@ -256,7 +260,7 @@ class Retriever:
             {chunk_id: row["score"] for chunk_id, row in by_id.items()}, fulltext_scores
         )
         ranked_ids = sorted(combined_scores, key=lambda cid: combined_scores[cid], reverse=True)
-        ranked_ids, scores = self._maybe_rerank(
+        ranked_ids, rerank_scores = self._maybe_rerank(
             query,
             ranked_ids,
             {cid: _prose_document(by_id[cid]) for cid in ranked_ids},
@@ -271,7 +275,8 @@ class Retriever:
                 source_type=by_id[cid]["source_type"],
                 start_page=by_id[cid]["start_page"],
                 end_page=by_id[cid]["end_page"],
-                score=scores[cid],
+                score=combined_scores[cid],
+                rerank_score=rerank_scores.get(cid),
             )
             for cid in ranked_ids[:top_k]
         ]
@@ -424,7 +429,7 @@ class Retriever:
             {qn: row["score"] for qn, row in by_id.items()}, fulltext_scores
         )
         ranked_ids = sorted(combined_scores, key=lambda qn: combined_scores[qn], reverse=True)
-        ranked_ids, scores = self._maybe_rerank(
+        ranked_ids, rerank_scores = self._maybe_rerank(
             query, ranked_ids, {qn: _code_document(by_id[qn]) for qn in ranked_ids}, combined_scores
         )
         return [
@@ -437,7 +442,8 @@ class Retriever:
                 file_path=by_id[qn]["file_path"],
                 start_line=by_id[qn]["start_line"],
                 end_line=by_id[qn]["end_line"],
-                score=scores[qn],
+                score=combined_scores[qn],
+                rerank_score=rerank_scores.get(qn),
             )
             for qn in ranked_ids[:top_k]
         ]
@@ -468,7 +474,7 @@ class Retriever:
             {pid: row["score"] for pid, row in by_id.items()}, fulltext_scores
         )
         ranked_ids = sorted(combined_scores, key=lambda pid: combined_scores[pid], reverse=True)
-        ranked_ids, scores = self._maybe_rerank(
+        ranked_ids, rerank_scores = self._maybe_rerank(
             query,
             ranked_ids,
             {pid: _policy_document(by_id[pid]) for pid in ranked_ids},
@@ -484,7 +490,8 @@ class Retriever:
                 provider=by_id[pid]["provider"],
                 source_path=by_id[pid]["source_path"],
                 resource_types=by_id[pid]["resource_types"],
-                score=scores[pid],
+                score=combined_scores[pid],
+                rerank_score=rerank_scores.get(pid),
             )
             for pid in ranked_ids[:top_k]
         ]

@@ -28,13 +28,19 @@ def test_image_model_dir_wins_over_repo_dir(
     assert CrossEncoderReranker._resolve_model() == str(image_dir)
 
 
-def test_falls_back_to_hub_id_when_no_local_copy(
+def test_raises_when_no_local_model_and_no_override(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.delenv("GRAG_RERANK_MODEL", raising=False)
     monkeypatch.setattr(cer, "_IMAGE_MODEL_DIR", tmp_path / "absent-image")
     monkeypatch.setattr(cer, "_REPO_MODEL_DIR", tmp_path / "absent-repo")
 
+    with pytest.raises(RuntimeError, match="make fetch-reranker"):
+        CrossEncoderReranker._resolve_model()
+
+
+def test_override_still_wins_when_it_is_a_hub_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRAG_RERANK_MODEL", cer.DEFAULT_MODEL_NAME)
     assert CrossEncoderReranker._resolve_model() == cer.DEFAULT_MODEL_NAME
 
 

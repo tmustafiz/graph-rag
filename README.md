@@ -215,11 +215,19 @@ the query and each shortlisted document together and re-scores them directly —
 more accurate, but only affordable over the ~20 candidates hybrid search already
 narrowed to. It applies to `search`, `search_code`, and `search_policies`.
 
-Off by default. The model is **not** baked into the Docker image; `make
-fetch-reranker` vendors it into `models/ms-marco-MiniLM-L-6-v2/` for offline use,
-or point `GRAG_RERANK_MODEL` at a directory / Hub id. When reranking is on, a
-hit's `score` is the raw cross-encoder logit (unbounded, can be negative) rather
-than the usual `[0, 1]` fused score.
+Off by default. The model is **not** baked into the Docker image and there is no
+implicit Hub download: run `make fetch-reranker` to vendor it into
+`models/ms-marco-MiniLM-L-6-v2/`, or point `GRAG_RERANK_MODEL` at a local
+directory (or, to opt into an online pull, a Hub repo id). With `GRAG_RERANK=1`
+set and no model resolvable, the server fails at **startup** with an actionable
+message rather than at the first query.
+
+Reranking reorders the shortlist by the cross-encoder score, with the fused
+score breaking ties. Each hit keeps its `score` (the `[0, 1]` fused value,
+unchanged) and gains a `rerank_score` (the raw cross-encoder logit — unbounded,
+can be negative — `null` when reranking is off). The reranker only sees the
+vector shortlist, so a hit that full-text alone would surface is not rescued by
+it.
 
 Measured with `grag-mcp eval-retrieval --rerank` against the built-in eval set
 (13 hand-written cases over the `src/graph_rag/eval/corpus/` fixture; 12 of them
