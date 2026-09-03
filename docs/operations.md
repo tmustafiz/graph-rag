@@ -115,6 +115,39 @@ It first ingests the fixture corpus in `src/graph_rag/eval/corpus/`
 and independent of whatever else you have ingested. Run it from the repo
 root. Exits non-zero if any case fails, so it's usable as a CI gate.
 
+`--rerank` additionally runs the whole set through the cross-encoder reranker
+and prints a baseline-vs-reranked rank comparison — useful when tuning the
+reranker or its candidate window.
+
+## Reranking (optional)
+
+`GRAG_RERANK=1` turns on a cross-encoder second stage for `search`,
+`search_code`, and `search_policies`: after hybrid search fuses and shortlists,
+`cross-encoder/ms-marco-MiniLM-L-6-v2` re-scores those candidates by reading the
+query and each document together and reorders by that score (the fused score
+breaks ties). It's off by default and adds ~1 model load at startup plus a few
+tens of milliseconds per query on CPU. Note the reranker only sees the vector
+shortlist, so it can't rescue a hit that only full-text search would surface.
+
+The model is **not** in the Docker image, and there is no implicit
+`huggingface.co` download — if reranking is enabled and no model resolves, the
+process exits at **startup** with a message naming the fix. Make it available
+one of these ways:
+
+```bash
+make fetch-reranker                    # vendors it into models/ms-marco-MiniLM-L-6-v2/
+export GRAG_RERANK_MODEL=/opt/models/my-reranker   # a local dir...
+export GRAG_RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2   # ...or a Hub id — the explicit opt-in to an online pull
+```
+
+`GRAG_RERANK_MODEL` set to a Hub id is the *only* path that reaches
+`huggingface.co`; there is no fallback that does so on its own.
+
+In a container, set `GRAG_RERANK=1` and either mount the model at
+`/opt/models/ms-marco-MiniLM-L-6-v2` or set `GRAG_RERANK_MODEL`. When reranking
+is on, each hit keeps its `[0, 1]` `score` (the fused value) and adds a
+`rerank_score` — the raw cross-encoder logit (unbounded, can be negative).
+
 ## Pruning agent memory
 
 `AgentMemory` nodes (`remember` / `recall`) grow without bound unless

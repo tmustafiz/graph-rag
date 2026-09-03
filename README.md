@@ -206,6 +206,51 @@ network for embeddings.
 baked into the image, the `models/all-MiniLM-L6-v2/` folder in a checkout, and
 finally the Hub repo id — the only branch that needs `huggingface.co`.
 
+## Reranking (optional)
+
+Hybrid search shortlists candidates with a bi-encoder (fast, compares
+independently computed vectors). Setting **`GRAG_RERANK=1`** adds a second stage:
+a cross-encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`, Apache-2.0) that reads
+the query and each shortlisted document together and re-scores them directly —
+more accurate, but only affordable over the ~20 candidates hybrid search already
+narrowed to. It applies to `search`, `search_code`, and `search_policies`.
+
+Off by default. The model is **not** baked into the Docker image, and nothing
+downloads it implicitly. Make it resolvable in one of two ways:
+
+- `make fetch-reranker` — vendors it into `models/ms-marco-MiniLM-L-6-v2/`
+  (also picked up at `/opt/models/ms-marco-MiniLM-L-6-v2` in a container);
+- `GRAG_RERANK_MODEL=<path>` — a local directory, **or** a Hub repo id such as
+  `cross-encoder/ms-marco-MiniLM-L-6-v2`, which is the *explicit* opt-in to an
+  online pull.
+
+With `GRAG_RERANK=1` set and neither in place, the server fails at **startup**
+with a message naming these fixes — not at the first query.
+
+Reranking reorders the shortlist by the cross-encoder score, with the fused
+score breaking ties. Each hit keeps its `score` (the `[0, 1]` fused value,
+unchanged) and gains a `rerank_score` (the raw cross-encoder logit — unbounded,
+can be negative — `null` when reranking is off). The reranker only sees the
+vector shortlist, so a hit that full-text alone would surface is not rescued by
+it.
+
+Measured with `grag-mcp eval-retrieval --rerank` against the built-in eval set
+(13 hand-written cases over the `src/graph_rag/eval/corpus/` fixture; 12 of them
+positive):
+
+| | Naive vector RAG | Hybrid (vector + full-text) | Hybrid + cross-encoder rerank |
+| --- | --- | --- | --- |
+| Cases passed (correct hit in top-k) | 13 / 13 | 13 / 13 | 13 / 13 |
+| Correct hit ranked #1 | 9 / 12 | 10 / 12 | 11 / 12 |
+| Mean rank of the correct hit | 1.33 | 1.17 | 1.08 |
+
+The fixture corpus is small and deliberately unambiguous, so every layer already
+retrieves the right chunk inside the top-k — the differentiator here is how
+close to rank 1 it lands. Each stage tightens that: full-text catches exact-term
+matches the bi-encoder blurs, and the cross-encoder promotes a couple of
+rank-2 hits to rank-1. The layering effect grows as a corpus gets larger and
+noisier and the top-k stops being trivially correct.
+
 ## Architecture
 
 ```mermaid
