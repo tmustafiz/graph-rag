@@ -115,6 +115,55 @@ It first ingests the fixture corpus in `src/graph_rag/eval/corpus/`
 and independent of whatever else you have ingested. Run it from the repo
 root. Exits non-zero if any case fails, so it's usable as a CI gate.
 
+## Pruning agent memory
+
+`AgentMemory` nodes (`remember` / `recall`) grow without bound unless
+something prunes them. `grag-mcp prune-memory` does two things each run:
+
+- **soft-delete** (`archived_at` set, still recoverable) any non-`importance`
+  memory whose score has decayed below `--threshold` (default `0.5`). Score is
+  `(1 + access_count) * exp(-days_since_last_recall / 30)`, so a memory the
+  agent keeps recalling survives and one it saved and forgot decays out — a
+  never-recalled memory crosses the threshold ~21 days after creation.
+- **hard-delete** (`DETACH DELETE`) any memory archived longer than
+  `--grace-days` (default `30`) ago — whether archived by decay or by `forget`.
+
+```bash
+make prune                          # uv run grag-mcp prune-memory
+grag-mcp prune-memory --dry-run     # list what it would soft/hard-delete, write nothing
+grag-mcp prune-memory --list-important   # review the importance=True memories (they never decay)
+```
+
+It's safe to run unattended. Schedule it however you already run periodic
+jobs — e.g. cron:
+
+```cron
+# 03:30 daily, against the compose stack's Neo4j
+30 3 * * * cd /path/to/graph-rag && docker compose run --rm --no-deps mcp-server prune-memory
+```
+
+or a systemd timer:
+
+```ini
+# /etc/systemd/system/grag-prune.service
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/graph-rag
+ExecStart=/usr/bin/docker compose run --rm --no-deps mcp-server prune-memory
+
+# /etc/systemd/system/grag-prune.timer
+[Timer]
+OnCalendar=daily
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
+
+The `mcp-server` image's entrypoint is `grag-mcp`, so `docker compose run
+--rm mcp-server prune-memory` works with no extra wiring. `importance=True`
+memories never decay; `--list-important` surfaces them so you can `forget`
+the ones that stopped mattering.
+
 ## Restricted / hardened-registry environments
 
 Some organizations only allow pulling from an approved hardened-image

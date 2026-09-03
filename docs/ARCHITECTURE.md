@@ -127,9 +127,11 @@ those controls don't apply.
 ## Agent memory
 
 `remember` / `recall` / `forget` store `AgentMemory` nodes (embedded, so
-`recall` is semantic). `grag-mcp prune-memory --threshold <score>` soft-deletes
-memories whose recency + access-frequency decay score falls below the threshold
-and hard-deletes ones past a grace window.
+`recall` is semantic; ranked by relevance plus an `importance` and a
+recency/frequency boost). `grag-mcp prune-memory` (no args needed) soft-deletes
+memories whose decay score `(1 + access_count) * exp(-days_since_last_recall/30)`
+falls below a threshold and hard-deletes ones past a grace window; schedule it
+per `docs/operations.md`.
 
 ## Deployment
 
