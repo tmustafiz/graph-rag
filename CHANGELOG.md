@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — no shell, no package manager, non-root by default. Base-OS High/Critical
   CVEs go from 2C/5H to 0; the runtime image scans clean at High/Critical.
 
+### Fixed
+- `search` / `search_code` / `search_policies` no longer 500 when the query
+  contains a Lucene metacharacter (a pasted CLI flag like `--dry-run`, a
+  `resource:type` string, code, a path). The query is escaped before it reaches
+  `db.index.fulltext.queryNodes`, and any residual parser error (e.g. a bare
+  `AND`/`OR`) is caught so the search degrades to vector-only instead of
+  failing.
+
 ### Removed
 - `docs/IMPLEMENTATION_PLAN.md` and `docs/progress.md` — planning, roadmap, and
   release notes now live in GitHub Issues, Milestones, the project board, and

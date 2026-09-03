@@ -1,6 +1,9 @@
+import logging
+import re
 from typing import Any, LiteralString, cast
 
 from neo4j import Driver
+from neo4j.exceptions import ClientError
 
 from graph_rag.ingest.embedders import Embedder
 
@@ -15,6 +18,22 @@ from .models import (
     SectionOutlineEntry,
     SourceInfo,
 )
+
+logger = logging.getLogger(__name__)
+
+# Lucene query-parser metacharacters. `db.index.fulltext.queryNodes` parses its
+# argument as a Lucene query, so an unescaped one of these in a natural-language
+# query (a pasted CLI flag, `resource:type`, a path, code) raises a
+# ParseException and 500s the whole search.
+_LUCENE_SPECIAL = re.compile(r'([+\-!(){}\[\]^"~*?:\\/&|])')
+
+
+def _escape_lucene(query: str) -> str:
+    """Backslash-escape Lucene metacharacters so an arbitrary string is matched
+    as literal terms instead of raising a parser error.
+    """
+    return _LUCENE_SPECIAL.sub(r"\\\1", query)
+
 
 _VECTOR_SEARCH = """
 CALL db.index.vector.queryNodes('chunk_embedding', $k, $vector)
@@ -156,6 +175,20 @@ class Retriever:
         self._driver = driver
         self._embedder = embedder
 
+    @staticmethod
+    def _fulltext_scores(
+        session: Any, cypher: LiteralString, params: dict[str, Any], id_key: str
+    ) -> dict[str, float]:
+        """Run one full-text query and return `{id: score}`. A malformed Lucene
+        query (despite `_escape_lucene`) degrades to no full-text boost rather
+        than failing the search — the vector half still stands.
+        """
+        try:
+            return {row[id_key]: row["score"] for row in session.run(cypher, params)}
+        except ClientError as exc:
+            logger.warning("full-text search skipped for %r: %s", params.get("query"), exc)
+            return {}
+
     def search(
         self,
         query: str,
@@ -176,18 +209,17 @@ class Retriever:
                     source_path=source_path,
                 )
             ]
-            fulltext_scores = {
-                row["chunk_id"]: row["score"]
-                for row in session.run(
-                    cast(LiteralString, _FULLTEXT_SEARCH),
-                    {
-                        "query": query,
-                        "k": candidate_k,
-                        "source_type": source_type,
-                        "source_path": source_path,
-                    },
-                )
-            }
+            fulltext_scores = self._fulltext_scores(
+                session,
+                cast(LiteralString, _FULLTEXT_SEARCH),
+                {
+                    "query": _escape_lucene(query),
+                    "k": candidate_k,
+                    "source_type": source_type,
+                    "source_path": source_path,
+                },
+                "chunk_id",
+            )
 
         by_id = {row["chunk_id"]: row for row in vector_rows}
         combined_scores = combine_scores(
@@ -344,13 +376,12 @@ class Retriever:
                     cast(LiteralString, _VECTOR_SEARCH_CODE), k=candidate_k, vector=vector
                 )
             ]
-            fulltext_scores = {
-                row["qualified_name"]: row["score"]
-                for row in session.run(
-                    cast(LiteralString, _FULLTEXT_SEARCH_CODE),
-                    {"query": query, "k": candidate_k},
-                )
-            }
+            fulltext_scores = self._fulltext_scores(
+                session,
+                cast(LiteralString, _FULLTEXT_SEARCH_CODE),
+                {"query": _escape_lucene(query), "k": candidate_k},
+                "qualified_name",
+            )
 
         by_id = {row["qualified_name"]: row for row in vector_rows}
         combined_scores = combine_scores(
@@ -386,13 +417,12 @@ class Retriever:
                     cast(LiteralString, _VECTOR_SEARCH_POLICY), k=candidate_k, vector=vector
                 )
             ]
-            fulltext_scores = {
-                row["id"]: row["score"]
-                for row in session.run(
-                    cast(LiteralString, _FULLTEXT_SEARCH_POLICY),
-                    {"query": query, "k": candidate_k},
-                )
-            }
+            fulltext_scores = self._fulltext_scores(
+                session,
+                cast(LiteralString, _FULLTEXT_SEARCH_POLICY),
+                {"query": _escape_lucene(query), "k": candidate_k},
+                "id",
+            )
 
         by_id = {row["id"]: row for row in vector_rows}
         combined_scores = combine_scores(
