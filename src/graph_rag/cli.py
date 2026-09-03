@@ -169,8 +169,9 @@ def eval_retrieval(
     for result in results:
         status = "PASS" if result.passed else "FAIL"
         color = typer.colors.GREEN if result.passed else typer.colors.RED
-        rank_note = f" (rank {result.best_rank})" if result.passed else ""
-        typer.secho(f"[{status}] {result.case.query}{rank_note}", fg=color)
+        rank_note = f" (rank {result.best_rank})" if result.best_rank is not None else ""
+        tool_note = "" if result.case.tool == "search" else f" [{result.case.tool}]"
+        typer.secho(f"[{status}]{tool_note} {result.case.query}{rank_note}", fg=color)
 
     passed = sum(1 for r in results if r.passed)
     typer.echo(f"{passed}/{len(results)} passed.")

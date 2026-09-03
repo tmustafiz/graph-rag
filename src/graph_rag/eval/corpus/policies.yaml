@@ -1,0 +1,51 @@
+# Fictional Checkov-style policies, fixture content for the retrieval eval only.
+# The resource types (orchard_*) are invented so these never collide with a real
+# policy set. `grag-mcp eval-retrieval` ingests this file so `search_policies`
+# has targets.
+metadata:
+  id: "ORCHARD_CUSTOM_1"
+  name: "Ensure Orchard queues set a finite visibility timeout"
+  category: "GENERAL_SECURITY"
+  severity: "HIGH"
+  guideline: "Set visibility_timeout_seconds so a crashed worker's tasks are reclaimed instead of stuck forever."
+scope:
+  provider: "orchard"
+definition:
+  cond_type: "attribute"
+  resource_types:
+    - "orchard_queue"
+  attribute: "visibility_timeout_seconds"
+  operator: "greater_than"
+  value: 0
+---
+metadata:
+  id: "ORCHARD_CUSTOM_2"
+  name: "Ensure the Orchard broker requires TLS for worker connections"
+  category: "NETWORKING"
+  severity: "CRITICAL"
+  guideline: "Set require_tls to true so worker-to-broker traffic is encrypted in transit."
+scope:
+  provider: "orchard"
+definition:
+  cond_type: "attribute"
+  resource_types:
+    - "orchard_broker"
+  attribute: "require_tls"
+  operator: "equals"
+  value: true
+---
+metadata:
+  id: "ORCHARD_CUSTOM_3"
+  name: "Ensure Orchard queues cap the retry attempt count"
+  category: "GENERAL_SECURITY"
+  severity: "MEDIUM"
+  guideline: "Set max_attempts so a poison task goes to the dead-letter queue instead of retrying forever."
+scope:
+  provider: "orchard"
+definition:
+  cond_type: "attribute"
+  resource_types:
+    - "orchard_queue"
+  attribute: "max_attempts"
+  operator: "greater_than"
+  value: 0
