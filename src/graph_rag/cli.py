@@ -18,6 +18,9 @@ from .ingestion_pipeline import IngestionPipeline
 from .ingestion_watcher import IngestionWatcher
 from .mcp_server.bearer_token_middleware import BearerTokenMiddleware
 from .mcp_server.cross_encoder_reranker import CrossEncoderReranker, build_reranker
+from .mcp_server.knowledge_server import build_knowledge_server
+from .mcp_server.mcp_role import McpRole
+from .mcp_server.memory_server import build_memory_server
 from .mcp_server.retriever import Retriever
 from .mcp_server.server import build_server
 from .memory import MemoryPruner, MemoryRecaller, MemoryWriter
@@ -251,6 +254,15 @@ def _exit_on_eval_failures(results: list[EvalCaseResult]) -> None:
 
 @app.command(name="serve-mcp")
 def serve_mcp(
+    role: McpRole = typer.Option(  # noqa: B008
+        McpRole.ALL,
+        "--role",
+        help="Which tools to expose: 'knowledge' (search/ingest/graph lookups), "
+        "'memory' (remember/recall/forget), or 'all' (both, on one server — "
+        "the default). Run 'knowledge' and 'memory' as separate processes, "
+        "each against its own Neo4j, to deploy the knowledge base and agent "
+        "memory independently.",
+    ),
     stdio: bool = typer.Option(
         False,
         "--stdio",
@@ -267,12 +279,21 @@ def serve_mcp(
     """
     embedder = build_embedder()
     with driver_session() as driver:
-        retriever = Retriever(driver, embedder, build_reranker())
-        writer = GraphWriter(driver)
-        ingestion_pipeline = IngestionPipeline(ParserRegistry(), embedder, writer)
-        memory_writer = MemoryWriter(driver, embedder)
-        memory_recaller = MemoryRecaller(driver, embedder)
-        server = build_server(retriever, ingestion_pipeline, memory_writer, memory_recaller)
+        ingestion_pipeline: IngestionPipeline | None = None
+        if role in (McpRole.KNOWLEDGE, McpRole.ALL):
+            retriever = Retriever(driver, embedder, build_reranker())
+            writer = GraphWriter(driver)
+            ingestion_pipeline = IngestionPipeline(ParserRegistry(), embedder, writer)
+        if role in (McpRole.MEMORY, McpRole.ALL):
+            memory_writer = MemoryWriter(driver, embedder)
+            memory_recaller = MemoryRecaller(driver, embedder)
+
+        if role is McpRole.KNOWLEDGE:
+            server = build_knowledge_server(retriever, ingestion_pipeline)
+        elif role is McpRole.MEMORY:
+            server = build_memory_server(memory_writer, memory_recaller)
+        else:
+            server = build_server(retriever, ingestion_pipeline, memory_writer, memory_recaller)
 
         if stdio:
             # stdout is the JSON-RPC channel in stdio mode — keep the status
@@ -297,14 +318,19 @@ def serve_mcp(
         mcp_app = server.streamable_http_app(
             host=settings.mcp_host, transport_security=transport_security
         )
-        app = build_http_app(mcp_app, ingestion_pipeline)
+        app = (
+            build_http_app(mcp_app, ingestion_pipeline)
+            if ingestion_pipeline is not None
+            else mcp_app
+        )
         if settings.mcp_auth_token:
             app = BearerTokenMiddleware(app, token=settings.mcp_auth_token)
 
         typer.echo(f"MCP server listening on http://{settings.mcp_host}:{settings.mcp_port}/mcp")
-        typer.echo(
-            f"POST /ingest listening on http://{settings.mcp_host}:{settings.mcp_port}/ingest"
-        )
+        if ingestion_pipeline is not None:
+            typer.echo(
+                f"POST /ingest listening on http://{settings.mcp_host}:{settings.mcp_port}/ingest"
+            )
         uvicorn.run(app, host=settings.mcp_host, port=settings.mcp_port, log_level="info")
 
 
