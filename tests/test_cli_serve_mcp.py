@@ -16,7 +16,7 @@ def _fake_driver_session():
 def _run_serve_mcp(args: list[str]) -> tuple[MagicMock, MagicMock]:
     server = MagicMock(name="server")
     with (
-        patch("graph_rag.cli.SentenceTransformerEmbedder", MagicMock()),
+        patch("graph_rag.cli.build_embedder", MagicMock()),
         patch("graph_rag.cli.driver_session", _fake_driver_session),
         patch("graph_rag.cli.Retriever", MagicMock()),
         patch("graph_rag.cli.GraphWriter", MagicMock()),
@@ -59,7 +59,7 @@ def test_stdio_status_line_goes_to_stderr_not_stdout() -> None:
 
     server.run.side_effect = _capture_run
     with (
-        patch("graph_rag.cli.SentenceTransformerEmbedder", MagicMock()),
+        patch("graph_rag.cli.build_embedder", MagicMock()),
         patch("graph_rag.cli.driver_session", _fake_driver_session),
         patch("graph_rag.cli.Retriever", MagicMock()),
         patch("graph_rag.cli.GraphWriter", MagicMock()),

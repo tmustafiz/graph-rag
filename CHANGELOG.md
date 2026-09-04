@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Config-selected hosted embedding backends. `GRAG_EMBEDDING_PROVIDER` selects
+  `openai`, `ollama`, `voyage`, `cohere`, or `gemini` (unset keeps the local
+  `all-MiniLM-L6-v2` — still the default, no API key). Each backend is a plain
+  `httpx` REST call; no provider SDKs are added. `GRAG_EMBEDDING_MODEL` sets the
+  model id and `GRAG_EMBEDDING_API_BASE` the endpoint (OpenAI-compatible
+  gateways, non-local Ollama). `build_embedder()` probes the provider once at
+  startup and fails fast if the vector width doesn't match `EMBEDDING_DIMENSIONS`
+  rather than corrupting the index mid-ingest.
+  ([#10](https://github.com/tmustafiz/graph-rag/issues/10))
 - Optional cross-encoder reranking for `search` / `search_code` /
   `search_policies`. Set `GRAG_RERANK=1` to re-score the fused hybrid-search
   shortlist with `cross-encoder/ms-marco-MiniLM-L-6-v2` (read query + document

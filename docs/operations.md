@@ -148,6 +148,40 @@ In a container, set `GRAG_RERANK=1` and either mount the model at
 is on, each hit keeps its `[0, 1]` `score` (the fused value) and adds a
 `rerank_score` — the raw cross-encoder logit (unbounded, can be negative).
 
+## Hosted embedding backends (optional)
+
+Ingestion and retrieval embed with the local `all-MiniLM-L6-v2` model by
+default — no API key, no outbound calls. To use a hosted provider, set
+`GRAG_EMBEDDING_PROVIDER` to `openai`, `ollama`, `voyage`, `cohere`, or `gemini`
+(unset or any other value keeps the local model). Each is a plain REST call over
+`httpx`; no provider SDK is installed.
+
+```bash
+export GRAG_EMBEDDING_PROVIDER=openai
+export OPENAI_API_KEY=sk-...
+export GRAG_EMBEDDING_MODEL=text-embedding-3-large   # optional; provider default otherwise
+export GRAG_EMBEDDING_API_BASE=http://localhost:8000 # optional; OpenAI-compatible gateway or Ollama host
+```
+
+Auth env var per provider: `OPENAI_API_KEY`, `VOYAGE_API_KEY`, `CO_API_KEY`,
+`GEMINI_API_KEY`; `ollama` needs none. A missing key fails at **startup**.
+
+**Switching providers changes the vector width.** The Neo4j vector index is
+created at `EMBEDDING_DIMENSIONS` (384 for the local model; OpenAI `-3-small` is
+1536, Gemini/Ollama 768, Voyage/Cohere 1024). To switch:
+
+1. Set `EMBEDDING_DIMENSIONS` to the new model's width in `.env`.
+2. Re-run `grag-mcp apply-schema` (drops and recreates the vector indexes).
+3. Re-ingest everything — old vectors are the wrong width and won't match.
+
+`build_embedder()` embeds one probe string at startup and refuses to run if the
+returned width doesn't equal `EMBEDDING_DIMENSIONS`, so a mismatch surfaces
+immediately instead of as a Neo4j error partway through an ingest.
+
+The `Embedder` interface has no query-vs-document distinction, so Cohere and
+Voyage requests always send the `document` input type; retrieval queries are
+embedded marginally off-optimally on those two providers.
+
 ## Pruning agent memory
 
 `AgentMemory` nodes (`remember` / `recall`) grow without bound unless
