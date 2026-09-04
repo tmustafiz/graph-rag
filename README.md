@@ -278,6 +278,30 @@ matches the bi-encoder blurs, and the cross-encoder promotes a couple of
 rank-2 hits to rank-1. The layering effect grows as a corpus gets larger and
 noisier and the top-k stops being trivially correct.
 
+## Split deployment (optional)
+
+`docker-compose.yml` runs the knowledge base and agent memory together — one
+Neo4j, one MCP server. To deploy them independently instead (separate Neo4j,
+separate MCP server, no shared process — even separate hosts), use the two
+opt-in compose files:
+
+```bash
+docker compose -f docker-compose.knowledge.yml up   # search/ingest/graph tools
+docker compose -f docker-compose.memory.yml up      # remember/recall/forget
+```
+
+Both build from the same `Dockerfile`, targeting `knowledge` (full parser
+stack, incl. the `[pdf]` extra) or `memory` (embedder + memory module only —
+no parsers, no `pymupdf`) — one codebase, two role-appropriate images. An
+agent connects to both MCP endpoints as two separate servers. `about_qualified_name`
+(tagging/filtering a memory by a `CodeEntity`) works either way — it's a
+property on `AgentMemory`, not a graph edge — but the graph-native "what's
+been remembered about this function" traversal (`get_neighbors` from a
+`CodeEntity`) only works when both share one database, i.e. not in this split.
+
+Each compose file provisions its own fresh Neo4j — run `grag-mcp apply-schema`
+against each before first use (see `docs/operations.md`).
+
 ## Architecture
 
 ```mermaid

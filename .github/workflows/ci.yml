@@ -113,7 +113,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build runtime image
+      # Default (untargeted) build — what docker-compose.yml's single-container
+      # quickstart actually builds. Content-identical to the `knowledge` target
+      # (same builder-full source, differs only in CMD), so scanning this one
+      # covers `knowledge` too; a separate build below only proves that named
+      # target still resolves.
+      - name: Build runtime image (default target)
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -122,7 +127,28 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trivy scan (fail on fixable HIGH/CRITICAL)
+      - name: Build knowledge target (smoke — same content as the default image)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: knowledge
+          load: true
+          tags: graph-rag:ci-knowledge
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Genuinely different content (no [pdf] extra) — gets its own scan.
+      - name: Build memory target
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: memory
+          load: true
+          tags: graph-rag:ci-memory
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan — default/knowledge image (fail on fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         # Pull the vuln DB from ECR, not GHCR, to dodge anonymous-pull rate limits.
         env:
@@ -134,5 +160,17 @@ jobs:
           severity: HIGH,CRITICAL
           # Only block on CVEs that actually have a fix — an unfixable base CVE
           # shouldn't wedge every PR. Flip to false to tighten.
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Trivy scan — memory image (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db
+        with:
+          image-ref: graph-rag:ci-memory
+          format: table
+          severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"

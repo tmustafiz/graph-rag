@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Opt-in split deployment: `docker-compose.knowledge.yml` /
+  `docker-compose.memory.yml` run the knowledge base and agent memory as fully
+  independent stacks — separate Neo4j, separate MCP server, optionally
+  separate hosts — instead of `docker-compose.yml`'s combined default (still
+  unchanged). Both build from the same `Dockerfile`: a `knowledge` target
+  (full parser stack, incl. `[pdf]`; content-identical to the default image,
+  just pinned to `--role knowledge`) and a `memory` target (bare package, no
+  parsers, no `pymupdf` — smaller image and CVE-scan surface, pinned to
+  `--role memory`). CI builds and scans both.
+  ([#45](https://github.com/tmustafiz/graph-rag/issues/45))
 - `serve-mcp --role knowledge|memory|all` (default `all`, unchanged behavior).
   `knowledge` and `memory` each start a standalone MCP server with only that
   half of the tools — `search`/`search_code`/`search_policies`/`get_section`/

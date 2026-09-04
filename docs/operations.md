@@ -182,6 +182,59 @@ The `Embedder` interface has no query-vs-document distinction, so Cohere and
 Voyage requests always send the `document` input type; retrieval queries are
 embedded marginally off-optimally on those two providers.
 
+## Split deployment (optional)
+
+`docker-compose.yml` (the default) runs the knowledge base and agent memory
+together — one Neo4j, one MCP server (`--role all`). Two opt-in compose files
+run them as fully independent deployments instead:
+
+```bash
+docker compose -f docker-compose.knowledge.yml up
+docker compose -f docker-compose.memory.yml up
+```
+
+Each is self-contained (its own Neo4j, its own MCP server, its own volumes)
+and can run on a different host from the other. Both build from the same
+`Dockerfile`, at the `knowledge` and `memory` targets respectively — one
+package/wheel/CLI, two role-appropriate images:
+
+- `knowledge`: `pip install .[pdf]` — full parser stack (Markdown/Python/YAML/
+  PDF), ingestion, `watchdog`. Same content as the default image; only its
+  `CMD` differs (`serve-mcp --role knowledge` instead of plain `serve-mcp`).
+- `memory`: `pip install .` (no `[pdf]`) — the embedder + memory module only.
+  No parsers, no `pymupdf`, smaller image and CVE-scan surface.
+
+**First use**: each compose file provisions a brand-new Neo4j with no schema.
+Apply it before `remember`/`recall`/`ingest_path` will work — the vector/
+full-text indexes don't exist yet otherwise:
+
+```bash
+docker compose -f docker-compose.knowledge.yml exec mcp-knowledge grag-mcp apply-schema
+docker compose -f docker-compose.memory.yml exec mcp-memory grag-mcp apply-schema
+```
+
+**Backup/restore**: these are two independent Neo4j volumes —
+`graph-rag-knowledge_neo4j_knowledge_data` and `graph-rag-memory_neo4j_memory_data`
+(plus their `_plugins` counterparts), distinct from the default stack's
+`graph-rag_neo4j_data`/`graph-rag_neo4j_plugins`. Back up and restore each with
+the same stop-the-container-and-tar-the-volume recipe as "Backing up the
+graph" above (`docker compose -f docker-compose.knowledge.yml stop
+neo4j-knowledge`, archive `graph-rag-knowledge_neo4j_knowledge_data`, restart —
+same for the memory stack's `neo4j-memory` service and volume).
+
+**`about_qualified_name` across the split**: `remember`/`recall`'s
+`about_qualified_name` is a plain property on `AgentMemory`, so tagging and
+filtering by it work identically whether or not the two stacks share a
+database. What's lost in the split is the graph-native reverse traversal —
+`get_neighbors` from a `CodeEntity` surfacing memories `ABOUT` it — since that
+edge can only form when a matching `CodeEntity` exists in the *same* database.
+See `docs/ARCHITECTURE.md` "Agent memory".
+
+**Ports**: `docker-compose.knowledge.yml` reuses the default stack's ports
+(7474/7687/8765) — it's meant as a drop-in replacement for `docker-compose.yml`,
+not something run alongside it. `docker-compose.memory.yml` uses offset ports
+(7475/7688/8766) so the two split stacks can run together on one host.
+
 ## Pruning agent memory
 
 `AgentMemory` nodes (`remember` / `recall`) grow without bound unless

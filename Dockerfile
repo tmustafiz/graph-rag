@@ -20,11 +20,11 @@ ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.5
 FROM ${UV_IMAGE} AS uv
 
 # ---------------------------------------------------------------------------
-# Builder: resolve deps and build the app venv against a self-contained
-# CPython (python-build-standalone, via uv) so the runtime image needs no
-# system Python at all.
+# Builder base: everything shared regardless of which extras end up installed
+# — the standalone CPython (python-build-standalone, via uv) and the source
+# tree. Split from the actual `uv sync` so that step alone forks per target.
 # ---------------------------------------------------------------------------
-FROM ${BUILDER_IMAGE} AS builder
+FROM ${BUILDER_IMAGE} AS builder-base
 
 # Pull the latest point-release fixes into the (throwaway) build stage. Skipped
 # automatically on a base with no apt (e.g. an already-patched hardened image).
@@ -51,23 +51,37 @@ RUN uv python install 3.13 \
            /opt/python/*/lib/python3.13/test \
            /opt/python/*/lib/python3.13/idlelib
 
-# Dependency layer (changes rarely) — resolved from the lockfile, project itself
-# not installed yet so this stays cached across source edits.
 COPY pyproject.toml uv.lock ./
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --extra pdf --no-dev --frozen --no-install-project --no-editable
-
-# Project layer — build a wheel from src/ and install it into the venv
-# (--no-editable, so the runtime image never needs the source tree).
 COPY src/ src/
 COPY README.md LICENSE NOTICE ./
+# Vendor the embedding model so the runtime never calls huggingface.co on first
+# use — needed by every role (`remember`/`recall` embed just as much as
+# `search` does). fetch_model.py pulls just the ~87 MB of PyTorch + tokenizer
+# files sentence-transformers needs, into /app/models/all-MiniLM-L6-v2/.
+COPY scripts/fetch_model.py scripts/fetch_model.py
+
+# ---------------------------------------------------------------------------
+# Full builder: the parser stack (Markdown/Python/YAML/PDF) + ingestion.
+# Backs both the default (--role all) image and the `knowledge` target — they
+# need the identical dependency set, differing only in which tools their CMD
+# exposes.
+# ---------------------------------------------------------------------------
+FROM builder-base AS builder-full
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --extra pdf --no-dev --frozen --no-install-project --no-editable
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --extra pdf --no-dev --frozen --no-editable
+RUN /app/.venv/bin/python scripts/fetch_model.py
 
-# Vendor the embedding model so the runtime never calls huggingface.co on first
-# use. fetch_model.py pulls just the ~87 MB of PyTorch + tokenizer files the
-# sentence-transformers runtime needs, into /app/models/all-MiniLM-L6-v2/.
-COPY scripts/fetch_model.py scripts/fetch_model.py
+# ---------------------------------------------------------------------------
+# Memory builder: the embedder + memory module only — no parser stack, no
+# pymupdf, no watchdog-driven `ingest --watch` use. Backs the `memory` target.
+# ---------------------------------------------------------------------------
+FROM builder-base AS builder-memory
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --frozen --no-install-project --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --frozen --no-editable
 RUN /app/.venv/bin/python scripts/fetch_model.py
 
 # ---------------------------------------------------------------------------
@@ -75,22 +89,49 @@ RUN /app/.venv/bin/python scripts/fetch_model.py
 # libffi / libz (the standalone CPython's stdlib) + ca-certificates, a
 # non-root user, and ideally no shell or package manager. distroless "cc"
 # (the default) and dhi.io/python:3 both fit — both run as uid 65532.
+#
+# Three targets, all sharing this same shape:
+#   knowledge  full deps; CMD pins --role knowledge. For the split-deployment
+#              docker-compose.knowledge.yml.
+#   memory     slim deps (builder-memory); CMD pins --role memory. For
+#              docker-compose.memory.yml.
+#   (default)  full deps, CMD has no --role (defaults to "all"). This is the
+#              LAST stage in the file, so a plain `docker build .` — what
+#              docker-compose.yml uses — resolves here, unchanged from before
+#              these targets existed.
 # ---------------------------------------------------------------------------
-FROM ${RUNTIME_IMAGE}
-
-# The interpreter the venv's scripts and symlinks resolve to (same path as in
-# the builder, so the venv stays valid).
-COPY --from=builder /opt/python /opt/python
+FROM ${RUNTIME_IMAGE} AS knowledge
+COPY --from=builder-full /opt/python /opt/python
 # Numeric uid/gid (not the "nonroot" name) so the chown resolves on any base.
-COPY --from=builder --chown=65532:65532 /app/.venv /app/.venv
-# The embedding model, vendored in the builder above. SentenceTransformerEmbedder
-# resolves /opt/models/all-MiniLM-L6-v2 before falling back to the Hub.
-COPY --from=builder --chown=65532:65532 /app/models /opt/models
-
+COPY --from=builder-full --chown=65532:65532 /app/.venv /app/.venv
+# SentenceTransformerEmbedder resolves /opt/models/all-MiniLM-L6-v2 before
+# falling back to the Hub.
+COPY --from=builder-full --chown=65532:65532 /app/models /opt/models
 ENV PATH="/app/.venv/bin:${PATH}"
 WORKDIR /app
 EXPOSE 8765
 USER 65532
+ENTRYPOINT ["/app/.venv/bin/grag-mcp"]
+CMD ["serve-mcp", "--role", "knowledge"]
 
+FROM ${RUNTIME_IMAGE} AS memory
+COPY --from=builder-memory /opt/python /opt/python
+COPY --from=builder-memory --chown=65532:65532 /app/.venv /app/.venv
+COPY --from=builder-memory --chown=65532:65532 /app/models /opt/models
+ENV PATH="/app/.venv/bin:${PATH}"
+WORKDIR /app
+EXPOSE 8765
+USER 65532
+ENTRYPOINT ["/app/.venv/bin/grag-mcp"]
+CMD ["serve-mcp", "--role", "memory"]
+
+FROM ${RUNTIME_IMAGE}
+COPY --from=builder-full /opt/python /opt/python
+COPY --from=builder-full --chown=65532:65532 /app/.venv /app/.venv
+COPY --from=builder-full --chown=65532:65532 /app/models /opt/models
+ENV PATH="/app/.venv/bin:${PATH}"
+WORKDIR /app
+EXPOSE 8765
+USER 65532
 ENTRYPOINT ["/app/.venv/bin/grag-mcp"]
 CMD ["serve-mcp"]

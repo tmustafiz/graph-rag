@@ -179,7 +179,16 @@ memory-only deployment with no `CodeEntity` nodes at all.
   `RUNTIME_IMAGE`, `UV_IMAGE`, `NEO4J_IMAGE`) is overridable for environments
   restricted to an approved hardened registry — see
   [operations.md](operations.md#restricted--hardened-registry-environments).
+  Three build targets share one `builder-base`/lockfile: the untargeted
+  default (`serve-mcp`, no `--role` — what `docker-compose.yml` builds) and
+  `knowledge` both install `[pdf]` and are content-identical, differing only
+  in `CMD`; `memory` installs the bare package (no parser stack, no
+  `pymupdf`) and pins `--role memory`.
 - **Neo4j:** Community edition with the APOC and Graph Data Science plugins
   (GDS is only needed for `compute-centrality`).
+- **Split deployment (optional):** `docker-compose.knowledge.yml` /
+  `docker-compose.memory.yml` run the `knowledge`/`memory` images against
+  their own Neo4j each, instead of the combined `docker-compose.yml` stack —
+  see [operations.md](operations.md#split-deployment-optional).
 
 Backup/restore and day-2 operations: [operations.md](operations.md).

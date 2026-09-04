@@ -1,3 +1,10 @@
+# Explicit project name (matches the directory-name default this already had)
+# so it stays a distinct Compose project from docker-compose.knowledge.yml /
+# docker-compose.memory.yml — those declare their own names for the same
+# reason. Without this, Compose would treat all three as one project and warn
+# about "orphan containers" between them.
+name: graph-rag
+
 services:
   neo4j:
     # Overridable so a restricted environment can point at an approved hardened
