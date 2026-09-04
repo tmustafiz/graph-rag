@@ -148,6 +148,17 @@ memories whose decay score `(1 + access_count) * exp(-days_since_last_recall/30)
 falls below a threshold and hard-deletes ones past a grace window; schedule it
 per `docs/operations.md`.
 
+`remember(about_qualified_name=...)` links a memory to a `CodeEntity` two
+ways: `about_qualified_name` is always stored as a plain property on
+`AgentMemory` — the source of truth `recall`'s `about_qualified_name` filter
+matches against — and, best-effort, an `(:AgentMemory)-[:ABOUT]->(:CodeEntity)`
+edge is also merged when a `CodeEntity` with that `qualified_name` exists in
+this database. The edge is what `get_neighbors` walks to answer "what's been
+remembered about this function" from the code side; it only forms when
+agent memory and the knowledge base share one database. The property is what
+makes `recall(about_qualified_name=...)` correct either way, including a
+memory-only deployment with no `CodeEntity` nodes at all.
+
 ## Deployment
 
 - **Local:** `make up` (Neo4j) + `make mcp-serve`, or `docker compose up -d` for

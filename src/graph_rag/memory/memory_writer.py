@@ -12,7 +12,8 @@ MERGE (m:AgentMemory {id: $id})
 SET m.content = $content, m.kind = $kind, m.embed_text = $embed_text, m.embedding = $embedding,
     m.created_at = $created_at, m.last_accessed_at = $last_accessed_at,
     m.access_count = $access_count, m.importance = $importance,
-    m.archived_at = $archived_at, m.source_session_id = $source_session_id
+    m.archived_at = $archived_at, m.source_session_id = $source_session_id,
+    m.about_qualified_name = $about_qualified_name
 """
 
 _MERGE_ABOUT = """
@@ -42,8 +43,13 @@ class MemoryWriter:
         importance: bool = False,
         source_session_id: str | None = None,
     ) -> AgentMemory:
-        """Embeds and upserts an `AgentMemory`, linking `ABOUT` a `CodeEntity`
-        when `about_qualified_name` resolves to one.
+        """Embeds and upserts an `AgentMemory`.
+
+        `about_qualified_name` is always stored as a property — that's what
+        `recall`'s `about_qualified_name` filter matches on. It also gets a
+        best-effort `ABOUT` edge to that `CodeEntity` when one exists in this
+        database; that edge doesn't form (and `recall` filtering still works)
+        when it doesn't.
         """
         now = datetime.now(UTC)
         memory = AgentMemory(
@@ -56,9 +62,10 @@ class MemoryWriter:
             last_accessed_at=now,
             importance=importance,
             source_session_id=source_session_id,
+            about_qualified_name=about_qualified_name,
         )
         with self._driver.session() as session:
-            session.execute_write(self._write_memory, memory, about_qualified_name)
+            session.execute_write(self._write_memory, memory)
         return memory
 
     def forget(self, memory_id: str) -> None:
@@ -69,15 +76,13 @@ class MemoryWriter:
             session.execute_write(self._delete_memory, memory_id)
 
     @staticmethod
-    def _write_memory(
-        tx: ManagedTransaction, memory: AgentMemory, about_qualified_name: str | None
-    ) -> None:
+    def _write_memory(tx: ManagedTransaction, memory: AgentMemory) -> None:
         tx.run(cast(LiteralString, _MERGE_AGENT_MEMORY), **memory.model_dump(mode="json"))
-        if about_qualified_name is not None:
+        if memory.about_qualified_name is not None:
             tx.run(
                 cast(LiteralString, _MERGE_ABOUT),
                 memory_id=memory.id,
-                qualified_name=about_qualified_name,
+                qualified_name=memory.about_qualified_name,
             )
 
     @staticmethod

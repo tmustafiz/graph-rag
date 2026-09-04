@@ -18,7 +18,7 @@ YIELD node AS m, score
 WHERE m.archived_at IS NULL
   AND ($kind IS NULL OR m.kind = $kind)
   AND ($session_id IS NULL OR m.source_session_id = $session_id)
-  AND ($about IS NULL OR (m)-[:ABOUT]->(:CodeEntity {qualified_name: $about}))
+  AND ($about IS NULL OR m.about_qualified_name = $about)
 RETURN m.id AS id, m.content AS content, m.kind AS kind, m.created_at AS created_at,
        m.last_accessed_at AS last_accessed_at, m.access_count AS access_count,
        m.importance AS importance, score
@@ -29,7 +29,7 @@ CALL db.index.fulltext.queryNodes('agent_memory_content_fulltext', $query) YIELD
 WHERE m.archived_at IS NULL
   AND ($kind IS NULL OR m.kind = $kind)
   AND ($session_id IS NULL OR m.source_session_id = $session_id)
-  AND ($about IS NULL OR (m)-[:ABOUT]->(:CodeEntity {qualified_name: $about}))
+  AND ($about IS NULL OR m.about_qualified_name = $about)
 RETURN m.id AS id, score
 ORDER BY score DESC
 LIMIT $k
