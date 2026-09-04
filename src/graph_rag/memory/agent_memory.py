@@ -20,3 +20,10 @@ class AgentMemory(BaseModel):
     importance: bool = False
     archived_at: datetime | None = None
     source_session_id: str | None = None
+    # The CodeEntity this memory is about, if any. Always stored as a plain
+    # property — the source of truth for `MemoryRecaller.recall`'s
+    # `about_qualified_name` filter, so it holds regardless of whether a
+    # matching CodeEntity exists in this database. See `MemoryWriter` for the
+    # best-effort `ABOUT` graph edge this also drives, which only forms
+    # same-database.
+    about_qualified_name: str | None = None

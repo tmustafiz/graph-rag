@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `recall(about_qualified_name=...)` could silently return zero results in a
+  database with no `CodeEntity` nodes — the link was represented only as an
+  `(:AgentMemory)-[:ABOUT]->(:CodeEntity)` edge, so the filter pattern could
+  never match. `about_qualified_name` is now also stored as a plain property
+  on `AgentMemory` (the source of truth for `recall`'s filter); the edge is
+  still merged, best-effort, when a matching `CodeEntity` exists in the same
+  database. ([#43](https://github.com/tmustafiz/graph-rag/issues/43))
+
 ### Added
 - Config-selected hosted embedding backends. `GRAG_EMBEDDING_PROVIDER` selects
   `openai`, `ollama`, `voyage`, `cohere`, or `gemini` (unset keeps the local

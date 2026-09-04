@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
 
 from graph_rag.memory.memory_recaller import (
+    _FULLTEXT_SEARCH_MEMORY,
+    _VECTOR_SEARCH_MEMORY,
     IMPORTANCE_BOOST,
     _combine_scores,
     _final_scores,
@@ -8,6 +10,22 @@ from graph_rag.memory.memory_recaller import (
 )
 
 _NOW = datetime(2026, 9, 3, tzinfo=UTC)
+
+
+def test_vector_search_filters_about_by_property_not_a_graph_edge() -> None:
+    # A pattern-match filter (`(m)-[:ABOUT]->(:CodeEntity {...})`) can never
+    # match in a database with no CodeEntity nodes at all (a memory-only
+    # deployment) — the filter must be a plain property comparison so
+    # `about_qualified_name` still works there.
+    assert "m.about_qualified_name = $about" in _VECTOR_SEARCH_MEMORY
+    assert "ABOUT" not in _VECTOR_SEARCH_MEMORY
+    assert "CodeEntity" not in _VECTOR_SEARCH_MEMORY
+
+
+def test_fulltext_search_filters_about_by_property_not_a_graph_edge() -> None:
+    assert "m.about_qualified_name = $about" in _FULLTEXT_SEARCH_MEMORY
+    assert "ABOUT" not in _FULLTEXT_SEARCH_MEMORY
+    assert "CodeEntity" not in _FULLTEXT_SEARCH_MEMORY
 
 
 def test_combine_scores_ranks_pure_vector_hit_by_normalized_similarity() -> None:
