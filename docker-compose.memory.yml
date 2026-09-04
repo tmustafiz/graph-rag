@@ -1,0 +1,63 @@
+# Opt-in split-deployment stack: agent memory, standalone.
+#
+# Run alongside docker-compose.knowledge.yml (not docker-compose.yml, the
+# default combined quickstart) — an agent then talks to two independent MCP
+# servers over two independent Neo4j databases. See docs/operations.md
+# "Split deployment (optional)".
+#
+#   docker compose -f docker-compose.memory.yml up
+#
+# Ports are offset from docker-compose.knowledge.yml's (7474/7687/8765) so the
+# two stacks can run side by side on one host without colliding. Same
+# NEO4J_USER/NEO4J_PASSWORD/MCP_AUTH_TOKEN .env keys as the other compose
+# files — this stack's Neo4j is a separate instance, so the same credential
+# names just provision it independently, not shared state.
+name: graph-rag-memory
+
+services:
+  neo4j-memory:
+    image: ${NEO4J_IMAGE:-neo4j:2026.07.1}
+    container_name: graph-rag-neo4j-memory
+    ports:
+      - "127.0.0.1:7475:7474" # browser UI
+      - "127.0.0.1:7688:7687" # bolt
+    environment:
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme-local-dev}"
+      NEO4J_PLUGINS: '${NEO4J_PLUGINS-["apoc", "graph-data-science"]}'
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*,gds.*"
+    volumes:
+      - neo4j_memory_data:/data
+      - neo4j_memory_plugins:/var/lib/neo4j/plugins
+    healthcheck:
+      test:
+        ["CMD", "cypher-shell", "-u", "${NEO4J_USER:-neo4j}",
+         "-p", "${NEO4J_PASSWORD:-changeme-local-dev}", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  mcp-memory:
+    build:
+      context: .
+      target: memory
+      args:
+        BUILDER_IMAGE: ${BUILDER_IMAGE:-python:3.14-slim-trixie}
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-gcr.io/distroless/cc-debian13:nonroot}
+        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.12.5}
+    container_name: graph-rag-mcp-memory
+    depends_on:
+      neo4j-memory:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8766:8765" # loopback-only — see SECURITY.md
+    environment:
+      NEO4J_URI: "bolt://neo4j-memory:7687"
+      NEO4J_USER: "${NEO4J_USER:-neo4j}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme-local-dev}"
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8765"
+      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN:-}"
+
+volumes:
+  neo4j_memory_data:
+  neo4j_memory_plugins:
