@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `serve-mcp --role knowledge|memory|all` (default `all`, unchanged behavior).
+  `knowledge` and `memory` each start a standalone MCP server with only that
+  half of the tools — `search`/`search_code`/`search_policies`/`get_section`/
+  `get_outline`/`list_sources`/`find_policies_for`/`get_neighbors`/
+  `get_central_code_entities`/`cite`/`ingest_path` for `knowledge`;
+  `remember`/`recall`/`forget` for `memory` — so the knowledge base and agent
+  memory can run as independent deployments, each against its own Neo4j.
+  `POST /ingest` is only mounted for `knowledge`/`all`.
+  ([#44](https://github.com/tmustafiz/graph-rag/issues/44))
+
 ### Fixed
 - `recall(about_qualified_name=...)` could silently return zero results in a
   database with no `CodeEntity` nodes — the link was represented only as an

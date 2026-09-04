@@ -43,7 +43,7 @@ flowchart TD
 | `graph_rag.graph.graph_writer` | Cypher `MERGE` upserts for every node/edge type. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
-| `graph_rag.mcp_server.server` | MCP tool + resource definitions. |
+| `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
 | `graph_rag.memory` | `AgentMemory` write / recall / decay-pruning. |
 | `graph_rag.cli` | `typer` CLI: `status`, `apply-schema`, `ingest`, `serve-mcp`, `compute-centrality`, `prune-memory`, `eval-retrieval`. |
 | `graph_rag.http_app` | FastAPI app mounted alongside the MCP server; exposes `POST /ingest`. |
@@ -126,8 +126,18 @@ Graph-native tools sit alongside search: `get_section` / `get_outline`
 process (its own compose service) so the embedding model and the Neo4j driver
 pool stay warm across agent sessions. `--stdio` switches to the stdio transport
 for clients that spawn the server per session; it shares the same tool wiring
-(`build_server` in `mcp_server/server.py`) but skips the HTTP app, the
-`POST /ingest` route, and the auth-token gate.
+but skips the HTTP app, the `POST /ingest` route, and the auth-token gate.
+
+`--role knowledge|memory|all` (default `all`) selects which tools that wiring
+exposes: `all` is `build_server` in `mcp_server/server.py`, one server with
+every tool, unchanged from before `--role` existed. `knowledge` and `memory`
+are `build_knowledge_server`/`build_memory_server` — each a standalone server
+with only its half of the tools, meant to run as an independent process
+against its own Neo4j. `POST /ingest` (a knowledge concern) is only mounted
+when an `IngestionPipeline` exists, i.e. for `knowledge`/`all`. All three
+roles share the same tool implementations (`register_knowledge_tools`/
+`register_memory_tools`), so there is exactly one copy of each tool's body
+regardless of which server(s) it ends up registered on.
 
 Security posture of the HTTP transport (see [SECURITY.md](../SECURITY.md)):
 
