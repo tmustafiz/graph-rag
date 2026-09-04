@@ -206,6 +206,33 @@ network for embeddings.
 baked into the image, the `models/all-MiniLM-L6-v2/` folder in a checkout, and
 finally the Hub repo id — the only branch that needs `huggingface.co`.
 
+## Hosted embedding backends (optional)
+
+The local model is the default and needs no API key. To embed with a hosted
+provider instead, set **`GRAG_EMBEDDING_PROVIDER`** to one of `openai`, `ollama`,
+`voyage`, `cohere`, or `gemini` (anything else, or unset, keeps the local model).
+Each backend is a thin REST call over `httpx` — no provider SDKs are pulled in.
+
+| Provider | Auth (env var) | Default model | Dim |
+| --- | --- | --- | --- |
+| `openai` | `OPENAI_API_KEY` | `text-embedding-3-small` | 1536 |
+| `voyage` | `VOYAGE_API_KEY` | `voyage-3` | 1024 |
+| `cohere` | `CO_API_KEY` | `embed-english-v3.0` | 1024 |
+| `gemini` | `GEMINI_API_KEY` | `text-embedding-004` | 768 |
+| `ollama` | *(none)* | `nomic-embed-text` | 768 |
+
+- `GRAG_EMBEDDING_MODEL` overrides the model id.
+- `GRAG_EMBEDDING_API_BASE` overrides the endpoint — point `openai` at any
+  OpenAI-compatible gateway (vLLM, LM Studio, a proxy), or `ollama` at a
+  non-local host.
+- The Neo4j vector index is created at `EMBEDDING_DIMENSIONS` (384 for the local
+  model). A hosted model with a different width means setting
+  `EMBEDDING_DIMENSIONS`, re-running `grag-mcp apply-schema`, and re-ingesting.
+  `build_embedder()` probes the provider once at **startup** and refuses to run
+  on a mismatch rather than corrupting the index mid-ingest.
+- The `Embedder` interface has no query-vs-document distinction, so Cohere and
+  Voyage calls always use the `document` input type.
+
 ## Reranking (optional)
 
 Hybrid search shortlists candidates with a bi-encoder (fast, compares

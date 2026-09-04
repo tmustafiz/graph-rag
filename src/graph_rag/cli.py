@@ -12,7 +12,7 @@ from .graph.client import check_connectivity, driver_session
 from .graph.graph_writer import GraphWriter
 from .graph.schema import apply_schema
 from .http_app import build_http_app
-from .ingest.embedders import SentenceTransformerEmbedder
+from .ingest.embedders import build_embedder
 from .ingest.parser_registry import ParserRegistry
 from .ingestion_pipeline import IngestionPipeline
 from .ingestion_watcher import IngestionWatcher
@@ -75,9 +75,7 @@ def ingest(
     Skips any file whose content is unchanged since the last ingest.
     """
     with driver_session() as driver:
-        pipeline = IngestionPipeline(
-            ParserRegistry(), SentenceTransformerEmbedder(), GraphWriter(driver)
-        )
+        pipeline = IngestionPipeline(ParserRegistry(), build_embedder(), GraphWriter(driver))
         try:
             results = pipeline.run(path, dry_run=dry_run)
         except UnsupportedFileTypeError as exc:
@@ -194,7 +192,7 @@ def eval_retrieval(
     so the eval is self-contained. Run from the repo root.
     """
     cases = RetrievalEvaluator.load_cases(eval_set)
-    embedder = SentenceTransformerEmbedder()
+    embedder = build_embedder()
     with driver_session() as driver:
         if not EVAL_CORPUS_DIR.is_dir():
             typer.secho(
@@ -267,7 +265,7 @@ def serve_mcp(
     MCP_HOST:MCP_PORT). Pass --stdio for a zero-config drop-in that the client
     spawns per session and talks to over stdin/stdout.
     """
-    embedder = SentenceTransformerEmbedder()
+    embedder = build_embedder()
     with driver_session() as driver:
         retriever = Retriever(driver, embedder, build_reranker())
         writer = GraphWriter(driver)

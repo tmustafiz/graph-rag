@@ -1,5 +1,5 @@
 from .chunker import Chunker
-from .embedders import Embedder, SentenceTransformerEmbedder
+from .embedders import Embedder, SentenceTransformerEmbedder, build_embedder
 from .enricher import Enricher
 from .models import Chunk, CodeEntity, ParsedDocument, PolicyRule, Section, Source
 from .parser import Parser
@@ -23,4 +23,5 @@ __all__ = [
     "SentenceTransformerEmbedder",
     "Source",
     "YamlParser",
+    "build_embedder",
 ]
