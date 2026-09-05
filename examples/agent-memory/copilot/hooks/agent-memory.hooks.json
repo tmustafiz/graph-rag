@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python3 /absolute/path/to/session_start_recall.py",
+        "env": {
+          "GRAG_MEMORY_MCP_URL": "http://127.0.0.1:8766/mcp"
+        },
+        "timeout": 15
+      }
+    ]
+  }
+}

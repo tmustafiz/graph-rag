@@ -1,0 +1,30 @@
+<!--
+Snippet for `.github/copilot-instructions.md` in a downstream project, for
+VS Code Copilot Chat (agent mode). Requires the graph-rag memory MCP server
+registered in the workspace (.vscode/mcp.json or the Copilot MCP settings UI)
+— see ../../README.md for setup.
+
+VS Code Copilot also discovers a root AGENTS.md automatically, so if the
+project already has one, ../AGENTS.md.example covers the same ground and you
+don't need this file too. Use this one if the project relies on
+copilot-instructions.md instead of (or in addition to) AGENTS.md.
+-->
+
+## Persistent memory (graph-rag)
+
+This project has an MCP-backed memory server exposing `remember`, `recall`,
+and `forget` tools. Use them to keep continuity across sessions instead of
+re-deriving the same context every time:
+
+- Call **`recall(query, top_k=5)`** at the start of a task, phrasing `query`
+  as a description of the task (it's a semantic search, not a keyword match).
+- Call **`remember(content, kind, importance=False)`** as you learn or decide
+  something worth keeping — not as an end-of-session summary. `kind` is one
+  of `decision` | `correction` | `finding` | `preference` | `fact`. Set
+  `importance=True` only for something that must never be pruned by decay
+  even if never recalled again.
+- Call **`forget(memory_id)`** immediately if a memory turns out wrong or
+  superseded.
+
+Do not save anything already derivable from the code, git history, or this
+file, or anything that belongs in a commit message instead.

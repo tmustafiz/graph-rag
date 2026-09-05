@@ -24,6 +24,7 @@ Then, from an MCP client:
 
 Copy-paste templates for wiring a coding agent in a **different** project up
 to graph-rag's `remember`/`recall`/`forget` tools as its own persistent
-working memory — an `AGENTS.md` snippet, a Claude Code skill, and a
-`SessionStart` hook that recalls relevant memories automatically. See
+working memory, for Claude Code and VS Code Copilot Chat — an always-on
+instructions snippet, a skill/prompt file, and a `SessionStart` hook that
+recalls relevant memories automatically. See
 [`agent-memory/README.md`](agent-memory/README.md).
