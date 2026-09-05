@@ -47,7 +47,8 @@ file format and location, so it lives under that agent's own folder,
 
 The "→" column is the destination path in your downstream project — copy the
 file(s) there verbatim (the skill keeps its directory name, `agent-memory/`;
-everything else is a single file).
+everything else is a single file). The one value you may need to change is the
+memory server URL in the two hook configs — see "Using a recall hook" below.
 
 The always-on file and the prompt/skill cover the same ground — use whichever
 your agent supports (or both; they don't conflict). The hook is additive on
@@ -85,15 +86,21 @@ cp examples/agent-memory/copilot/hooks/session_start_recall.py .github/hooks/
 uv pip install mcp   # or: pip install mcp — whatever interprets the script(s)
 ```
 
-Then merge the matching config as-is:
+Then merge the matching config. The script path needs no editing, but the
+**memory server URL does** — both configs point at the standalone server on
+`:8766`; change it to `:8765` if you started the combined `--role all` stack
+(see Prerequisites).
 
 - Claude Code: merge [`claude/hooks/settings.snippet.json`](claude/hooks/settings.snippet.json)'s
-  `SessionStart` block into `.claude/settings.json` — its command references
-  `${CLAUDE_PROJECT_DIR}/.claude/hooks/session_start_recall.py`, a path
-  Claude Code resolves for you.
+  `SessionStart` block into `.claude/settings.json`. Its `command` resolves
+  the script via `${CLAUDE_PROJECT_DIR}/.claude/hooks/session_start_recall.py`
+  (Claude Code expands that for you) and sets
+  `GRAG_MEMORY_MCP_URL=http://127.0.0.1:8766/mcp` inline — edit that port if
+  you're on the combined stack.
 - Copilot: copy [`copilot/hooks/agent-memory.hooks.json`](copilot/hooks/agent-memory.hooks.json)
-  into `.github/hooks/` unchanged — its `cwd` is set to `.github/hooks`, so
-  `command` only needs the bare filename.
+  into `.github/hooks/`. Its `cwd` is `.github/hooks` so `command` only needs
+  the bare filename, but its `env.GRAG_MEMORY_MCP_URL` is the `:8766`
+  standalone URL — edit that for the combined stack.
 
 Configuration is via environment variables — see either script's
 module docstring:
