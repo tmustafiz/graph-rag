@@ -21,6 +21,9 @@ Configuration (all optional, via environment variables) — same as the
 Claude Code version of this hook (../../claude/hooks/session_start_recall.py):
   GRAG_MEMORY_MCP_URL      MCP endpoint to recall from.
                             Default: http://127.0.0.1:8766/mcp
+                            (docker-compose.memory.yml's default port; use
+                            :8765 if pointing at the combined --role all
+                            server instead).
   MCP_AUTH_TOKEN            Bearer token, if the server requires one.
   GRAG_MEMORY_RECALL_QUERY  Recall query. Default: the cwd's basename.
   GRAG_MEMORY_RECALL_TOP_K  Max memories to recall. Default: 5.
