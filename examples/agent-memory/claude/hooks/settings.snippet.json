@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "GRAG_MEMORY_MCP_URL=http://127.0.0.1:8766/mcp python3 /absolute/path/to/session_start_recall.py"
+            "command": "GRAG_MEMORY_MCP_URL=http://127.0.0.1:8766/mcp python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/session_start_recall.py"
           }
         ]
       }

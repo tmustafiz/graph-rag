@@ -25,10 +25,11 @@ Claude Code version of this hook (../../claude/hooks/session_start_recall.py):
   GRAG_MEMORY_RECALL_QUERY  Recall query. Default: the cwd's basename.
   GRAG_MEMORY_RECALL_TOP_K  Max memories to recall. Default: 5.
 
-Requires the `mcp` package (`pip install mcp` or `uv add mcp`) on whatever
-Python interprets this script — it pulls in `httpx2` as a dependency, which
-is what this script uses (the SDK's streamable_http_client is typed against
-`httpx2.AsyncClient`, not the classic `httpx` package).
+Requires the `mcp` package (`pip install mcp` or `uv add mcp`; verified
+against mcp>=2.1, tested with 2.1.1) on whatever Python interprets this
+script. Only `mcp`'s own public API is used — `create_mcp_http_client` builds
+the HTTP client the SDK's streamable_http_client expects internally, so this
+script never needs to import that HTTP library directly.
 """
 
 import asyncio
@@ -36,14 +37,13 @@ import json
 import os
 import sys
 
-import httpx2
 from mcp.client import Client
-from mcp.client.streamable_http import streamable_http_client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 
 async def _recall(url: str, token: str | None, query: str, top_k: int) -> list[dict]:
     headers = {"Authorization": f"Bearer {token}"} if token else None
-    async with httpx2.AsyncClient(headers=headers, timeout=10.0) as http_client:
+    async with create_mcp_http_client(headers=headers) as http_client:
         transport = streamable_http_client(url, http_client=http_client)
         async with Client(transport) as client:
             result = await client.call_tool("recall", {"query": query, "top_k": top_k})

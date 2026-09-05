@@ -70,18 +70,32 @@ own, guided by the instructions/prompt above.
 
 Both hook scripts share the same shape and env vars; only the stdout format
 and config file location differ (plain text for Claude, a JSON envelope for
-Copilot).
+Copilot). Copy each script to the location its matching config already
+expects — no path editing required:
 
 ```bash
-# pick one, or both
-cp examples/agent-memory/claude/hooks/session_start_recall.py ~/somewhere/on/PATH/   # Claude Code
-cp examples/agent-memory/copilot/hooks/session_start_recall.py ~/somewhere/on/PATH/  # Copilot
+# Claude Code
+mkdir -p .claude/hooks
+cp examples/agent-memory/claude/hooks/session_start_recall.py .claude/hooks/
+
+# Copilot
+mkdir -p .github/hooks
+cp examples/agent-memory/copilot/hooks/session_start_recall.py .github/hooks/
+
 uv pip install mcp   # or: pip install mcp — whatever interprets the script(s)
 ```
 
-Edit the matching config's command to the script's actual path and merge it
-into your project's config (`.claude/settings.json`, or `.github/hooks/` for
-Copilot). Configuration is via environment variables — see either script's
+Then merge the matching config as-is:
+
+- Claude Code: merge [`claude/hooks/settings.snippet.json`](claude/hooks/settings.snippet.json)'s
+  `SessionStart` block into `.claude/settings.json` — its command references
+  `${CLAUDE_PROJECT_DIR}/.claude/hooks/session_start_recall.py`, a path
+  Claude Code resolves for you.
+- Copilot: copy [`copilot/hooks/agent-memory.hooks.json`](copilot/hooks/agent-memory.hooks.json)
+  into `.github/hooks/` unchanged — its `cwd` is set to `.github/hooks`, so
+  `command` only needs the bare filename.
+
+Configuration is via environment variables — see either script's
 module docstring:
 
 ```bash
