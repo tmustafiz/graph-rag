@@ -415,6 +415,21 @@ Constraints on substitutes:
     is a harmless no-op here.
   - **Healthcheck.** `docker-compose.yml` already uses `cypher-shell`
     (present in both images) rather than `wget`.
+  - **No Browser UI.** `dhi.io/neo4j:2026` ships without the Neo4j Browser
+    web app, so `http://localhost:7474` returns
+    `{"code":"Neo.ClientError.Request.Invalid","message":"Not Found"}` for
+    `/browser/` (the discovery JSON at `/` and the Bolt + HTTP query API
+    still work). Use `cypher-shell`, or bring up the bundled opt-in
+    Browser sidecar — static files from a stock image, served by nginx:
+
+    ```bash
+    docker compose --profile browser up -d --build
+    # open http://localhost:7475  →  connect to bolt://localhost:7687
+    ```
+
+    It's off unless you pass `--profile browser`, and never runs in a
+    deployed/restricted environment. Override the asset source with
+    `NEO4J_BROWSER_SOURCE_IMAGE` if you can't pull `neo4j:2026.07.1`.
 
   Preload APOC + GDS into the volume once. Simplest: bring the stack up
   on the **stock** image first (`NEO4J_IMAGE` unset) so its entrypoint

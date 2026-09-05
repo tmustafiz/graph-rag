@@ -17,6 +17,11 @@ Deploy the whole stack with Docker Compose.
      `"serverInfo":{"name":"graph-rag"}`.
    - `docker compose logs mcp-server` → `MCP server listening on …:8765/mcp`.
 
+Neo4j Browser: the stock image serves it at `http://localhost:7474`. Hardened
+images (e.g. `dhi.io/neo4j:2026`) ship without it — run the opt-in sidecar:
+`docker compose --profile browser up -d --build`, then open
+`http://localhost:7475` and connect to `bolt://localhost:7687`.
+
 Hardened / restricted registries: every base image is overridable via `.env`
 (`NEO4J_IMAGE`, `BUILDER_IMAGE`, `RUNTIME_IMAGE`, `UV_IMAGE`). For Docker
 Hardened Images the working set is `NEO4J_IMAGE=dhi.io/neo4j:2026` +
