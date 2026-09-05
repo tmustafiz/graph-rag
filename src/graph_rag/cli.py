@@ -21,6 +21,7 @@ from .mcp_server.cross_encoder_reranker import CrossEncoderReranker, build_reran
 from .mcp_server.knowledge_server import build_knowledge_server
 from .mcp_server.mcp_role import McpRole
 from .mcp_server.memory_server import build_memory_server
+from .mcp_server.query_rewriter_factory import build_query_rewriter, select_query_rewriter
 from .mcp_server.retriever import Retriever
 from .mcp_server.server import build_server
 from .memory import MemoryPruner, MemoryRecaller, MemoryWriter
@@ -185,8 +186,15 @@ def eval_retrieval(
     rerank: bool = typer.Option(
         False,
         "--rerank",
-        help="Also run a cross-encoder reranked pass and print a baseline-vs-reranked "
+        help="Also run a cross-encoder reranked pass and print a baseline-vs-variant "
         "comparison. Loads the reranker model (see `make fetch-reranker`).",
+    ),
+    rewrite: bool = typer.Option(
+        False,
+        "--rewrite",
+        help="Also run a query-rewriting pass (the offline heuristic backend by "
+        "default; set GRAG_QUERY_REWRITE_MODEL for the LLM backend) and print a "
+        "baseline-vs-variant comparison. Combines with --rerank.",
     ),
 ) -> None:
     """Run the hand-written retrieval eval set against `search()`; reports pass/fail per case.
@@ -206,28 +214,30 @@ def eval_retrieval(
         pipeline = IngestionPipeline(ParserRegistry(), embedder, GraphWriter(driver))
         pipeline.run(EVAL_CORPUS_DIR)
         baseline = RetrievalEvaluator(Retriever(driver, embedder)).run(cases)
-        reranked = (
-            RetrievalEvaluator(Retriever(driver, embedder, CrossEncoderReranker())).run(cases)
-            if rerank
-            else None
+        if not rerank and not rewrite:
+            _print_eval_results(baseline)
+            _exit_on_eval_failures(baseline)
+            return
+        variant_retriever = Retriever(
+            driver,
+            embedder,
+            reranker=CrossEncoderReranker() if rerank else None,
+            query_rewriter=select_query_rewriter() if rewrite else None,
         )
+        variant = RetrievalEvaluator(variant_retriever).run(cases)
 
-    if reranked is None:
-        _print_eval_results(baseline)
-        _exit_on_eval_failures(baseline)
-        return
-
-    typer.echo("query                                                         baseline  reranked")
-    for base_result, rerank_result in zip(baseline, reranked, strict=True):
+    variant_label = "+".join(name for name, on in (("rewrite", rewrite), ("rerank", rerank)) if on)
+    typer.echo(f"{'query':<58}  {'baseline':>9}  {variant_label:>16}")
+    for base_result, variant_result in zip(baseline, variant, strict=True):
         typer.echo(
             f"{base_result.case.query[:58]:<58}  "
-            f"{_rank_cell(base_result):>8}  {_rank_cell(rerank_result):>8}"
+            f"{_rank_cell(base_result):>9}  {_rank_cell(variant_result):>16}"
         )
     base_passed = sum(1 for result in baseline if result.passed)
-    rerank_passed = sum(1 for result in reranked if result.passed)
+    variant_passed = sum(1 for result in variant if result.passed)
     typer.echo(f"\nbaseline: {base_passed}/{len(baseline)} passed")
-    typer.echo(f"reranked: {rerank_passed}/{len(reranked)} passed")
-    _exit_on_eval_failures(reranked)
+    typer.echo(f"{variant_label}: {variant_passed}/{len(variant)} passed")
+    _exit_on_eval_failures(variant)
 
 
 def _rank_cell(result: EvalCaseResult) -> str:
@@ -281,7 +291,7 @@ def serve_mcp(
     with driver_session() as driver:
         ingestion_pipeline: IngestionPipeline | None = None
         if role in (McpRole.KNOWLEDGE, McpRole.ALL):
-            retriever = Retriever(driver, embedder, build_reranker())
+            retriever = Retriever(driver, embedder, build_reranker(), build_query_rewriter())
             writer = GraphWriter(driver)
             ingestion_pipeline = IngestionPipeline(ParserRegistry(), embedder, writer)
         if role in (McpRole.MEMORY, McpRole.ALL):

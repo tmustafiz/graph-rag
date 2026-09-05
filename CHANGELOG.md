@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Opt-in **query rewriting** ahead of `search` / `search_code` /
+  `search_policies`. `GRAG_QUERY_REWRITE=1` rewrites a query into a few variants
+  (acronym expansion, multi-part splitting, paraphrase), runs hybrid search for
+  each, and fuses the hit sets (best `[0, 1]` score per hit) before the
+  reranker/top-k stage. Two backends: an offline `HeuristicQueryRewriter`
+  (built-in acronym map + `GRAG_QUERY_REWRITE_SYNONYMS` JSON override, no
+  network) by default, and an opt-in `LlmQueryRewriter` when
+  `GRAG_QUERY_REWRITE_MODEL` is set — an OpenAI-compatible `POST
+  /v1/chat/completions` call (`GRAG_QUERY_REWRITE_API_BASE` points it at a local
+  Ollama / LM Studio / vLLM endpoint) that fails at startup without a key and
+  degrades to the unrewritten query on any request error.
+  `GRAG_QUERY_REWRITE_MAX_QUERIES` (default 3) caps the variant count;
+  `grag-mcp eval-retrieval --rewrite` measures a pass (composable with
+  `--rerank`). Off by default, no new dependencies.
+  ([#40](https://github.com/tmustafiz/graph-rag/issues/40))
 - `examples/agent-memory/`: copy-paste templates for a coding agent in a
   *downstream* project to use graph-rag's `remember`/`recall`/`forget` tools
   as its own persistent working memory, for both **Claude Code** and **VS

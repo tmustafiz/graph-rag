@@ -278,6 +278,38 @@ matches the bi-encoder blurs, and the cross-encoder promotes a couple of
 rank-2 hits to rank-1. The layering effect grows as a corpus gets larger and
 noisier and the top-k stops being trivially correct.
 
+## Query rewriting (optional)
+
+Where reranking re-orders a shortlist *after* retrieval, query rewriting widens
+what retrieval sees *before* it. Setting **`GRAG_QUERY_REWRITE=1`** turns one
+query into a few — expanding acronyms, splitting a multi-part question into
+sub-queries, paraphrasing toward documentation vocabulary — runs hybrid search
+for each, and fuses the hit sets (a chunk keeps its best `[0, 1]` score across
+the variants) before the reranker/top-k stage. It applies to `search`,
+`search_code`, and `search_policies`.
+
+Off by default. With the switch on, two backends are available:
+
+- **Heuristic** (default — no network, no key). A built-in acronym map
+  (`k8s → kubernetes`, `iac → infrastructure as code`, …) plus multi-part
+  splitting on `and` / `;` / `,`. Extend the map with a JSON file:
+  `GRAG_QUERY_REWRITE_SYNONYMS=/path/to/terms.json` (`{"term": "expansion"}`,
+  merged over the built-ins).
+- **LLM** (opt-in). Set **`GRAG_QUERY_REWRITE_MODEL`** to a model id and provide
+  a key (`GRAG_QUERY_REWRITE_API_KEY`, or `OPENAI_API_KEY`) — the server then
+  fails at **startup** if no key is set, not at the first query. Calls an
+  OpenAI-compatible `POST /v1/chat/completions`; point
+  `GRAG_QUERY_REWRITE_API_BASE` at a local Ollama / LM Studio / vLLM endpoint to
+  keep it on-box. Any failure (network, non-JSON reply, …) silently falls back
+  to the unrewritten query.
+
+`GRAG_QUERY_REWRITE_MAX_QUERIES` (default 3) caps the original-plus-variants list
+per search. Measure a pass with `grag-mcp eval-retrieval --rewrite` (composable
+with `--rerank`). As with reranking, the built-in fixture corpus is too small and
+unambiguous to show a rank delta — every case already retrieves inside the top-k
+whether rewriting is on or off; the benefit shows on larger, jargon-heavy
+corpora where a query and the text that answers it don't share vocabulary.
+
 ## Split deployment (optional)
 
 `docker-compose.yml` runs the knowledge base and agent memory together — one
