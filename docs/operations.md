@@ -1,9 +1,13 @@
 # Operations
 
-Backup/restore and other operational notes for the Neo4j-backed graph
-(the knowledge base, ingested Sources/Sections/Chunks/CodeEntities/
-PolicyRules, and the agent's own `AgentMemory` nodes all live in the
-same `neo4j_data` Docker volume).
+Backup/restore and other operational notes for the Neo4j-backed graph.
+Everything through "Ingestion errors and logging" below assumes the
+default `docker-compose.yml` deployment, where the knowledge base
+(ingested Sources/Sections/Chunks/CodeEntities/PolicyRules) and the
+agent's own `AgentMemory` nodes all live in the same `neo4j_data`
+Docker volume. Running knowledge and memory as separate stacks instead
+(each with its own volume) is covered separately in "Split deployment
+(optional)" below.
 
 ## `docker compose down -v` — read this first
 
@@ -212,6 +216,21 @@ full-text indexes don't exist yet otherwise:
 docker compose -f docker-compose.knowledge.yml exec mcp-knowledge grag-mcp apply-schema
 docker compose -f docker-compose.memory.yml exec mcp-memory grag-mcp apply-schema
 ```
+
+With the stock `NEO4J_IMAGE`, each stack's Neo4j entrypoint auto-downloads its
+own APOC/GDS plugin jars into its own `_plugins` volume on first boot, same as
+the combined stack — nothing extra to do. If you've overridden `NEO4J_IMAGE`/
+`NEO4J_PLUGINS` for a hardened registry (see "Restricted / hardened-registry
+environments" below), that auto-download is disabled, and each split stack's
+`_plugins` volume needs the jars preloaded **independently** — a fresh split
+stack does not inherit jars already preloaded into the combined stack's
+`graph-rag_neo4j_plugins` volume, or into the other split stack's volume.
+Symptom of a missing jar: `grag-mcp compute-centrality` fails with `There is
+no procedure with the name gds.graph.project registered`. Fix by copying the
+jars into the affected stack's `_plugins` volume (e.g. via a throwaway
+`alpine`/`busybox` container bind-mounting both the source and target
+volumes, per the air-gapped recipe below) and restarting that stack's Neo4j
+container.
 
 **Backup/restore**: these are two independent Neo4j volumes —
 `graph-rag-knowledge_neo4j_knowledge_data` and `graph-rag-memory_neo4j_memory_data`

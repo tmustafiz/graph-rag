@@ -26,3 +26,19 @@ Hardened Images the working set is `NEO4J_IMAGE=dhi.io/neo4j:2026` +
 [`docs/operations.md`](../../docs/operations.md) → "Restricted / hardened-registry
 environments". Keep the tracked defaults public and overridable — don't hardcode
 a `dhi.io/...` image as the default.
+
+Opt-in split deployment: `docker-compose.knowledge.yml` and
+`docker-compose.memory.yml` run the knowledge base and agent memory as two
+fully independent stacks (separate Neo4j, separate MCP server, separate
+volumes, optionally separate hosts) instead of the combined stack above —
+`docker compose -f docker-compose.knowledge.yml up -d --build` and the same
+for `.memory.yml`. Each provisions a brand-new Neo4j, so run
+`grag-mcp apply-schema` against each before first use. With the stock
+`NEO4J_IMAGE`, each fresh stack's entrypoint auto-downloads its own APOC/GDS
+jars on first boot, same as the combined stack. If `NEO4J_IMAGE`/
+`NEO4J_PLUGINS` are overridden for a hardened registry (no wget — see
+"Restricted / hardened-registry environments" below), each split stack's
+`_plugins` volume needs those jars preloaded independently — a fresh split
+stack won't inherit jars already preloaded into the combined stack's volume.
+See [`docs/operations.md`](../../docs/operations.md) → "Split deployment
+(optional)".

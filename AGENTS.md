@@ -52,7 +52,8 @@ The CLI entry point is `graph_rag.cli:app`, run as `uv run grag-mcp <verb>` (or
 distribution name no longer implies the package directory.
 
 CLI verbs: `status`, `apply-schema`, `ingest [--watch] [--dry-run]`,
-`serve-mcp [--stdio]`, `compute-centrality`, `prune-memory`, `eval-retrieval`.
+`serve-mcp [--stdio] [--role knowledge|memory|all]`, `compute-centrality`,
+`prune-memory`, `eval-retrieval`.
 
 ---
 
@@ -125,7 +126,10 @@ src/graph_rag/
   ingest/                    parsers (PDF/Markdown/Python/YAML), registry, chunker
   ingestion_pipeline.py      parse → chunk → embed → write, idempotent by content hash
   graph/                     Neo4j schema, writers, centrality_analyzer (GDS PageRank)
-  mcp_server/                build_server (tools + resources), retriever, models
+  mcp_server/                knowledge_server.py / memory_server.py (tools +
+                             resources, one module per --role), server.py
+                             (combines both for --role all), mcp_role.py,
+                             retriever, models
   memory/                    AgentMemory write / recall / decay-pruning
   http_app.py                FastAPI app mounted beside MCP; POST /ingest
   eval/                      retrieval eval set + evaluator + fixture corpus
@@ -134,8 +138,11 @@ docs/                        ARCHITECTURE.md, operations.md, ROADMAP.md
 examples/checkov-policies/   the only sample data that ships
 scripts/fetch_model.py       downloads the embedding model into models/ (the
                              Dockerfile builder runs it to bake it into /opt/models)
-Dockerfile                   multi-stage: builder venv → distroless/cc runtime
-docker-compose.yml           neo4j + mcp-server
+Dockerfile                   multi-stage: builder venv → distroless/cc runtime;
+                             three targets — default (all-role), knowledge, memory
+docker-compose.yml           neo4j + mcp-server (combined, --role all, default)
+docker-compose.knowledge.yml / docker-compose.memory.yml
+                             opt-in split deployment — see docs/operations.md
 ```
 
 ---
