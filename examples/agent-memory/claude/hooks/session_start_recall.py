@@ -56,9 +56,9 @@ def main() -> int:
     url = os.environ.get("GRAG_MEMORY_MCP_URL", "http://127.0.0.1:8766/mcp")
     token = os.environ.get("MCP_AUTH_TOKEN") or None
     query = os.environ.get("GRAG_MEMORY_RECALL_QUERY") or os.path.basename(cwd.rstrip("/"))
-    top_k = int(os.environ.get("GRAG_MEMORY_RECALL_TOP_K", "5"))
 
     try:
+        top_k = int(os.environ.get("GRAG_MEMORY_RECALL_TOP_K", "5"))
         memories = asyncio.run(_recall(url, token, query, top_k))
     except Exception as exc:  # noqa: BLE001 - a hook must never crash the session
         print(f"[agent-memory] recall skipped: {exc}", file=sys.stderr)
