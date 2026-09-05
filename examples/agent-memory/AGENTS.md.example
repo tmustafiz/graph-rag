@@ -1,0 +1,43 @@
+<!--
+Snippet to paste into a downstream project's AGENTS.md (or CLAUDE.md,
+.github/copilot-instructions.md, .cursor/rules, etc.) — anything an AI coding
+agent reads at the start of a session. Requires an MCP client already
+connected to a graph-rag memory server (docker-compose.memory.yml on :8766,
+or the combined default stack on :8765 with `serve-mcp --role all`), exposing
+its `remember` / `recall` / `forget` tools. See ../README.md for setup.
+-->
+
+## Persistent memory (graph-rag)
+
+This project has an MCP-backed memory server. Use its tools to keep continuity
+across sessions instead of re-deriving the same context every time:
+
+- **`recall(query, top_k=5, kind=None, about_qualified_name=None)`** — at the
+  start of a task, recall memories relevant to what you're about to do. It's a
+  semantic search, so phrase `query` as a description of the task, not a
+  keyword.
+- **`remember(content, kind, about_qualified_name=None, importance=False)`**
+  — save something worth keeping *as you learn it*, not at the end of the
+  session as a summary. `kind` is one of:
+  - `decision` — a choice made and why (architecture, library, approach).
+  - `correction` — the user corrected your approach; record what and why, so
+    it isn't repeated.
+  - `finding` — something learned about the codebase that isn't obvious from
+    reading it (a gotcha, a non-obvious invariant, a root cause).
+  - `preference` — a standing preference about how to work in this project.
+  - `fact` — a piece of project state that will go stale (a deadline, an
+    owner, a decision pending elsewhere).
+  Set `importance=True` for anything that should never be pruned by decay
+  (`grag-mcp prune-memory`) even if it's never recalled again — e.g. a
+  standing constraint, not a one-off finding.
+- **`forget(memory_id)`** — delete a memory immediately if it turns out to be
+  wrong or no longer applies. Don't leave stale memories for decay to
+  eventually clean up if you already know they're wrong.
+
+Tag a memory with `about_qualified_name=<dotted.path.to.Entity>` when it's
+about one specific function/class/module — this makes it filterable later
+even if the memory server runs separately from the code's own knowledge base.
+
+Do **not** save: information already derivable from reading the code, git
+history, or this file; ephemeral in-progress task state; anything that
+belongs in a commit message or PR description instead.

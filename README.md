@@ -302,6 +302,10 @@ been remembered about this function" traversal (`get_neighbors` from a
 Each compose file provisions its own fresh Neo4j — run `grag-mcp apply-schema`
 against each before first use (see `docs/operations.md`).
 
+Wiring a coding agent in another project up to `remember`/`recall`/`forget` as
+its own persistent memory — for Claude Code and VS Code Copilot Chat — is
+covered in [`examples/agent-memory/`](examples/agent-memory/README.md).
+
 ## Architecture
 
 ```mermaid

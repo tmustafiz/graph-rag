@@ -254,6 +254,13 @@ See `docs/ARCHITECTURE.md` "Agent memory".
 not something run alongside it. `docker-compose.memory.yml` uses offset ports
 (7475/7688/8766) so the two split stacks can run together on one host.
 
+**Using the memory stack from a coding agent**: `examples/agent-memory/`
+has copy-paste templates (an always-on instructions snippet, a skill/prompt
+file, and a `SessionStart` hook — for both Claude Code and VS Code Copilot
+Chat) for a downstream project's agent to actually use
+`remember`/`recall`/`forget` day to day, including against this split
+deployment.
+
 ## Pruning agent memory
 
 `AgentMemory` nodes (`remember` / `recall`) grow without bound unless

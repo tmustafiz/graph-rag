@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python3 session_start_recall.py",
+        "cwd": ".github/hooks",
+        "env": {
+          "GRAG_MEMORY_MCP_URL": "http://127.0.0.1:8766/mcp"
+        },
+        "timeout": 15
+      }
+    ]
+  }
+}
