@@ -55,11 +55,10 @@ conversation, which a hook triggered on a fixed event (session end, before
 compaction, ...) doesn't have — that stays a tool call the agent makes on its
 own, guided by the instructions/prompt above.
 
-> **Copilot hooks are a preview VS Code feature** at the time of writing, not
-> yet on `code.visualstudio.com`'s stable docs — the config shape
-> (`.github/hooks/*.json`, `hookSpecificOutput.additionalContext`) may still
-> change. If `copilot/hooks/` stops working, the instructions file and prompt
-> file above cover the same ground without depending on it.
+> **Copilot hooks are a Preview VS Code feature** — [VS Code's own docs](https://code.visualstudio.com/docs/agent-customization/hooks)
+> say the config format and behavior might still change. If `copilot/hooks/`
+> stops working, the instructions file and prompt file above cover the same
+> ground without depending on it.
 
 ## Using a recall hook
 
@@ -98,10 +97,7 @@ prints a warning to stderr and exits `0` with no context injected.
 
 ## Sources for the Copilot hooks contract
 
-VS Code's Copilot hooks aren't yet documented on `code.visualstudio.com`;
-`copilot/hooks/` was written against these third-party writeups, cross-checked
-against each other for the `SessionStart` config location and payload shape:
+`copilot/hooks/` is written against VS Code's official (Preview) reference:
 
-- [Guaranteed Copilot Context with Hooks — Ken Muse](https://www.kenmuse.com/blog/guaranteed-copilot-context-with-hooks/)
-- [VS Code Agent Hooks — Gerardo Daniel Rentería García](https://medium.com/@gdrenteria/vs-code-agent-hooks-give-copilot-context-before-the-first-message-a7b57cb9f4f8)
-- [vscode-copilot-expert hooks reference](https://github.com/good-enough-productions/vscode-copilot-expert/blob/main/docs/05-hooks.md)
+- [Agent hooks in VS Code](https://code.visualstudio.com/docs/agent-customization/hooks) — config file locations, JSON schema, event list, exit-code semantics
+- [Hooks reference](https://code.visualstudio.com/docs/agents/reference/hooks-reference) — per-event input/output schemas, including `SessionStart`'s `source` input field and `hookSpecificOutput.additionalContext` output shape

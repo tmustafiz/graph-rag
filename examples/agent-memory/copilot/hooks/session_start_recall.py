@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """VS Code Copilot Chat SessionStart hook: recall graph-rag memories into context.
 
-Copilot Chat's hooks feature (preview, as of VS Code 2026) is close to
-Claude Code's: a `.github/hooks/*.json` config runs a command on each hook
-event and reads JSON back from its stdout. See `agent-memory.hooks.json` next
-to this file, and the "Copilot hooks" links in ../../README.md for the
-(still-evolving) reference this was written against.
+Copilot Chat's hooks feature (Preview, per VS Code's own docs — the config
+format may still change) is close to Claude Code's: a `.github/hooks/*.json`
+config runs a command on each hook event and reads JSON back from its
+stdout. See `agent-memory.hooks.json` next to this file, and
+https://code.visualstudio.com/docs/agent-customization/hooks /
+https://code.visualstudio.com/docs/agents/reference/hooks-reference for the
+official reference this was written against.
 
-Reads the SessionStart payload on stdin (`cwd`, `sessionId`, ...), calls
-`recall` on a graph-rag memory MCP server, and prints
+Reads the SessionStart payload on stdin (`cwd`, `session_id`,
+`hook_event_name`, `transcript_path`, `timestamp`, `source`; this script only
+needs `cwd`), calls `recall` on a graph-rag memory MCP server, and prints
 `{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "..."}}`
 on stdout — the shape Copilot injects as context at the start of a session.
 Prints nothing (valid: no context to add) when there's nothing to recall or
