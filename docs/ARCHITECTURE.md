@@ -115,6 +115,17 @@ mounted image dir → `models/` in a checkout) or construction fails at startup 
 it is not baked into the image and there is no implicit Hub download. See the
 README "Reranking" section for the before/after eval numbers.
 
+Setting `GRAG_QUERY_REWRITE=1` adds a stage on the other side of retrieval —
+*before* the candidate set is formed. A `QueryRewriter` turns the query into up
+to `GRAG_QUERY_REWRITE_MAX_QUERIES` variants (`HeuristicQueryRewriter`, an
+offline acronym/split expander, by default; `LlmQueryRewriter` against an
+OpenAI-compatible endpoint when `GRAG_QUERY_REWRITE_MODEL` is set), each search
+method runs the full vector+full-text pass per variant, and
+`retriever._merge_keeping_max` folds the per-variant fused scores into one
+best-score-per-id map that then feeds the reranker/truncation stage unchanged.
+A rewriter never raises: any backend failure degrades to the single original
+query. Off by default; wired only for the `knowledge`/`all` roles.
+
 Graph-native tools sit alongside search: `get_section` / `get_outline`
 (hierarchy walk), `get_neighbors` (traverse from any node), `find_policies_for`
 (exact `APPLIES_TO` traversal), `get_central_code_entities` (PageRank order),

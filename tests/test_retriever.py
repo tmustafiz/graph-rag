@@ -6,10 +6,21 @@ from graph_rag.mcp_server.retriever import (
     _code_document,
     _escape_lucene,
     _format_citation,
+    _merge_keeping_max,
     _policy_document,
     _prose_document,
     combine_scores,
 )
+
+
+class _StaticRewriter:
+    """Stand-in `QueryRewriter` returning a fixed variant list, offline."""
+
+    def __init__(self, variants: list[str]) -> None:
+        self._variants = variants
+
+    def rewrite(self, query: str) -> list[str]:
+        return self._variants
 
 
 class _LengthReranker:
@@ -202,3 +213,31 @@ def test_format_citation_omits_pages_when_absent() -> None:
     }
     citation = _format_citation(row)
     assert citation == "src/graph_rag/cli.py — graph_rag.cli.status"
+
+
+def test_search_queries_is_just_the_query_without_a_rewriter() -> None:
+    retriever = Retriever(driver=None, embedder=None)  # type: ignore[arg-type]
+    assert retriever._search_queries("how does recall ranking work") == [
+        "how does recall ranking work"
+    ]
+
+
+def test_search_queries_delegates_to_the_rewriter_when_present() -> None:
+    retriever = Retriever(
+        driver=None,  # type: ignore[arg-type]
+        embedder=None,  # type: ignore[arg-type]
+        query_rewriter=_StaticRewriter(["q", "expanded q", "sub-query"]),
+    )
+    assert retriever._search_queries("q") == ["q", "expanded q", "sub-query"]
+
+
+def test_merge_keeping_max_takes_the_highest_score_per_id() -> None:
+    fused = {"a": 0.4, "b": 0.9}
+    _merge_keeping_max(fused, {"a": 0.7, "b": 0.2, "c": 0.5})
+    assert fused == {"a": 0.7, "b": 0.9, "c": 0.5}
+
+
+def test_merge_keeping_max_into_an_empty_map_copies_every_score() -> None:
+    fused: dict[str, float] = {}
+    _merge_keeping_max(fused, {"a": 0.1, "b": 0.2})
+    assert fused == {"a": 0.1, "b": 0.2}

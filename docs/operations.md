@@ -120,8 +120,10 @@ and independent of whatever else you have ingested. Run it from the repo
 root. Exits non-zero if any case fails, so it's usable as a CI gate.
 
 `--rerank` additionally runs the whole set through the cross-encoder reranker
-and prints a baseline-vs-reranked rank comparison — useful when tuning the
-reranker or its candidate window.
+and prints a baseline-vs-variant rank comparison — useful when tuning the
+reranker or its candidate window. `--rewrite` does the same for the query
+rewriter (heuristic backend by default; the LLM backend if
+`GRAG_QUERY_REWRITE_MODEL` is set); the two flags combine.
 
 ## Reranking (optional)
 
@@ -151,6 +153,45 @@ In a container, set `GRAG_RERANK=1` and either mount the model at
 `/opt/models/ms-marco-MiniLM-L-6-v2` or set `GRAG_RERANK_MODEL`. When reranking
 is on, each hit keeps its `[0, 1]` `score` (the fused value) and adds a
 `rerank_score` — the raw cross-encoder logit (unbounded, can be negative).
+
+## Query rewriting (optional)
+
+`GRAG_QUERY_REWRITE=1` turns on a pre-retrieval stage for `search`,
+`search_code`, and `search_policies`: the query is rewritten into a small set of
+variants (acronym expansion, multi-part splitting, paraphrase), hybrid search
+runs for each, and the hit sets are fused (best `[0, 1]` score per hit) before
+the reranker/top-k stage. Off by default. `GRAG_QUERY_REWRITE_MAX_QUERIES`
+(default 3) caps the original-plus-variants list per search.
+
+**Heuristic backend (default).** With only `GRAG_QUERY_REWRITE=1` set, an
+offline expander runs — no network, no key. It swaps whole-word acronyms from a
+built-in map and splits a query joined by `and` / `;` / `,` when each side is
+substantial. Add project terms with a JSON file:
+
+```bash
+export GRAG_QUERY_REWRITE=1
+export GRAG_QUERY_REWRITE_SYNONYMS=/opt/config/query-terms.json   # {"term": "expansion"}, merged over the built-ins
+```
+
+**LLM backend (opt-in).** Set `GRAG_QUERY_REWRITE_MODEL` to select it; it then
+requires an API key and fails at **startup** without one (not at the first
+query). It calls an OpenAI-compatible `POST /v1/chat/completions`, so it works
+against OpenAI or any compatible local endpoint:
+
+```bash
+export GRAG_QUERY_REWRITE=1
+export GRAG_QUERY_REWRITE_MODEL=gpt-4o-mini
+export GRAG_QUERY_REWRITE_API_KEY=sk-...        # or OPENAI_API_KEY
+
+# ...or keep it on-box against Ollama / LM Studio / vLLM:
+export GRAG_QUERY_REWRITE_MODEL=llama3.1
+export GRAG_QUERY_REWRITE_API_BASE=http://127.0.0.1:11434   # Ollama's OpenAI-compatible port
+export GRAG_QUERY_REWRITE_API_KEY=ollama                    # any non-empty value; Ollama ignores it
+```
+
+Any call failure — connection error, non-2xx, a reply that isn't a JSON array of
+strings — is logged and the search proceeds with the unrewritten query. The
+rewriter never fails a search.
 
 ## Hosted embedding backends (optional)
 

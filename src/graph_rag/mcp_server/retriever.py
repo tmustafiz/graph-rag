@@ -19,6 +19,7 @@ from .models import (
     SectionOutlineEntry,
     SourceInfo,
 )
+from .query_rewriter import QueryRewriter
 
 logger = logging.getLogger(__name__)
 
@@ -177,10 +178,20 @@ class Retriever:
         driver: Driver,
         embedder: Embedder,
         reranker: CrossEncoderReranker | None = None,
+        query_rewriter: QueryRewriter | None = None,
     ) -> None:
         self._driver = driver
         self._embedder = embedder
         self._reranker = reranker
+        self._query_rewriter = query_rewriter
+
+    def _search_queries(self, query: str) -> list[str]:
+        """The query strings to run hybrid search for: just `query` normally, or
+        `query` plus rewritten variants when a `QueryRewriter` is configured.
+        """
+        if self._query_rewriter is None:
+            return [query]
+        return self._query_rewriter.rewrite(query)
 
     @staticmethod
     def _fulltext_scores(
@@ -223,6 +234,43 @@ class Retriever:
         )
         return ordered, rerank_scores
 
+    def _prose_candidates(
+        self,
+        session: Any,
+        query: str,
+        candidate_k: int,
+        source_type: str | None,
+        source_path: str | None,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, float]]:
+        """One hybrid-search pass for `search`: `({chunk_id: row}, {chunk_id: fused_score})`."""
+        vector = self._embedder.embed([query])[0]
+        vector_rows = [
+            dict(row)
+            for row in session.run(
+                cast(LiteralString, _VECTOR_SEARCH),
+                k=candidate_k,
+                vector=vector,
+                source_type=source_type,
+                source_path=source_path,
+            )
+        ]
+        fulltext_scores = self._fulltext_scores(
+            session,
+            cast(LiteralString, _FULLTEXT_SEARCH),
+            {
+                "query": _escape_lucene(query),
+                "k": candidate_k,
+                "source_type": source_type,
+                "source_path": source_path,
+            },
+            "chunk_id",
+        )
+        by_id = {row["chunk_id"]: row for row in vector_rows}
+        combined = combine_scores(
+            {chunk_id: row["score"] for chunk_id, row in by_id.items()}, fulltext_scores
+        )
+        return by_id, combined
+
     def search(
         self,
         query: str,
@@ -230,35 +278,17 @@ class Retriever:
         source_type: str | None = None,
         source_path: str | None = None,
     ) -> list[SearchResult]:
-        vector = self._embedder.embed([query])[0]
         candidate_k = top_k * CANDIDATE_MULTIPLIER
+        by_id: dict[str, dict[str, Any]] = {}
+        combined_scores: dict[str, float] = {}
         with self._driver.session() as session:
-            vector_rows = [
-                dict(row)
-                for row in session.run(
-                    cast(LiteralString, _VECTOR_SEARCH),
-                    k=candidate_k,
-                    vector=vector,
-                    source_type=source_type,
-                    source_path=source_path,
+            for variant in self._search_queries(query):
+                rows, scores = self._prose_candidates(
+                    session, variant, candidate_k, source_type, source_path
                 )
-            ]
-            fulltext_scores = self._fulltext_scores(
-                session,
-                cast(LiteralString, _FULLTEXT_SEARCH),
-                {
-                    "query": _escape_lucene(query),
-                    "k": candidate_k,
-                    "source_type": source_type,
-                    "source_path": source_path,
-                },
-                "chunk_id",
-            )
+                by_id.update(rows)
+                _merge_keeping_max(combined_scores, scores)
 
-        by_id = {row["chunk_id"]: row for row in vector_rows}
-        combined_scores = combine_scores(
-            {chunk_id: row["score"] for chunk_id, row in by_id.items()}, fulltext_scores
-        )
         ranked_ids = sorted(combined_scores, key=lambda cid: combined_scores[cid], reverse=True)
         ranked_ids, rerank_scores = self._maybe_rerank(
             query,
@@ -404,30 +434,40 @@ class Retriever:
                 for row in rows
             ]
 
+    def _code_candidates(
+        self, session: Any, query: str, candidate_k: int
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, float]]:
+        """One hybrid-search pass for `search_code`: `({qualified_name: row}, {qn: score})`."""
+        vector = self._embedder.embed([query])[0]
+        vector_rows = [
+            dict(row)
+            for row in session.run(
+                cast(LiteralString, _VECTOR_SEARCH_CODE), k=candidate_k, vector=vector
+            )
+        ]
+        fulltext_scores = self._fulltext_scores(
+            session,
+            cast(LiteralString, _FULLTEXT_SEARCH_CODE),
+            {"query": _escape_lucene(query), "k": candidate_k},
+            "qualified_name",
+        )
+        by_id = {row["qualified_name"]: row for row in vector_rows}
+        combined = combine_scores({qn: row["score"] for qn, row in by_id.items()}, fulltext_scores)
+        return by_id, combined
+
     def search_code(self, query: str, top_k: int = 5) -> list[CodeSearchResult]:
         """Hybrid (vector + full-text) search over `CodeEntity` nodes —
         the code-search complement to `search` (which covers prose chunks only).
         """
-        vector = self._embedder.embed([query])[0]
         candidate_k = top_k * CANDIDATE_MULTIPLIER
+        by_id: dict[str, dict[str, Any]] = {}
+        combined_scores: dict[str, float] = {}
         with self._driver.session() as session:
-            vector_rows = [
-                dict(row)
-                for row in session.run(
-                    cast(LiteralString, _VECTOR_SEARCH_CODE), k=candidate_k, vector=vector
-                )
-            ]
-            fulltext_scores = self._fulltext_scores(
-                session,
-                cast(LiteralString, _FULLTEXT_SEARCH_CODE),
-                {"query": _escape_lucene(query), "k": candidate_k},
-                "qualified_name",
-            )
+            for variant in self._search_queries(query):
+                rows, scores = self._code_candidates(session, variant, candidate_k)
+                by_id.update(rows)
+                _merge_keeping_max(combined_scores, scores)
 
-        by_id = {row["qualified_name"]: row for row in vector_rows}
-        combined_scores = combine_scores(
-            {qn: row["score"] for qn, row in by_id.items()}, fulltext_scores
-        )
         ranked_ids = sorted(combined_scores, key=lambda qn: combined_scores[qn], reverse=True)
         ranked_ids, rerank_scores = self._maybe_rerank(
             query, ranked_ids, {qn: _code_document(by_id[qn]) for qn in ranked_ids}, combined_scores
@@ -448,31 +488,43 @@ class Retriever:
             for qn in ranked_ids[:top_k]
         ]
 
+    def _policy_candidates(
+        self, session: Any, query: str, candidate_k: int
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, float]]:
+        """One hybrid-search pass for `search_policies`: `({policy_id: row}, {pid: score})`."""
+        vector = self._embedder.embed([query])[0]
+        vector_rows = [
+            dict(row)
+            for row in session.run(
+                cast(LiteralString, _VECTOR_SEARCH_POLICY), k=candidate_k, vector=vector
+            )
+        ]
+        fulltext_scores = self._fulltext_scores(
+            session,
+            cast(LiteralString, _FULLTEXT_SEARCH_POLICY),
+            {"query": _escape_lucene(query), "k": candidate_k},
+            "id",
+        )
+        by_id = {row["id"]: row for row in vector_rows}
+        combined = combine_scores(
+            {pid: row["score"] for pid, row in by_id.items()}, fulltext_scores
+        )
+        return by_id, combined
+
     def search_policies(self, query: str, top_k: int = 5) -> list[PolicyResult]:
         """Hybrid (vector + full-text) search over `PolicyRule` content — the
         semantic/fuzzy complement to `find_policies_for`'s exact-match
         traversal, for when the exact Terraform resource type isn't known.
         """
-        vector = self._embedder.embed([query])[0]
         candidate_k = top_k * CANDIDATE_MULTIPLIER
+        by_id: dict[str, dict[str, Any]] = {}
+        combined_scores: dict[str, float] = {}
         with self._driver.session() as session:
-            vector_rows = [
-                dict(row)
-                for row in session.run(
-                    cast(LiteralString, _VECTOR_SEARCH_POLICY), k=candidate_k, vector=vector
-                )
-            ]
-            fulltext_scores = self._fulltext_scores(
-                session,
-                cast(LiteralString, _FULLTEXT_SEARCH_POLICY),
-                {"query": _escape_lucene(query), "k": candidate_k},
-                "id",
-            )
+            for variant in self._search_queries(query):
+                rows, scores = self._policy_candidates(session, variant, candidate_k)
+                by_id.update(rows)
+                _merge_keeping_max(combined_scores, scores)
 
-        by_id = {row["id"]: row for row in vector_rows}
-        combined_scores = combine_scores(
-            {pid: row["score"] for pid, row in by_id.items()}, fulltext_scores
-        )
         ranked_ids = sorted(combined_scores, key=lambda pid: combined_scores[pid], reverse=True)
         ranked_ids, rerank_scores = self._maybe_rerank(
             query,
@@ -495,6 +547,16 @@ class Retriever:
             )
             for pid in ranked_ids[:top_k]
         ]
+
+
+def _merge_keeping_max(into: dict[str, float], additions: dict[str, float]) -> None:
+    """Fold one query variant's fused scores into the running best-per-id map,
+    in place — a hit keeps its highest fused score across all rewritten queries,
+    so a chunk that only a sub-query surfaces still competes on that score.
+    """
+    for key, score in additions.items():
+        if score > into.get(key, float("-inf")):
+            into[key] = score
 
 
 def combine_scores(
