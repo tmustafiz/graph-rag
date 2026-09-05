@@ -22,7 +22,8 @@ the embedding model is local.
 
 CLI is invoked as `uv run grag-mcp <verb>` (or `grag-mcp <verb>` once installed).
 Verbs: `status`, `apply-schema`, `ingest`, `serve-mcp` (`--stdio` for stdio
-transport), `compute-centrality`, `prune-memory`, `eval-retrieval`.
+transport, `--role knowledge|memory|all` — default `all` — for a split
+deployment), `compute-centrality`, `prune-memory`, `eval-retrieval`.
 
 ## How to work
 
