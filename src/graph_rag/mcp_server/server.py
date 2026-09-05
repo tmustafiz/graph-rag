@@ -30,8 +30,8 @@ INSTRUCTIONS = (
     "human-readable citation string for a chunk. `ingest_path` (re-)ingests "
     "a file or directory after it changes. Use `remember`/`recall`/`forget` "
     "to save and retrieve your own working memory (decisions, corrections, "
-    "findings) across sessions. The source list is also browsable as a "
-    "resource (`graph-rag://sources`) without a tool call."
+    "findings, preferences, facts) across sessions. The source list is also "
+    "browsable as a resource (`graph-rag://sources`) without a tool call."
 )
 
 
