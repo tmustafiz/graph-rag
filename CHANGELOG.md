@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `examples/agent-memory/`: copy-paste templates for a coding agent in a
+  *downstream* project to use graph-rag's `remember`/`recall`/`forget` tools
+  as its own persistent working memory — an `AGENTS.md` snippet, a Claude
+  Code skill, and a `SessionStart` hook (`session_start_recall.py`, using the
+  `mcp` Python client) that recalls relevant memories into context
+  automatically at the start of a session.
+  ([#49](https://github.com/tmustafiz/graph-rag/issues/49))
 - Opt-in split deployment: `docker-compose.knowledge.yml` /
   `docker-compose.memory.yml` run the knowledge base and agent memory as fully
   independent stacks — separate Neo4j, separate MCP server, optionally

@@ -19,3 +19,11 @@ Then, from an MCP client:
 
 - `find_policies_for("aws_db_instance")` → the RDS encryption + public-access rules
 - `search_policies("is my S3 bucket versioned")` → the S3 versioning rule
+
+## `agent-memory/`
+
+Copy-paste templates for wiring a coding agent in a **different** project up
+to graph-rag's `remember`/`recall`/`forget` tools as its own persistent
+working memory — an `AGENTS.md` snippet, a Claude Code skill, and a
+`SessionStart` hook that recalls relevant memories automatically. See
+[`agent-memory/README.md`](agent-memory/README.md).
