@@ -8,21 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Opt-in **query rewriting** ahead of `search` / `search_code` /
-  `search_policies`. `GRAG_QUERY_REWRITE=1` rewrites a query into a few variants
-  (acronym expansion, multi-part splitting, paraphrase), runs hybrid search for
-  each, and fuses the hit sets (best `[0, 1]` score per hit) before the
-  reranker/top-k stage. Two backends: an offline `HeuristicQueryRewriter`
-  (built-in acronym map + `GRAG_QUERY_REWRITE_SYNONYMS` JSON override, no
-  network) by default, and an opt-in `LlmQueryRewriter` when
-  `GRAG_QUERY_REWRITE_MODEL` is set — an OpenAI-compatible `POST
-  /v1/chat/completions` call (`GRAG_QUERY_REWRITE_API_BASE` points it at a local
-  Ollama / LM Studio / vLLM endpoint) that fails at startup without a key and
-  degrades to the unrewritten query on any request error.
-  `GRAG_QUERY_REWRITE_MAX_QUERIES` (default 3) caps the variant count;
-  `grag-mcp eval-retrieval --rewrite` measures a pass (composable with
-  `--rerank`). Off by default, no new dependencies.
-  ([#40](https://github.com/tmustafiz/graph-rag/issues/40))
 - `examples/agent-memory/`: copy-paste templates for a coding agent in a
   *downstream* project to use graph-rag's `remember`/`recall`/`forget` tools
   as its own persistent working memory, for both **Claude Code** and **VS
@@ -60,7 +45,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still merged, best-effort, when a matching `CodeEntity` exists in the same
   database. ([#43](https://github.com/tmustafiz/graph-rag/issues/43))
 
+## [0.3.0] - 2026-09-05
+
 ### Added
+- Opt-in **query rewriting** ahead of `search` / `search_code` /
+  `search_policies`. `GRAG_QUERY_REWRITE=1` rewrites a query into a few variants
+  (acronym expansion, multi-part splitting, paraphrase), runs hybrid search for
+  each, and fuses the hit sets (best `[0, 1]` score per hit) before the
+  reranker/top-k stage. Two backends: an offline `HeuristicQueryRewriter`
+  (built-in acronym map + `GRAG_QUERY_REWRITE_SYNONYMS` JSON override, no
+  network) by default, and an opt-in `LlmQueryRewriter` when
+  `GRAG_QUERY_REWRITE_MODEL` is set — an OpenAI-compatible `POST
+  /v1/chat/completions` call (`GRAG_QUERY_REWRITE_API_BASE` points it at a local
+  Ollama / LM Studio / vLLM endpoint) that fails at startup without a key and
+  degrades to the unrewritten query on any request error.
+  `GRAG_QUERY_REWRITE_MAX_QUERIES` (default 3) caps the variant count;
+  `grag-mcp eval-retrieval --rewrite` measures a pass (composable with
+  `--rerank`). Off by default, no new dependencies.
+  ([#40](https://github.com/tmustafiz/graph-rag/issues/40))
 - Config-selected hosted embedding backends. `GRAG_EMBEDDING_PROVIDER` selects
   `openai`, `ollama`, `voyage`, `cohere`, or `gemini` (unset keeps the local
   `all-MiniLM-L6-v2` — still the default, no API key). Each backend is a plain
@@ -219,6 +221,7 @@ the code graph, agent working-memory with decay pruning, and an MCP server
 (Streamable HTTP) exposing lookup + memory tools. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
-[Unreleased]: https://github.com/tmustafiz/graph-rag/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tmustafiz/graph-rag/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tmustafiz/graph-rag/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tmustafiz/graph-rag/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tmustafiz/graph-rag/releases/tag/v0.1.0
