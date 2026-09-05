@@ -33,15 +33,21 @@ claude mcp add graph-rag-memory --transport http http://127.0.0.1:8766/mcp
 
 ## What's here
 
-Both agents get the same three layers — an always-on instructions file, an
-explicit/proactive prompt for a deliberate recall+remember pass, and a hook
-that recalls automatically at session start:
+[`AGENTS.md.example`](AGENTS.md.example) is genuinely agent-agnostic — both
+Claude Code and VS Code Copilot Chat discover a root `AGENTS.md` natively — so
+it stays at the top level. Everything else is specific to one agent's own
+file format and location, so it lives under that agent's own folder,
+[`claude/`](claude/) or [`copilot/`](copilot/):
 
 | Layer | Claude Code | VS Code Copilot Chat |
 | --- | --- | --- |
-| Always-on instructions | [`AGENTS.md.example`](AGENTS.md.example) → project `AGENTS.md` | Same file — VS Code discovers a root `AGENTS.md` automatically — or [`copilot/copilot-instructions.md.example`](copilot/copilot-instructions.md.example) → `.github/copilot-instructions.md` |
-| Explicit/proactive prompt | [`skills/agent-memory/SKILL.md`](skills/agent-memory/SKILL.md) → `.claude/skills/agent-memory/` (Claude invokes it proactively based on its description) | [`copilot/prompts/agent-memory.prompt.md`](copilot/prompts/agent-memory.prompt.md) → `.github/prompts/` (run explicitly via `/agent-memory` in Copilot Chat) |
-| Automatic recall at session start | [`hooks/session_start_recall.py`](hooks/session_start_recall.py) + [`hooks/settings.snippet.json`](hooks/settings.snippet.json) → `.claude/settings.json` | [`copilot/hooks/session_start_recall.py`](copilot/hooks/session_start_recall.py) + [`copilot/hooks/agent-memory.hooks.json`](copilot/hooks/agent-memory.hooks.json) → `.github/hooks/` |
+| Always-on instructions | [`AGENTS.md.example`](AGENTS.md.example) → project `AGENTS.md` | Same file, or [`copilot/copilot-instructions.md.example`](copilot/copilot-instructions.md.example) → `.github/copilot-instructions.md` |
+| Explicit/proactive prompt | [`claude/skills/agent-memory/SKILL.md`](claude/skills/agent-memory/SKILL.md) → `.claude/skills/agent-memory/` (Claude invokes it proactively based on its description) | [`copilot/prompts/agent-memory.prompt.md`](copilot/prompts/agent-memory.prompt.md) → `.github/prompts/` (run explicitly via `/agent-memory` in Copilot Chat) |
+| Automatic recall at session start | [`claude/hooks/session_start_recall.py`](claude/hooks/session_start_recall.py) + [`claude/hooks/settings.snippet.json`](claude/hooks/settings.snippet.json) → `.claude/settings.json` | [`copilot/hooks/session_start_recall.py`](copilot/hooks/session_start_recall.py) + [`copilot/hooks/agent-memory.hooks.json`](copilot/hooks/agent-memory.hooks.json) → `.github/hooks/` |
+
+The "→" column is the destination path in your downstream project — copy the
+file(s) there verbatim (the skill keeps its directory name, `agent-memory/`;
+everything else is a single file).
 
 The always-on file and the prompt/skill cover the same ground — use whichever
 your agent supports (or both; they don't conflict). The hook is additive on
@@ -68,7 +74,7 @@ Copilot).
 
 ```bash
 # pick one, or both
-cp examples/agent-memory/hooks/session_start_recall.py ~/somewhere/on/PATH/          # Claude Code
+cp examples/agent-memory/claude/hooks/session_start_recall.py ~/somewhere/on/PATH/   # Claude Code
 cp examples/agent-memory/copilot/hooks/session_start_recall.py ~/somewhere/on/PATH/  # Copilot
 uv pip install mcp   # or: pip install mcp — whatever interprets the script(s)
 ```
@@ -88,7 +94,7 @@ GRAG_MEMORY_RECALL_TOP_K=5
 Verify a script directly before wiring it into a hook:
 
 ```bash
-echo '{"cwd":"'"$PWD"'"}' | python3 examples/agent-memory/hooks/session_start_recall.py            # Claude
+echo '{"cwd":"'"$PWD"'"}' | python3 examples/agent-memory/claude/hooks/session_start_recall.py     # Claude
 echo '{"cwd":"'"$PWD"'"}' | python3 examples/agent-memory/copilot/hooks/session_start_recall.py    # Copilot
 ```
 

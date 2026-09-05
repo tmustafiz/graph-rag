@@ -18,7 +18,7 @@ Prints nothing (valid: no context to add) when there's nothing to recall or
 the server can't be reached; never fails the session.
 
 Configuration (all optional, via environment variables) — same as the
-Claude Code version of this hook (../../hooks/session_start_recall.py):
+Claude Code version of this hook (../../claude/hooks/session_start_recall.py):
   GRAG_MEMORY_MCP_URL      MCP endpoint to recall from.
                             Default: http://127.0.0.1:8766/mcp
   MCP_AUTH_TOKEN            Bearer token, if the server requires one.

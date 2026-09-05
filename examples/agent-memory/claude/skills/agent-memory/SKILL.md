@@ -7,7 +7,7 @@ Copy this directory into a downstream project's `.claude/skills/` to give
 Claude the same memory habits this repo's own auto-memory system prompt
 describes, backed by graph-rag's `remember`/`recall`/`forget` MCP tools
 instead of local files. Requires an MCP client already connected to a
-graph-rag memory server — see `../../README.md` for setup.
+graph-rag memory server — see `../../../README.md` for setup.
 
 ## When to recall
 
