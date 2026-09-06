@@ -32,4 +32,11 @@ class CodeEntity(BaseModel):
     # Other `CodeEntity` qualified names this one renders — set only by the
     # React enrichment pass for `component` entities; feeds `RENDERS` edges.
     renders: list[str] = Field(default_factory=list)
+    # `DbTable` qualified names a SQL routine (`procedure` / `function` /
+    # `trigger`) reads from / writes to — set only by the procedural-SQL
+    # parser; feed `READS` / `WRITES` edges. `trigger_table` is the table a
+    # `trigger` fires on, feeding an `ON` edge.
+    reads: list[str] = Field(default_factory=list)
+    writes: list[str] = Field(default_factory=list)
+    trigger_table: str | None = None
     embedding: list[float] | None = None

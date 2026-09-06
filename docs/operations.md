@@ -478,6 +478,37 @@ Constraints on substitutes:
   COPY apoc-*.jar graph-data-science-*.jar /var/lib/neo4j/plugins/
   ```
 
+## SQL parsing accuracy per dialect
+
+`SqlParser` (`grag-mcp[sql]`) parses schema DDL and procedural code. The
+schema side (`CREATE TABLE` / `VIEW` / `INDEX` / `ALTER TABLE` → `:DbTable` /
+`:DbColumn` / `:DbView` / `:DbIndex` + `REFERENCES` / `DEPENDS_ON` edges) is
+`sqlglot`-exact for every supported dialect.
+
+The **procedural** side (`ProceduralSqlExtractor`: `procedure` / `function` /
+`package` / `package_body` / `trigger` `CodeEntity` nodes + `CALLS` / `READS`
+/ `WRITES` / `ON` edges) has a dialect-dependent accuracy ceiling:
+
+| Dialect | Header (name / params / return) | Body (`CALLS` / `READS` / `WRITES`) |
+| --- | --- | --- |
+| **T-SQL** (`tsql`) | `sqlglot` AST — exact | `sqlglot` AST walk of the `BEGIN … END` block — high |
+| **PL/pgSQL** (`postgres`) | `sqlglot` AST — exact | regex sweep of the `$$…$$` body — heuristic |
+| **Oracle PL/SQL** (`oracle`) | regex — good for the common forms | regex sweep, delimiter-scoped per routine — heuristic |
+
+Heuristic body analysis means: table access is found by scanning for
+`INSERT INTO` / `UPDATE` / `DELETE FROM` / `MERGE INTO` (writes) and `FROM` /
+`JOIN` (reads) after stripping comments and string literals; calls are found
+for explicit `CALL` / `PERFORM` / `EXEC`, for `package.routine(...)` where the
+package is known, and for a bare `routine(...)` only when exactly one routine
+of that name was parsed from the same file. Dynamic SQL (`EXECUTE IMMEDIATE`,
+string-built statements), cursors, and cross-file calls are **not** resolved.
+A routine whose header regex doesn't match still yields a header-only
+`CodeEntity` (no edges) and logs a `WARNING` naming the routine and file —
+grep the ingestion logs for `could not analyze the body of` to find them.
+
+Force a dialect with `GRAG_SQL_DIALECT` (env) or a per-file
+`-- grag:dialect=<name>` marker comment on the first line.
+
 ## Ingestion errors and logging
 
 `grag-mcp ingest`/the `ingest_path` MCP tool log a start/end summary

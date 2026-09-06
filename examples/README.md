@@ -61,6 +61,16 @@ Then, from an MCP client:
   `ALTER TABLE` even though the table is created in `001_core.sql` — the
   `REFERENCES` edge still lands.
 
+`procedures/order_ops.sql` is an Oracle PL/SQL package + trigger over the same
+tables — ingest the whole directory (`examples/sql-schema`) and try:
+
+- `get_neighbors("sales.order_ops.submit")` → `CALLS` → `sales.order_ops.publish`,
+  `WRITES` → `sales.orders`
+- `get_neighbors("sales.orders")` → incoming `WRITES` from the package
+  routines, `READS` from `sales.order_ops.open_count`
+- `get_neighbors("sales.trg_order_line_audit")` → `ON` → `sales.order_line`,
+  `WRITES` → `sales.orders`
+
 ## `agent-memory/`
 
 Copy-paste templates for wiring a coding agent in a **different** project up
