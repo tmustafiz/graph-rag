@@ -138,6 +138,7 @@ _VECTOR_SEARCH_CODE = """
 CALL db.index.vector.queryNodes('code_entity_embedding', $k, $vector)
 YIELD node AS e, score
 RETURN e.qualified_name AS qualified_name, e.name AS name, e.kind AS kind,
+       e.language AS language,
        e.docstring AS docstring, e.signature AS signature, e.file_path AS file_path,
        e.start_line AS start_line, e.end_line AS end_line, score
 """
@@ -477,6 +478,7 @@ class Retriever:
                 qualified_name=qn,
                 name=by_id[qn]["name"],
                 kind=by_id[qn]["kind"],
+                language=by_id[qn].get("language") or "python",
                 docstring=by_id[qn]["docstring"],
                 signature=by_id[qn]["signature"],
                 file_path=by_id[qn]["file_path"],

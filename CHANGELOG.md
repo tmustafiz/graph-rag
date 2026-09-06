@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Code parsing is no longer Python-framed. `CodeEntity` carries a `language`
+  property, `CodeSearchResult` exposes it, and `qualified_name` is documented
+  as the single cross-language unique key that each parser must namespace.
+  MCP instructions, `search` / `search_code` tool descriptions, the
+  `compute-centrality` hint, README, and `docs/ARCHITECTURE.md` (new "Adding
+  a language" section) now say "source code" rather than "Python". Groundwork
+  for the Java / JavaScript-TypeScript / SQL / PL-SQL / CSS parsers; Python
+  ingestion behavior is unchanged.
+  ([#60](https://github.com/tmustafiz/graph-rag/issues/60))
 - `examples/agent-memory/` instructions snippets (`AGENTS.md.example`,
   `copilot/copilot-instructions.md.example`): firmer, more directive wording
   so an agent actually writes memory during a task instead of treating it as

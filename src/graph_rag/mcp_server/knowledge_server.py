@@ -18,11 +18,12 @@ from .retriever import Retriever
 
 KNOWLEDGE_INSTRUCTIONS = (
     "Look up whatever has been ingested into this knowledge base — prose/"
-    "Markdown documentation, Python source, and Checkov policies. Call "
+    "Markdown documentation, source code, and Checkov policies. Call "
     "`list_sources` first to see what's actually available. `search` covers ingested "
-    "prose/Markdown/generic-YAML chunks ONLY — it does not cover Python code "
+    "prose/Markdown/generic-YAML chunks ONLY — it does not cover source code "
     "or Checkov policy text; use `search_code` for a natural-language "
-    "question about this codebase's functions/classes, and `search_policies` "
+    "question about this codebase's code (functions, classes, modules) in any "
+    "indexed language, and `search_policies` "
     "for a natural-language question about Checkov policies when you don't "
     "know the exact Terraform resource type. `get_section` returns the full "
     "text of a known section, `get_outline` browses a source's table of "
@@ -61,15 +62,17 @@ def register_knowledge_tools(
         source_path: str | None = None,
     ) -> list[SearchResult]:
         """Hybrid (vector + full-text) search over ingested prose/Markdown/
-        generic-YAML document chunks ONLY — does not cover Python code
+        generic-YAML document chunks ONLY — does not cover source code
         (use `search_code`) or Checkov policy text (use `search_policies`).
         """
         return retriever.search(query, top_k, source_type, source_path)
 
     @server.tool()
     def search_code(query: str, top_k: int = 5) -> list[CodeSearchResult]:
-        """Hybrid (vector + full-text) search over this codebase's Python
-        functions/classes/modules — the code-search complement to `search`.
+        """Hybrid (vector + full-text) search over indexed source code —
+        functions, classes, modules, and other per-language entities (Python
+        today; more languages as their parser extras are installed) — the
+        code-search complement to `search`.
         """
         return retriever.search_code(query, top_k)
 

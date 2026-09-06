@@ -8,7 +8,7 @@
 [![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-green)](https://modelcontextprotocol.io)
 
 graph-rag ingests the heterogeneous stuff a coding agent needs to reason about —
-service docs (PDF), internal Markdown, your Python source, and YAML policy files
+service docs (PDF), internal Markdown, your source code, and YAML policy files
 (Checkov) — into a single **Neo4j knowledge graph**, and exposes it to the agent
 over an **MCP server**: hybrid (vector + full-text) search, table-of-contents
 navigation, exact policy lookup, code-centrality ranking, graph traversal, and
@@ -137,8 +137,8 @@ reachable at `NEO4J_URI`.
 
 | Tool | What it does |
 | --- | --- |
-| `search` | Hybrid (vector + full-text) search over ingested prose / Markdown / generic-YAML chunks. Does **not** cover Python code or Checkov policy text. |
-| `search_code` | Same hybrid search, over ingested Python functions / classes / modules. |
+| `search` | Hybrid (vector + full-text) search over ingested prose / Markdown / generic-YAML chunks. Does **not** cover source code or Checkov policy text. |
+| `search_code` | Same hybrid search, over ingested source-code entities — functions / classes / modules (Python today; more languages via optional parser extras). |
 | `search_policies` | Hybrid search over Checkov policy content — the fuzzy complement to `find_policies_for`. |
 | `find_policies_for` | **Exact-match** traversal: policies whose `APPLIES_TO` edge names a Terraform resource type precisely (e.g. `aws_db_instance`). No fuzzy fallback. |
 | `get_section` / `get_outline` | Full section text (paginated via `max_chars`) or a source's table-of-contents tree. |
@@ -184,7 +184,7 @@ curl -X POST http://127.0.0.1:8765/ingest \
 `CALLS`/`IMPORTS` graph, writing each entity's score to `CodeEntity.pagerank`
 — a heavily called/imported entity ranks higher, surfacing what's most central
 (and riskiest to change) in an ingested codebase. Exposed via
-`get_central_code_entities`. Needs Python source already ingested and the
+`get_central_code_entities`. Needs source code already ingested and the
 `graph-data-science` Neo4j plugin (enabled in `docker-compose.yml`):
 
 ```bash

@@ -164,3 +164,23 @@ def test_module_with_no_docstring_summarizes_its_exports(tmp_path: Path) -> None
     assert module_entity.kind == "module"
     assert module_entity.docstring is None
     assert module_entity.embed_text == "Module pkg.funcs. Defines: helper"
+
+
+def test_every_entity_is_tagged_with_its_language(tmp_path: Path) -> None:
+    pkg = _write_package(tmp_path)
+    path = pkg / "widgets.py"
+    path.write_text(
+        "class Widget:\n"
+        '    """A widget."""\n'
+        "    def render(self) -> None:\n"
+        "        pass\n"
+        "\n"
+        "def build() -> Widget:\n"
+        "    return Widget()\n"
+    )
+
+    document = PythonParser().parse(path)
+
+    kinds = {e.kind for e in document.code_entities}
+    assert kinds == {"module", "class", "method", "function"}
+    assert all(entity.language == "python" for entity in document.code_entities)

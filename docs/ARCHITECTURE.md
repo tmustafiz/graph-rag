@@ -1,9 +1,10 @@
 # Architecture
 
-graph-rag ingests heterogeneous sources (PDF, Markdown, Python, YAML/Checkov)
-into a single **Neo4j** knowledge graph and serves retrieval — plus the agent's
-own working memory — to coding agents over an **MCP** server. Adding a new file
-type is a self-contained parser plugin; nothing downstream of it changes.
+graph-rag ingests heterogeneous sources (PDF, Markdown, source code,
+YAML/Checkov) into a single **Neo4j** knowledge graph and serves retrieval —
+plus the agent's own working memory — to coding agents over an **MCP** server.
+Adding a new file type — or a new source language — is a self-contained parser
+plugin; nothing downstream of it changes.
 
 Planning and roadmap live in [GitHub Issues, Milestones, and the project
 board](ROADMAP.md), not in this repo.
@@ -57,7 +58,7 @@ flowchart TD
 | `Source` | `path` | `source_type`, `content_hash`, `ingested_at` |
 | `Section` | `id` | `title`, `level`, `breadcrumb`, `order`, page range |
 | `Chunk` | `id` | `text`, `token_count`, `embedding` (384-d), page/line range |
-| `CodeEntity` | `qualified_name` | `name`, `signature`, `docstring`, `path`, line range, `embedding`, `pagerank` |
+| `CodeEntity` | `qualified_name` (globally unique across every language) | `name`, `kind` (per-language vocabulary), `language`, `signature`, `docstring`, `path`, line range, `embedding`, `pagerank` |
 | `PolicyRule` | `id` | `name`, `category`, `severity`, `guideline`, `embedding` |
 | `Concept` | `name` | e.g. a Terraform `resource_type` |
 | `AgentMemory` | `id` | `content`, `embedding`, `last_accessed_at`, access count, soft-delete flag |
@@ -91,6 +92,35 @@ skipped without aborting the batch.
 
 The same operation is reachable three ways: the CLI, the `ingest_path` MCP tool,
 and `POST /ingest` (for CI / pre-commit hooks with no MCP client).
+
+## Adding a language
+
+A source-language parser is the same plugin shape as any other parser — a
+class satisfying the `Parser` protocol (`can_handle(path) -> bool`,
+`parse(path) -> ParsedDocument`), one module, one line in
+`ParserRegistry._parsers`. What's language-specific:
+
+- **Emit `CodeEntity`.** Set `language` on every entity. Pick a `kind`
+  vocabulary that fits the language (`interface`, `enum`, `package`,
+  `procedure`, …) — it's a free string, documented per parser, not an enum.
+- **Namespace `qualified_name`.** It is the *single* unique key for
+  `CodeEntity` across all languages, so two languages must never produce the
+  same string. Python uses dotted module ancestry; a language with no global
+  module namespace should prefix with its repo-relative path or a language
+  tag.
+- **`CALLS` / `IMPORTS` are best-effort static.** No type inference — resolve
+  what's unambiguous (local definitions, explicit imports, `self`/`this`
+  members) and skip the rest rather than guess, as `PythonParser` does.
+- **Third-party parse backend → optional extra.** Unlike `PythonParser`
+  (stdlib `ast`), other languages need a library (`tree-sitter` +
+  `tree-sitter-language-pack` for Java / JS / TS / CSS; `sqlglot` for
+  SQL / PL-SQL). Declare it as a `pyproject` extra (`grag-mcp[java]`, …) and
+  guard the import inside `parse()` with a `RuntimeError` naming the extra,
+  exactly like `PdfParser` does for `pymupdf`.
+
+`search_code`, `get_neighbors`, and `compute-centrality` operate on
+`CodeEntity` regardless of language, so a new parser needs no retrieval-side
+change.
 
 ## Retrieval
 
