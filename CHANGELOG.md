@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Procedural SQL parsing (`ProceduralSqlExtractor`, run by `SqlParser` on the
+  same `grag-mcp[sql]` extra). Stored procedures, functions, packages, package
+  bodies, and triggers become `CodeEntity` nodes (`kind` ∈ `package` |
+  `package_body` | `procedure` | `function` | `trigger`; packaged routines get
+  `parent_qualified_name` = the package). Best-effort `CALLS` between routines,
+  plus `READS` / `WRITES` edges to `:DbTable` (from `SELECT` vs
+  `INSERT`/`UPDATE`/`DELETE`/`MERGE` in the body) and `ON` (trigger → its
+  table). `sqlglot` parses T-SQL procedure bodies as an AST; PL/pgSQL `$$…$$`
+  bodies and all of Oracle PL/SQL (packages, triggers) fall back to a
+  delimiter-scoped regex sweep — accuracy ceiling documented per dialect in
+  `docs/operations.md`. A routine whose body can't be analyzed still yields its
+  header entity with a logged warning. `SqlParser` now also claims `.pks` /
+  `.pkb` / `.prc` / `.fnc` / `.trg` / `.plsql`; `CodeEntity` gains `reads` /
+  `writes` / `trigger_table`. Sample under `examples/sql-schema/procedures/`.
+  ([#65](https://github.com/tmustafiz/graph-rag/issues/65))
 - SQL schema parser (`SqlParser`, opt-in `grag-mcp[sql]` extra, backed by
   `sqlglot`). `.sql` DDL becomes a database-schema graph — not `CodeEntity` —
   of `:DbTable` / `:DbColumn` (type, nullability, default, PK flag) / `:DbView`

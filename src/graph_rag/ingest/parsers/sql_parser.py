@@ -7,12 +7,17 @@ from typing import TYPE_CHECKING
 
 from ...settings import settings
 from ..models import DbColumn, DbIndex, DbReference, DbTable, DbView, ParsedDocument, Source
+from .procedural_sql_extractor import ProceduralSqlExtractor
 
 if TYPE_CHECKING:
     from sqlglot import exp
 
 logger = logging.getLogger(__name__)
 
+# `.sql` covers schema DDL and (T-SQL / PL/pgSQL) procedures; the rest are
+# Oracle's per-object conventions (package spec / body, procedure, function,
+# trigger, generic PL/SQL).
+_SUFFIXES = {".sql", ".pks", ".pkb", ".prc", ".fnc", ".trg", ".plsql"}
 _SUFFIX = ".sql"
 # Per-file override, e.g. `-- grag:dialect=postgres`.
 _DIALECT_MARKER_RE = re.compile(r"--\s*grag:dialect\s*=\s*([A-Za-z_]+)")
@@ -22,23 +27,27 @@ _DEFINITION_LIMIT = 400
 
 
 class SqlParser:
-    """Parses a `.sql` DDL file into a database-schema graph via `sqlglot`.
+    """Parses a `.sql` (or Oracle `.pks`/`.pkb`/`.prc`/`.fnc`/`.trg`) file via
+    `sqlglot` into two shapes at once:
 
-    Emits `DbTable` / `DbColumn` / `DbView` / `DbIndex` nodes (not `CodeEntity`)
-    plus `HAS_COLUMN`, `REFERENCES` (column- and table-level, from inline and
-    `ALTER TABLE … ADD CONSTRAINT` foreign keys), `DEPENDS_ON` (view → the
-    tables/views in its `SELECT`) and `HAS_INDEX` edges. Query text and DML are
-    ignored — this is a schema extractor.
+    - **Schema** (`DbTable` / `DbColumn` / `DbView` / `DbIndex` nodes, not
+      `CodeEntity`) with `HAS_COLUMN`, `REFERENCES`, `DEPENDS_ON`, `HAS_INDEX`
+      edges — from `CREATE TABLE` / `VIEW` / `INDEX` / `ALTER TABLE`.
+    - **Procedural code** (`procedure` / `function` / `package` /
+      `package_body` / `trigger` `CodeEntity` nodes) with a best-effort
+      `CALLS` graph and `READS` / `WRITES` / `ON` edges to `DbTable` — see
+      `ProceduralSqlExtractor`.
 
-    Dialect is `settings.sql_dialect` (env `GRAG_SQL_DIALECT`), overridable
-    per file with a `-- grag:dialect=<name>` marker comment; an unknown
-    dialect, or a file `sqlglot` cannot parse, logs a warning and yields a
-    `Source` with no schema nodes rather than raising.
+    Query text and DML outside a routine body are ignored. Dialect is
+    `settings.sql_dialect` (env `GRAG_SQL_DIALECT`), overridable per file with
+    a `-- grag:dialect=<name>` marker; an unknown dialect, or DDL `sqlglot`
+    cannot parse, logs a warning and yields no schema nodes (procedural
+    extraction still runs) rather than raising.
     """
 
     @staticmethod
     def can_handle(path: Path) -> bool:
-        return path.suffix.lower() == _SUFFIX
+        return path.suffix.lower() in _SUFFIXES
 
     def parse(self, path: Path) -> ParsedDocument:
         try:
@@ -60,19 +69,31 @@ class SqlParser:
         )
 
         dialect = self._resolve_dialect(text)
+
+        code_entities = ProceduralSqlExtractor().extract(text, dialect=dialect, file_path=str(path))
+
+        builder = _SchemaBuilder(file_path=str(path), dialect=dialect)
         try:
             statements = sqlglot.parse(text, read=dialect)
         except SqlglotError as exc:
-            logger.warning("sqlglot could not parse %s (dialect=%s): %s", path, dialect, exc)
-            return ParsedDocument(source=source)
-
-        builder = _SchemaBuilder(file_path=str(path), dialect=dialect)
+            # A purely procedural file (Oracle package / trigger) routinely
+            # fails the schema pass — that is expected once routines came back.
+            level = logging.DEBUG if code_entities else logging.WARNING
+            logger.log(
+                level,
+                "sqlglot could not parse the schema DDL in %s (dialect=%s): %s",
+                path,
+                dialect,
+                exc,
+            )
+            statements = []
         for statement in statements:
             if statement is not None:
                 builder.consume(statement)
 
         return ParsedDocument(
             source=source,
+            code_entities=code_entities,
             db_tables=builder.tables,
             db_columns=builder.columns,
             db_views=builder.views,

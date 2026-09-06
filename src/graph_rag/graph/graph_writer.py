@@ -81,6 +81,27 @@ MERGE (child:CodeEntity {qualified_name: pair.to})
 MERGE (parent)-[:RENDERS]->(child)
 """
 
+_MERGE_READS = """
+UNWIND $pairs AS pair
+MATCH (routine:CodeEntity {qualified_name: pair.from})
+MERGE (t:DbTable {qualified_name: pair.to})
+MERGE (routine)-[:READS]->(t)
+"""
+
+_MERGE_WRITES = """
+UNWIND $pairs AS pair
+MATCH (routine:CodeEntity {qualified_name: pair.from})
+MERGE (t:DbTable {qualified_name: pair.to})
+MERGE (routine)-[:WRITES]->(t)
+"""
+
+_MERGE_TRIGGER_ON = """
+UNWIND $pairs AS pair
+MATCH (trigger:CodeEntity {qualified_name: pair.from})
+MERGE (t:DbTable {qualified_name: pair.to})
+MERGE (trigger)-[:ON]->(t)
+"""
+
 _MERGE_DB_TABLES = """
 UNWIND $rows AS row
 MERGE (t:DbTable {qualified_name: row.qualified_name})
@@ -266,6 +287,12 @@ class GraphWriter:
                 session.execute_write(self._write_table_references, batch)
             for batch in self._batched(self._view_depends_on_pairs(document)):
                 session.execute_write(self._write_view_depends_on, batch)
+            for batch in self._batched(self._reads_pairs(document)):
+                session.execute_write(self._write_reads, batch)
+            for batch in self._batched(self._writes_pairs(document)):
+                session.execute_write(self._write_writes, batch)
+            for batch in self._batched(self._trigger_on_pairs(document)):
+                session.execute_write(self._write_trigger_on, batch)
             for batch in self._batched([r.model_dump(mode="json") for r in document.policy_rules]):
                 session.execute_write(self._write_policy_rules, document.source.path, batch)
             for batch in self._batched(self._applies_to_pairs(document)):
@@ -359,6 +386,18 @@ class GraphWriter:
     @staticmethod
     def _write_renders(tx: ManagedTransaction, pairs: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_RENDERS), pairs=pairs)
+
+    @staticmethod
+    def _write_reads(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_READS), pairs=pairs)
+
+    @staticmethod
+    def _write_writes(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_WRITES), pairs=pairs)
+
+    @staticmethod
+    def _write_trigger_on(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_TRIGGER_ON), pairs=pairs)
 
     @staticmethod
     def _write_db_tables(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
@@ -514,6 +553,30 @@ class GraphWriter:
             {"from": view.qualified_name, "to": target}
             for view in document.db_views
             for target in view.depends_on
+        ]
+
+    @staticmethod
+    def _reads_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": entity.qualified_name, "to": table}
+            for entity in document.code_entities
+            for table in entity.reads
+        ]
+
+    @staticmethod
+    def _writes_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": entity.qualified_name, "to": table}
+            for entity in document.code_entities
+            for table in entity.writes
+        ]
+
+    @staticmethod
+    def _trigger_on_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": entity.qualified_name, "to": entity.trigger_table}
+            for entity in document.code_entities
+            if entity.trigger_table
         ]
 
     @staticmethod

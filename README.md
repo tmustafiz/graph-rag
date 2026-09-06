@@ -53,7 +53,8 @@ You still need a Neo4j instance (APOC + GDS plugins) reachable at `NEO4J_URI` /
 for a ready-made one. The `[pdf]` extra pulls in PyMuPDF (AGPL-licensed); the
 `[java]` extra pulls in tree-sitter for `.java` files, `[js]` for
 `.js` / `.mjs` / `.cjs` / `.jsx` / `.ts` / `.tsx`, and `[sql]` pulls in
-`sqlglot` for `.sql` schema DDL. Leave off any you don't ingest
+`sqlglot` for `.sql` schema DDL **and** procedural code (PL/SQL, PL/pgSQL,
+T-SQL — also `.pks` / `.pkb` / `.prc` / `.fnc` / `.trg`). Leave off any you don't ingest
 (`uv tool install 'grag-mcp[pdf,java,js,sql]'` for all).
 
 On Linux, pass `--torch-backend=cpu` (`uvx --torch-backend=cpu …`) unless you
@@ -141,7 +142,7 @@ reachable at `NEO4J_URI`.
 | Tool | What it does |
 | --- | --- |
 | `search` | Hybrid (vector + full-text) search over ingested prose / Markdown / generic-YAML chunks. Does **not** cover source code or Checkov policy text. |
-| `search_code` | Same hybrid search, over ingested source-code entities — functions / classes / modules / methods (Python built-in; Java via the `[java]` extra, JavaScript / TypeScript via `[js]`). SQL schema DDL (`[sql]`) ingests as a `:DbTable` / `:DbColumn` / `:DbView` graph walkable with `get_neighbors`. |
+| `search_code` | Same hybrid search, over ingested source-code entities — functions / classes / modules / methods (Python built-in; Java via the `[java]` extra, JavaScript / TypeScript via `[js]`). SQL (`[sql]`): schema DDL ingests as a `:DbTable` / `:DbColumn` / `:DbView` graph, and stored procedures / functions / packages / triggers ingest as `CodeEntity` routines with `CALLS` + `READS`/`WRITES`/`ON` edges to those tables — all walkable with `get_neighbors`. |
 | `search_policies` | Hybrid search over Checkov policy content — the fuzzy complement to `find_policies_for`. |
 | `find_policies_for` | **Exact-match** traversal: policies whose `APPLIES_TO` edge names a Terraform resource type precisely (e.g. `aws_db_instance`). No fuzzy fallback. |
 | `get_section` / `get_outline` | Full section text (paginated via `max_chars`) or a source's table-of-contents tree. |
@@ -352,7 +353,7 @@ flowchart TD
     C --> C3["PythonParser (ast)"]
     C --> C4["JavaParser (tree-sitter)"]
     C --> C5["JavaScriptParser (tree-sitter, JS + TS)"]
-    C --> C6["SqlParser (sqlglot, schema DDL)"]
+    C --> C6["SqlParser (sqlglot: schema + PL/SQL)"]
     C --> C7["YamlParser (Checkov-aware)"]
     C1 --> D["Structure-aware Chunker"]
     C2 --> D

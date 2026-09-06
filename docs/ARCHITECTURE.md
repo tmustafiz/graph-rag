@@ -20,7 +20,7 @@ flowchart TD
     C --> C3["PythonParser (ast)"]
     C --> C4["JavaParser (tree-sitter)"]
     C --> C5["JavaScriptParser (tree-sitter, JS + TS)"]
-    C --> C6["SqlParser (sqlglot, schema DDL)"]
+    C --> C6["SqlParser (sqlglot: schema + PL/SQL)"]
     C --> C7["YamlParser (Checkov-aware)"]
     C1 --> D["Chunker (structure-aware)"]
     C2 --> D
@@ -85,6 +85,8 @@ flowchart TD
 - `(DbTable)-[:HAS_COLUMN]->(DbColumn)`, `(DbTable)-[:HAS_INDEX]->(DbIndex)`
 - `(DbColumn)-[:REFERENCES]->(DbColumn)`, `(DbTable)-[:REFERENCES]->(DbTable)` (foreign keys)
 - `(DbView)-[:DEPENDS_ON]->(DbTable|DbView)` (tables/views in the view's `SELECT`)
+- `(CodeEntity)-[:READS]->(DbTable)`, `(CodeEntity)-[:WRITES]->(DbTable)` (a SQL routine's `SELECT` vs `INSERT`/`UPDATE`/`DELETE`/`MERGE`)
+- `(CodeEntity)-[:ON]->(DbTable)` (the table a `trigger` fires on)
 
 **Indexes** (`grag-mcp apply-schema`)
 
@@ -174,8 +176,8 @@ are folded into `embed_text` / `signature` so `search_code` can match them.
 Unresolved and lowercase (`div`) tags are skipped, like `calls`. Prop *types*
 and lifecycle call graphs are out of scope.
 
-`SqlParser` (`grag-mcp[sql]`, backed by `sqlglot`) is a **schema** extractor
-for `.sql` DDL — it does not emit `CodeEntity`. `CREATE TABLE` / column /
+`SqlParser` (`grag-mcp[sql]`, backed by `sqlglot`) covers both **schema** and
+**procedural** SQL from one file. `CREATE TABLE` / column /
 `CREATE VIEW` (incl. materialized) / `CREATE INDEX` become `:DbTable` /
 `:DbColumn` / `:DbView` / `:DbIndex` nodes keyed by dialect-qualified
 `qualified_name` (`schema.table`, `schema.table.column`,
@@ -193,6 +195,21 @@ with no schema nodes. Tables and views are embedded (a rendered `CREATE TABLE
 …` / view summary); wiring them into `search_code` (or a dedicated
 `search_schema`) is a follow-up — the vector/full-text indexes are already
 created.
+
+`ProceduralSqlExtractor` (run by `SqlParser` on the same file, also for the
+`.pks` / `.pkb` / `.prc` / `.fnc` / `.trg` / `.plsql` extensions) turns stored
+procedures, functions, packages, and triggers into `CodeEntity` nodes —
+`kind` ∈ `package` | `package_body` | `procedure` | `function` | `trigger`,
+`qualified_name` = `schema.package.routine` (packaged, `parent_qualified_name`
+= the package) or `schema.routine`. `sqlglot` handles T-SQL `CREATE PROCEDURE`
+bodies as an AST; PL/pgSQL `$$…$$` bodies and all of Oracle PL/SQL
+(packages, triggers, `RETURN` in a spec) are parsed by a delimiter-scoped
+**regex sweep** — so the accuracy ceiling is dialect-dependent (see
+`docs/operations.md`). A routine whose body can't be analyzed still yields its
+header entity, with a logged warning. Best-effort `CALLS` links routines
+(bare `proc(...)` resolved only when unambiguous, `pkg.proc(...)` when the
+package is known); `READS` / `WRITES` link a routine to the `:DbTable`s its
+body selects from / writes to, and `ON` links a `trigger` to its table.
 
 ## Retrieval
 
