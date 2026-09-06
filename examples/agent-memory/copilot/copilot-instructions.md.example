@@ -10,21 +10,48 @@ don't need this file too. Use this one if the project relies on
 copilot-instructions.md instead of (or in addition to) AGENTS.md.
 -->
 
-## Persistent memory (graph-rag)
+## Persistent memory (graph-rag) — REQUIRED
 
 This project has an MCP-backed memory server exposing `remember`, `recall`,
-and `forget` tools. Use them to keep continuity across sessions instead of
-re-deriving the same context every time:
+and `forget`. Using it is not optional. It is how you keep continuity across
+sessions instead of re-deriving the same context every time.
 
-- Call **`recall(query, top_k=5)`** at the start of a task, phrasing `query`
-  as a description of the task (it's a semantic search, not a keyword match).
-- Call **`remember(content, kind, importance=False)`** as you learn or decide
-  something worth keeping — not as an end-of-session summary. `kind` is one
-  of `decision` | `correction` | `finding` | `preference` | `fact`. Set
-  `importance=True` only for something that must never be pruned by decay
-  even if never recalled again.
-- Call **`forget(memory_id)`** immediately if a memory turns out wrong or
-  superseded.
+### At the start of every task
 
-Do not save anything already derivable from the code, git history, or this
-file, or anything that belongs in a commit message instead.
+Call **`recall(query, top_k=5)`** before doing anything else, with `query`
+phrased as a sentence describing the task (semantic search, not keywords).
+Fold anything it returns into your plan.
+
+### While you work
+
+Call **`remember(content, kind, importance=False)`** the moment one of these
+happens — do not batch it, do not wait until the end:
+
+- You **decide** an approach, tool, or convention (`kind="decision"`).
+- The user **corrects** you or overrides something you did (`kind="correction"`).
+- You **discover** a non-obvious fact about how this system behaves — a gotcha,
+  a root cause, a constraint you had to reverse-engineer (`kind="finding"`).
+- The user states a **preference** about how they want you to work
+  (`kind="preference"`).
+- You establish a durable **fact** about the project not written down anywhere
+  (`kind="fact"`).
+
+Set `importance=True` only for something that must survive decay-pruning even
+if it is never recalled again.
+
+### Before you end your turn
+
+Task completion includes memory. Before your final reply on any task, review
+what happened in this turn and confirm you called `remember` for every
+decision, correction, finding, and preference above. Saving nothing is a
+deliberate choice you should be able to justify — not the default.
+
+### Corrections
+
+Call **`forget(memory_id)`** immediately when a memory turns out wrong or
+superseded, then `remember` the corrected version.
+
+### Do not save
+
+Anything already derivable from the code, the git history, or this file, and
+anything that belongs in a commit message instead.
