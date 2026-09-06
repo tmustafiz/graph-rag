@@ -53,6 +53,10 @@ dependencies = [
 pdf = [
     "pymupdf>=1.24",
 ]
+java = [
+    "tree-sitter>=0.23",
+    "tree-sitter-language-pack>=0.9",
+]
 
 [dependency-groups]
 dev = [

@@ -13,16 +13,18 @@ board](ROADMAP.md), not in this repo.
 
 ```mermaid
 flowchart TD
-    A["Files: PDF / Markdown / Python / YAML"] --> B["Ingestion CLI / POST /ingest / ingest_path tool"]
+    A["Files: PDF / Markdown / Python / Java / YAML"] --> B["Ingestion CLI / POST /ingest / ingest_path tool"]
     B --> C{"ParserRegistry (by extension)"}
     C --> C1["PdfParser (PyMuPDF)"]
     C --> C2["MarkdownParser"]
     C --> C3["PythonParser (ast)"]
-    C --> C4["YamlParser (Checkov-aware)"]
+    C --> C4["JavaParser (tree-sitter)"]
+    C --> C5["YamlParser (Checkov-aware)"]
     C1 --> D["Chunker (structure-aware)"]
     C2 --> D
     C3 --> D
     C4 --> D
+    C5 --> D
     D --> E["Enricher (SentenceTransformer embeddings)"]
     E --> F["GraphWriter (idempotent upsert by content hash)"]
     F --> G[("Neo4j — APOC + GDS")]
@@ -121,6 +123,17 @@ class satisfying the `Parser` protocol (`can_handle(path) -> bool`,
 `search_code`, `get_neighbors`, and `compute-centrality` operate on
 `CodeEntity` regardless of language, so a new parser needs no retrieval-side
 change.
+
+`JavaParser` (`grag-mcp[java]`, backed by `tree-sitter` +
+`tree-sitter-language-pack`) is the first non-Python implementation and the
+reference for the points above: `kind` is one of
+`class` | `interface` | `enum` | `record` | `annotation` | `method` |
+`constructor`; `qualified_name` is the package-prefixed, overload-safe name
+(`com.acme.orders.OrderService.submit(Order,boolean)` — parameter types taken
+verbatim from source, since there is no type resolution); fields are folded
+into the owning type's `embed_text` rather than emitted as entities; and there
+is no file-level `module` entity (Java has no unit below the package), so a
+file's `imports` attach to its first top-level type.
 
 ## Retrieval
 

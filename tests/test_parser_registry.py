@@ -1,7 +1,13 @@
 from pathlib import Path
 
 from graph_rag.ingest.parser_registry import ParserRegistry
-from graph_rag.ingest.parsers import MarkdownParser, PdfParser, PythonParser, YamlParser
+from graph_rag.ingest.parsers import (
+    JavaParser,
+    MarkdownParser,
+    PdfParser,
+    PythonParser,
+    YamlParser,
+)
 
 
 def test_for_path_routes_by_extension() -> None:
@@ -9,6 +15,7 @@ def test_for_path_routes_by_extension() -> None:
     assert isinstance(registry.for_path(Path("doc.pdf")), PdfParser)
     assert isinstance(registry.for_path(Path("doc.md")), MarkdownParser)
     assert isinstance(registry.for_path(Path("mod.py")), PythonParser)
+    assert isinstance(registry.for_path(Path("Service.java")), JavaParser)
     assert isinstance(registry.for_path(Path("policy.yaml")), YamlParser)
     assert isinstance(registry.for_path(Path("policy.yml")), YamlParser)
 
