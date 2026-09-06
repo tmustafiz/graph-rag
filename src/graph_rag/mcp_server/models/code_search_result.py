@@ -12,6 +12,9 @@ class CodeSearchResult(BaseModel):
     qualified_name: str
     name: str
     kind: str
+    # Source language of the hit (e.g. "python"). Defaults to "python" for
+    # nodes ingested before language was tracked.
+    language: str = "python"
     docstring: str | None = None
     signature: str | None = None
     file_path: str | None = None

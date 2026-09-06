@@ -46,7 +46,8 @@ MERGE (a)-[:NEXT]->(b)
 _MERGE_CODE_ENTITIES = """
 UNWIND $entities AS row
 MERGE (e:CodeEntity {qualified_name: row.qualified_name})
-SET e.name = row.name, e.kind = row.kind, e.embed_text = row.embed_text,
+SET e.name = row.name, e.kind = row.kind, e.language = row.language,
+    e.embed_text = row.embed_text,
     e.file_path = row.file_path, e.start_line = row.start_line, e.end_line = row.end_line,
     e.signature = row.signature, e.docstring = row.docstring, e.embedding = row.embedding
 WITH e, row

@@ -171,7 +171,7 @@ def compute_centrality() -> None:
         scored = CentralityAnalyzer(driver).compute_code_pagerank()
     if scored == 0:
         typer.secho(
-            "No CodeEntity CALLS/IMPORTS edges found — ingest some Python source first.",
+            "No CodeEntity CALLS/IMPORTS edges found — ingest some source code first.",
             fg=typer.colors.YELLOW,
         )
         return

@@ -2,13 +2,24 @@ from pydantic import BaseModel, Field
 
 
 class CodeEntity(BaseModel):
-    """A Python module, class, function, or method (`qualified_name` is the
-    unique key in the graph, e.g. `graph_rag.ingest.chunker.Chunker.chunk`).
+    """A source-code unit — module/file, class, function, method, and whatever
+    else a language parser emits (interface, enum, package, procedure, …).
+
+    `qualified_name` is the single unique key in the graph across every
+    language, so each parser must namespace it well enough that two languages
+    can't collide — Python uses dotted module ancestry
+    (`graph_rag.ingest.chunker.Chunker.chunk`); a language with no global
+    module namespace should prefix with its repo-relative path or a language
+    tag. `kind` is a free-form, per-language vocabulary (Python:
+    `module` | `class` | `function` | `method`).
     """
 
     qualified_name: str
     name: str
-    kind: str  # "module" | "class" | "function" | "method"
+    kind: str
+    # Source language, set by the parser. Defaults to "python" — the only
+    # language with a parser today — so existing callers stay valid.
+    language: str = "python"
     embed_text: str
     file_path: str | None = None
     start_line: int | None = None
