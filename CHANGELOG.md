@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- JavaScript / TypeScript source parser (`JavaScriptParser`, opt-in
+  `grag-mcp[js]` extra, same `tree-sitter` backend). One parser for
+  `.js` / `.mjs` / `.cjs` / `.jsx` / `.ts` / `.tsx` — TS and JSX are grammar
+  variants of the same parse. Each file becomes a `module` `CodeEntity`
+  (`qualified_name` is the project-relative path — nearest `package.json` /
+  `tsconfig.json` ancestor — dotted and extension-stripped, `index` collapsed
+  to its directory) carrying the file's `imports`, plus one entity per
+  top-level `function` / `class` (+ `method` / `constructor`) / exported
+  arrow-`const`, and signature-only `interface` / `type` / `enum`. `IMPORTS`
+  covers ESM (`import`, `export … from`, `export *`, dynamic `import()`) and
+  CommonJS (`require`); relative specifiers resolve against the project tree
+  (named imports as `module.symbol`), bare specifiers (`react`) stay verbatim.
+  Best-effort static `CALLS` for local, imported, and `this.*` shapes — same
+  no-type-inference policy as `PythonParser`. JSDoc becomes
+  `docstring`/`embed_text`. Sample project under `examples/js/`.
+  ([#62](https://github.com/tmustafiz/graph-rag/issues/62))
 - Java source parser (`JavaParser`, opt-in `grag-mcp[java]` extra, backed by
   `tree-sitter` + `tree-sitter-language-pack`). A `.java` file becomes a
   `Source` plus one `CodeEntity` per type (`class` / `interface` / `enum` /

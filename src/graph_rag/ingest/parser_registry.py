@@ -1,7 +1,14 @@
 from pathlib import Path
 
 from .parser import Parser
-from .parsers import JavaParser, MarkdownParser, PdfParser, PythonParser, YamlParser
+from .parsers import (
+    JavaParser,
+    JavaScriptParser,
+    MarkdownParser,
+    PdfParser,
+    PythonParser,
+    YamlParser,
+)
 
 
 class ParserRegistry:
@@ -17,6 +24,7 @@ class ParserRegistry:
             MarkdownParser(),
             PythonParser(),
             JavaParser(),
+            JavaScriptParser(),
             YamlParser(),
         ]
 
