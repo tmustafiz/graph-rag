@@ -112,6 +112,24 @@ def test_run_on_directory_recurses_and_skips_unsupported_files(tmp_path: Path) -
     assert len(writer.written) == 2
 
 
+def test_run_on_sql_file_counts_db_objects_and_embeds_tables_and_views(tmp_path: Path) -> None:
+    path = tmp_path / "schema.sql"
+    path.write_text(
+        "CREATE TABLE app.customer (id INT PRIMARY KEY, email TEXT NOT NULL);\n"
+        "CREATE VIEW app.v_customer AS SELECT id FROM app.customer;\n"
+        "CREATE INDEX idx_customer_email ON app.customer (email);\n"
+    )
+    writer = _FakeGraphWriter()
+
+    results = _pipeline(writer).run(path)
+
+    # 1 table + 2 columns + 1 view + 1 index
+    assert results[0].db_objects == 5
+    document = writer.written[0]
+    assert all(table.embedding is not None for table in document.db_tables)
+    assert all(view.embedding is not None for view in document.db_views)
+
+
 def test_run_records_error_instead_of_raising_when_write_fails(tmp_path: Path) -> None:
     path = tmp_path / "notes.md"
     path.write_text("# Title\n\nSome text.\n")

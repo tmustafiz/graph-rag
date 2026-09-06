@@ -15,6 +15,14 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT policy_rule_id IF NOT EXISTS FOR (n:PolicyRule) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT concept_name IF NOT EXISTS FOR (n:Concept) REQUIRE n.name IS UNIQUE",
     "CREATE CONSTRAINT agent_memory_id IF NOT EXISTS FOR (n:AgentMemory) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT db_table_qualified_name IF NOT EXISTS "
+    "FOR (n:DbTable) REQUIRE n.qualified_name IS UNIQUE",
+    "CREATE CONSTRAINT db_column_qualified_name IF NOT EXISTS "
+    "FOR (n:DbColumn) REQUIRE n.qualified_name IS UNIQUE",
+    "CREATE CONSTRAINT db_view_qualified_name IF NOT EXISTS "
+    "FOR (n:DbView) REQUIRE n.qualified_name IS UNIQUE",
+    "CREATE CONSTRAINT db_index_qualified_name IF NOT EXISTS "
+    "FOR (n:DbIndex) REQUIRE n.qualified_name IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.
@@ -27,6 +35,8 @@ FULLTEXT_INDEXES: list[str] = [
     "FOR (n:PolicyRule) ON EACH [n.id, n.name, n.category, n.guideline]",
     "CREATE FULLTEXT INDEX agent_memory_content_fulltext IF NOT EXISTS "
     "FOR (n:AgentMemory) ON EACH [n.content]",
+    "CREATE FULLTEXT INDEX db_object_text_fulltext IF NOT EXISTS "
+    "FOR (n:DbTable|DbView) ON EACH [n.name, n.qualified_name, n.embed_text]",
 ]
 
 # Range indexes for cheap ordering scans (pruner's recency sweep, centrality ranking).
@@ -93,6 +103,40 @@ def agent_memory_vector_index_statement(
     )
 
 
+def _db_object_vector_index_statement(
+    label: str,
+    index_name: str,
+    dimensions: int,
+    similarity_function: str,
+) -> str:
+    return (
+        f"CREATE VECTOR INDEX {index_name} IF NOT EXISTS "
+        f"FOR (n:{label}) ON (n.embedding) "
+        "OPTIONS {indexConfig: {"
+        f"`vector.dimensions`: {dimensions}, "
+        f"`vector.similarity_function`: '{similarity_function}'"
+        "}}"
+    )
+
+
+def db_table_vector_index_statement(
+    dimensions: int = settings.embedding_dimensions,
+    similarity_function: str = settings.embedding_similarity_function,
+) -> str:
+    return _db_object_vector_index_statement(
+        "DbTable", "db_table_embedding", dimensions, similarity_function
+    )
+
+
+def db_view_vector_index_statement(
+    dimensions: int = settings.embedding_dimensions,
+    similarity_function: str = settings.embedding_similarity_function,
+) -> str:
+    return _db_object_vector_index_statement(
+        "DbView", "db_view_embedding", dimensions, similarity_function
+    )
+
+
 def apply_schema(driver: Driver) -> list[str]:
     """Create (or verify) all constraints and indexes. Idempotent."""
     statements = [
@@ -103,6 +147,8 @@ def apply_schema(driver: Driver) -> list[str]:
         code_entity_vector_index_statement(),
         policy_rule_vector_index_statement(),
         agent_memory_vector_index_statement(),
+        db_table_vector_index_statement(),
+        db_view_vector_index_statement(),
     ]
     with driver.session() as session:
         for statement in statements:

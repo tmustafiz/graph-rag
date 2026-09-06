@@ -7,6 +7,7 @@ from .parsers import (
     MarkdownParser,
     PdfParser,
     PythonParser,
+    SqlParser,
     YamlParser,
 )
 
@@ -25,6 +26,7 @@ class ParserRegistry:
             PythonParser(),
             JavaParser(),
             JavaScriptParser(),
+            SqlParser(),
             YamlParser(),
         ]
 

@@ -39,6 +39,28 @@ Then, from an MCP client:
 - `js/` also has a `.tsx` pair (`src/ui/order-badge.tsx`) — `OrderBadgeList`
   is retagged `kind="component"` and `RENDERS` `OrderBadge`
 
+## `sql-schema/`
+
+Two hand-written Postgres migration files — a `sales` schema with regions,
+customers, orders, and a reporting view. Ingest them to try the schema graph:
+
+```bash
+uv run grag-mcp ingest examples/sql-schema   # needs the [sql] extra
+```
+
+Then, from an MCP client:
+
+- `get_neighbors("sales.orders")` → `HAS_COLUMN` to its columns, `HAS_INDEX`
+  to `idx_orders_customer`, `REFERENCES` out to `sales.customer` /
+  `sales.region`
+- `get_neighbors("sales.orders.customer_id")` → `REFERENCES` →
+  `sales.customer.id`
+- `get_neighbors("sales.v_expedited_orders")` → `DEPENDS_ON` →
+  `sales.orders`, `sales.customer`
+- `002_reporting.sql` adds a foreign key to `sales.orders` with an
+  `ALTER TABLE` even though the table is created in `001_core.sql` — the
+  `REFERENCES` edge still lands.
+
 ## `agent-memory/`
 
 Copy-paste templates for wiring a coding agent in a **different** project up

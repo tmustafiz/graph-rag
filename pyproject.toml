@@ -61,6 +61,9 @@ js = [
     "tree-sitter>=0.23",
     "tree-sitter-language-pack>=0.9",
 ]
+sql = [
+    "sqlglot>=25",
+]
 
 [dependency-groups]
 dev = [

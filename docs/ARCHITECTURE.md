@@ -13,20 +13,22 @@ board](ROADMAP.md), not in this repo.
 
 ```mermaid
 flowchart TD
-    A["Files: PDF / Markdown / Python / Java / JS / TS / YAML"] --> B["Ingestion CLI / POST /ingest / ingest_path tool"]
+    A["Files: PDF / Markdown / Python / Java / JS / TS / SQL / YAML"] --> B["Ingestion CLI / POST /ingest / ingest_path tool"]
     B --> C{"ParserRegistry (by extension)"}
     C --> C1["PdfParser (PyMuPDF)"]
     C --> C2["MarkdownParser"]
     C --> C3["PythonParser (ast)"]
     C --> C4["JavaParser (tree-sitter)"]
     C --> C5["JavaScriptParser (tree-sitter, JS + TS)"]
-    C --> C6["YamlParser (Checkov-aware)"]
+    C --> C6["SqlParser (sqlglot, schema DDL)"]
+    C --> C7["YamlParser (Checkov-aware)"]
     C1 --> D["Chunker (structure-aware)"]
     C2 --> D
     C3 --> D
     C4 --> D
     C5 --> D
     C6 --> D
+    C7 --> D
     D --> E["Enricher (SentenceTransformer embeddings)"]
     E --> F["GraphWriter (idempotent upsert by content hash)"]
     F --> G[("Neo4j — APOC + GDS")]
@@ -66,6 +68,10 @@ flowchart TD
 | `PolicyRule` | `id` | `name`, `category`, `severity`, `guideline`, `embedding` |
 | `Concept` | `name` | e.g. a Terraform `resource_type` |
 | `AgentMemory` | `id` | `content`, `embedding`, `last_accessed_at`, access count, soft-delete flag |
+| `DbTable` | `qualified_name` (`schema.table`, dialect-qualified) | `name`, `schema_name`, `embed_text`, `embedding` |
+| `DbColumn` | `qualified_name` (`schema.table.column`) | `name`, `data_type`, `nullable`, `default`, `primary_key` |
+| `DbView` | `qualified_name` (`schema.view`) | `name`, `schema_name`, `materialized`, `embed_text`, `embedding` |
+| `DbIndex` | `qualified_name` (`schema.table.index`) | `name`, `columns`, `unique` |
 
 **Relationships**
 
@@ -75,12 +81,16 @@ flowchart TD
 - `(CodeEntity)-[:CALLS]->(CodeEntity)`, `(CodeEntity)-[:IMPORTS]->(CodeEntity)`
 - `(CodeEntity)-[:RENDERS]->(CodeEntity)` (React `component` → child component, from the JSX it mounts)
 - `(Source)-[:DEFINES]->(PolicyRule)`, `(PolicyRule)-[:APPLIES_TO]->(Concept)`
+- `(Source)-[:DEFINES]->(DbTable|DbColumn|DbView|DbIndex)`
+- `(DbTable)-[:HAS_COLUMN]->(DbColumn)`, `(DbTable)-[:HAS_INDEX]->(DbIndex)`
+- `(DbColumn)-[:REFERENCES]->(DbColumn)`, `(DbTable)-[:REFERENCES]->(DbTable)` (foreign keys)
+- `(DbView)-[:DEPENDS_ON]->(DbTable|DbView)` (tables/views in the view's `SELECT`)
 
 **Indexes** (`grag-mcp apply-schema`)
 
 - Uniqueness constraints on every node key above.
-- Vector indexes (cosine, 384-d) on `Chunk`, `CodeEntity`, `PolicyRule`, `AgentMemory` `.embedding`.
-- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`.
+- Vector indexes (cosine, 384-d) on `Chunk`, `CodeEntity`, `PolicyRule`, `AgentMemory`, `DbTable`, `DbView` `.embedding`.
+- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text).
 - Range indexes on `AgentMemory.last_accessed_at` and `CodeEntity.pagerank`.
 
 ## Ingestion
@@ -163,6 +173,26 @@ becomes a `(component)-[:RENDERS]->(component)` edge, and the hook calls
 are folded into `embed_text` / `signature` so `search_code` can match them.
 Unresolved and lowercase (`div`) tags are skipped, like `calls`. Prop *types*
 and lifecycle call graphs are out of scope.
+
+`SqlParser` (`grag-mcp[sql]`, backed by `sqlglot`) is a **schema** extractor
+for `.sql` DDL — it does not emit `CodeEntity`. `CREATE TABLE` / column /
+`CREATE VIEW` (incl. materialized) / `CREATE INDEX` become `:DbTable` /
+`:DbColumn` / `:DbView` / `:DbIndex` nodes keyed by dialect-qualified
+`qualified_name` (`schema.table`, `schema.table.column`,
+`schema.table.index`). Foreign keys (inline, table-level, and `ALTER TABLE …
+ADD CONSTRAINT`) become `REFERENCES` edges at both column and table level; a
+view's `SELECT` yields `DEPENDS_ON` edges to the tables/views it reads (CTE
+names excluded); each table owns its columns via `HAS_COLUMN` and its indexes
+via `HAS_INDEX`. An `ALTER` whose target table lives in another migration file
+is carried as a standalone reference so the edge still lands once that table is
+ingested. Dialect is `settings.sql_dialect` (env `GRAG_SQL_DIALECT`;
+`postgres` / `mysql` / `tsql` / `oracle` / `snowflake` / `bigquery`, default
+generic), overridable per file with a `-- grag:dialect=<name>` marker comment;
+an unknown dialect or an unparseable file logs a warning and yields a `Source`
+with no schema nodes. Tables and views are embedded (a rendered `CREATE TABLE
+…` / view summary); wiring them into `search_code` (or a dedicated
+`search_schema`) is a follow-up — the vector/full-text indexes are already
+created.
 
 ## Retrieval
 

@@ -98,7 +98,8 @@ def ingest(
                 continue
             typer.secho(
                 f"{verb} {result.path}: {result.sections} sections, {result.chunks} chunks, "
-                f"{result.code_entities} code entities, {result.policy_rules} policy rules.",
+                f"{result.code_entities} code entities, {result.policy_rules} policy rules, "
+                f"{result.db_objects} db objects.",
                 fg=typer.colors.GREEN,
             )
 

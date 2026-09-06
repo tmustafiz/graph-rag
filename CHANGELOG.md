@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- SQL schema parser (`SqlParser`, opt-in `grag-mcp[sql]` extra, backed by
+  `sqlglot`). `.sql` DDL becomes a database-schema graph — not `CodeEntity` —
+  of `:DbTable` / `:DbColumn` (type, nullability, default, PK flag) / `:DbView`
+  (incl. materialized) / `:DbIndex` (covered columns) nodes keyed by
+  dialect-qualified `qualified_name`. Foreign keys (inline, table-level, and
+  `ALTER TABLE … ADD CONSTRAINT`, including when the `ALTER` is in a different
+  migration file) yield `REFERENCES` edges at column and table level; a view's
+  `SELECT` yields `DEPENDS_ON` edges (CTE names excluded); `HAS_COLUMN` /
+  `HAS_INDEX` link a table to its parts. Dialect is `settings.sql_dialect`
+  (env `GRAG_SQL_DIALECT`), overridable per file with a
+  `-- grag:dialect=<name>` marker; an unknown dialect or unparseable file logs
+  a warning and yields an empty `Source`. Tables and views are embedded and get
+  vector + full-text indexes; wiring them into `search_code` / a
+  `search_schema` tool is a follow-up. Sample migrations under
+  `examples/sql-schema/`.
+  ([#64](https://github.com/tmustafiz/graph-rag/issues/64))
 - React-aware enrichment (`ReactEnricher`, run automatically by
   `JavaScriptParser` on `.jsx` / `.tsx` and `react`-importing `.js` / `.ts`).
   A `function` / `class` `CodeEntity` that returns JSX or extends
