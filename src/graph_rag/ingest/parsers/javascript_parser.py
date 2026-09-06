@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..models import CodeEntity, ParsedDocument, Source
+from .react_enricher import ReactEnricher
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -161,6 +162,16 @@ class JavaScriptParser:
                         module_qualified_name=module_qualified_name,
                     )
                 )
+
+        if ReactEnricher.applies(suffix, imports):
+            ReactEnricher.enrich(
+                root,
+                content,
+                entities,
+                module_qualified_name=module_qualified_name,
+                local_top_level=local_top_level,
+                import_bindings=import_bindings,
+            )
 
         return ParsedDocument(source=source, code_entities=entities)
 

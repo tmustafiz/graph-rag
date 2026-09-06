@@ -29,4 +29,7 @@ class CodeEntity(BaseModel):
     parent_qualified_name: str | None = None
     calls: list[str] = Field(default_factory=list)
     imports: list[str] = Field(default_factory=list)
+    # Other `CodeEntity` qualified names this one renders — set only by the
+    # React enrichment pass for `component` entities; feeds `RENDERS` edges.
+    renders: list[str] = Field(default_factory=list)
     embedding: list[float] | None = None

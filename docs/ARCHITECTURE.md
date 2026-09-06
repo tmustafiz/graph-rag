@@ -73,6 +73,7 @@ flowchart TD
 - `(Section)-[:HAS_CHUNK]->(Chunk)`, `(Chunk)-[:NEXT]->(Chunk)` (reading order)
 - `(Source)-[:DEFINES]->(CodeEntity)`, `(CodeEntity)-[:CONTAINS]->(CodeEntity)` (class → method)
 - `(CodeEntity)-[:CALLS]->(CodeEntity)`, `(CodeEntity)-[:IMPORTS]->(CodeEntity)`
+- `(CodeEntity)-[:RENDERS]->(CodeEntity)` (React `component` → child component, from the JSX it mounts)
 - `(Source)-[:DEFINES]->(PolicyRule)`, `(PolicyRule)-[:APPLIES_TO]->(Concept)`
 
 **Indexes** (`grag-mcp apply-schema`)
@@ -152,6 +153,16 @@ the project tree to the same dotted form (named imports as `module.symbol`,
 like Python's `from x import y`); bare specifiers (`react`, `lodash`) are kept
 verbatim. `imports` covers ESM (`import`, `export … from`, `export *`, dynamic
 `import()`) and CommonJS (`require`).
+
+`ReactEnricher` is a second pass `JavaScriptParser` runs on `.jsx` / `.tsx`
+files (and `.js` / `.ts` that import `react`): a `function` / `class` entity
+that returns JSX or extends `React.Component` is retagged `kind="component"`,
+each PascalCase JSX element it mounts that resolves (local def or import)
+becomes a `(component)-[:RENDERS]->(component)` edge, and the hook calls
+(`useX`) and prop names (first-arg destructuring or `props.` accesses) it uses
+are folded into `embed_text` / `signature` so `search_code` can match them.
+Unresolved and lowercase (`div`) tags are skipped, like `calls`. Prop *types*
+and lifecycle call graphs are out of scope.
 
 ## Retrieval
 

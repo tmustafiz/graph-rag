@@ -36,6 +36,8 @@ Then, from an MCP client:
   in both trees
 - `get_neighbors("src.orders.order-service.OrderService.submit")` → its
   `CALLS` out to `publish` / `accepts`
+- `js/` also has a `.tsx` pair (`src/ui/order-badge.tsx`) — `OrderBadgeList`
+  is retagged `kind="component"` and `RENDERS` `OrderBadge`
 
 ## `agent-memory/`
 
