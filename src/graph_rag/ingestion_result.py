@@ -17,4 +17,6 @@ class IngestionResult(BaseModel):
     chunks: int = 0
     code_entities: int = 0
     policy_rules: int = 0
+    # `DbTable` + `DbColumn` + `DbView` + `DbIndex` nodes (SQL DDL sources).
+    db_objects: int = 0
     error: str | None = None

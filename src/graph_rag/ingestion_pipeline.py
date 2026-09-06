@@ -79,6 +79,12 @@ class IngestionPipeline:
                 chunks=len(document.chunks),
                 code_entities=len(document.code_entities),
                 policy_rules=len(document.policy_rules),
+                db_objects=(
+                    len(document.db_tables)
+                    + len(document.db_columns)
+                    + len(document.db_views)
+                    + len(document.db_indexes)
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("failed to ingest %s", path)

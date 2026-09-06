@@ -3,7 +3,8 @@ from .models import ParsedDocument
 
 
 class Enricher:
-    """Fills in the `embedding` field for every chunk/code entity/policy rule in a document."""
+    """Fills in the `embedding` field for every chunk / code entity / policy rule /
+    DB table / DB view in a document."""
 
     def __init__(self, embedder: Embedder) -> None:
         self._embedder = embedder
@@ -27,5 +28,17 @@ class Enricher:
             updates["policy_rules"] = [
                 rule.model_copy(update={"embedding": vector})
                 for rule, vector in zip(document.policy_rules, vectors, strict=True)
+            ]
+        if document.db_tables:
+            vectors = self._embedder.embed([table.embed_text for table in document.db_tables])
+            updates["db_tables"] = [
+                table.model_copy(update={"embedding": vector})
+                for table, vector in zip(document.db_tables, vectors, strict=True)
+            ]
+        if document.db_views:
+            vectors = self._embedder.embed([view.embed_text for view in document.db_views])
+            updates["db_views"] = [
+                view.model_copy(update={"embedding": vector})
+                for view, vector in zip(document.db_views, vectors, strict=True)
             ]
         return document.model_copy(update=updates) if updates else document

@@ -3,6 +3,8 @@ from graph_rag.graph.schema import (
     FULLTEXT_INDEXES,
     RANGE_INDEXES,
     code_entity_vector_index_statement,
+    db_table_vector_index_statement,
+    db_view_vector_index_statement,
     policy_rule_vector_index_statement,
     vector_index_statement,
 )
@@ -23,9 +25,34 @@ def test_code_entity_vector_index_statement_embeds_dimensions_and_similarity() -
 
 
 def test_constraints_cover_every_node_type() -> None:
-    node_labels = {"Source", "Section", "Chunk", "CodeEntity", "PolicyRule", "Concept"}
+    node_labels = {
+        "Source",
+        "Section",
+        "Chunk",
+        "CodeEntity",
+        "PolicyRule",
+        "Concept",
+        "DbTable",
+        "DbColumn",
+        "DbView",
+        "DbIndex",
+    }
     covered = {label for label in node_labels if any(f"FOR (n:{label})" in c for c in CONSTRAINTS)}
     assert covered == node_labels
+
+
+def test_db_object_vector_index_statements_embed_dimensions_and_similarity() -> None:
+    table_statement = db_table_vector_index_statement(dimensions=384, similarity_function="cosine")
+    view_statement = db_view_vector_index_statement(dimensions=384, similarity_function="cosine")
+    assert "db_table_embedding" in table_statement
+    assert "FOR (n:DbTable)" in table_statement
+    assert "db_view_embedding" in view_statement
+    assert "FOR (n:DbView)" in view_statement
+    assert "`vector.dimensions`: 384" in table_statement
+
+
+def test_fulltext_index_defined_for_db_objects() -> None:
+    assert any("DbTable|DbView) ON EACH" in ix and "n.embed_text" in ix for ix in FULLTEXT_INDEXES)
 
 
 def test_fulltext_indexes_defined_for_chunk_and_section_text() -> None:

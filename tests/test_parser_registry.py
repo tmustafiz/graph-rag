@@ -7,6 +7,7 @@ from graph_rag.ingest.parsers import (
     MarkdownParser,
     PdfParser,
     PythonParser,
+    SqlParser,
     YamlParser,
 )
 
@@ -20,6 +21,8 @@ def test_for_path_routes_by_extension() -> None:
     assert isinstance(registry.for_path(Path("app.ts")), JavaScriptParser)
     assert isinstance(registry.for_path(Path("app.tsx")), JavaScriptParser)
     assert isinstance(registry.for_path(Path("app.mjs")), JavaScriptParser)
+    assert isinstance(registry.for_path(Path("schema.sql")), SqlParser)
+    assert isinstance(registry.for_path(Path("V1__init.SQL")), SqlParser)
     assert isinstance(registry.for_path(Path("policy.yaml")), YamlParser)
     assert isinstance(registry.for_path(Path("policy.yml")), YamlParser)
 

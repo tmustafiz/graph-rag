@@ -4,6 +4,7 @@ from .markdown_parser import MarkdownParser
 from .pdf_parser import PdfParser
 from .python_parser import PythonParser
 from .react_enricher import ReactEnricher
+from .sql_parser import SqlParser
 from .yaml_parser import YamlParser
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "PdfParser",
     "PythonParser",
     "ReactEnricher",
+    "SqlParser",
     "YamlParser",
 ]

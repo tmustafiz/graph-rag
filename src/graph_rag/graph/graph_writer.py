@@ -81,6 +81,74 @@ MERGE (child:CodeEntity {qualified_name: pair.to})
 MERGE (parent)-[:RENDERS]->(child)
 """
 
+_MERGE_DB_TABLES = """
+UNWIND $rows AS row
+MERGE (t:DbTable {qualified_name: row.qualified_name})
+SET t.name = row.name, t.schema_name = row.schema_name, t.file_path = row.file_path,
+    t.embed_text = row.embed_text, t.embedding = row.embedding
+WITH t, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(t)
+"""
+
+_MERGE_DB_COLUMNS = """
+UNWIND $rows AS row
+MERGE (col:DbColumn {qualified_name: row.qualified_name})
+SET col.name = row.name, col.table_qualified_name = row.table_qualified_name,
+    col.data_type = row.data_type, col.nullable = row.nullable,
+    col.default = row.default, col.primary_key = row.primary_key
+WITH col, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(col)
+WITH col, row
+MATCH (t:DbTable {qualified_name: row.table_qualified_name})
+MERGE (t)-[:HAS_COLUMN]->(col)
+"""
+
+_MERGE_DB_VIEWS = """
+UNWIND $rows AS row
+MERGE (v:DbView {qualified_name: row.qualified_name})
+SET v.name = row.name, v.schema_name = row.schema_name, v.materialized = row.materialized,
+    v.file_path = row.file_path, v.embed_text = row.embed_text, v.embedding = row.embedding
+WITH v, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(v)
+"""
+
+_MERGE_DB_INDEXES = """
+UNWIND $rows AS row
+MERGE (ix:DbIndex {qualified_name: row.qualified_name})
+SET ix.name = row.name, ix.table_qualified_name = row.table_qualified_name,
+    ix.columns = row.columns, ix.unique = row.unique
+WITH ix, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(ix)
+WITH ix, row
+MATCH (t:DbTable {qualified_name: row.table_qualified_name})
+MERGE (t)-[:HAS_INDEX]->(ix)
+"""
+
+_MERGE_COLUMN_REFERENCES = """
+UNWIND $pairs AS pair
+MATCH (col:DbColumn {qualified_name: pair.from})
+MERGE (target:DbColumn {qualified_name: pair.to})
+MERGE (col)-[:REFERENCES]->(target)
+"""
+
+_MERGE_TABLE_REFERENCES = """
+UNWIND $pairs AS pair
+MATCH (t:DbTable {qualified_name: pair.from})
+MERGE (target:DbTable {qualified_name: pair.to})
+MERGE (t)-[:REFERENCES]->(target)
+"""
+
+_MERGE_VIEW_DEPENDS_ON = """
+UNWIND $pairs AS pair
+MATCH (v:DbView {qualified_name: pair.from})
+MERGE (target:DbTable {qualified_name: pair.to})
+MERGE (v)-[:DEPENDS_ON]->(target)
+"""
+
 _MERGE_POLICY_RULES = """
 UNWIND $rules AS row
 MERGE (p:PolicyRule {id: row.id})
@@ -134,6 +202,32 @@ WHERE NOT p.id IN $keep_ids
 DETACH DELETE p
 """
 
+# One reconcile per `:Db*` label — a re-parsed migration file that no longer
+# produces a table / column / view / index leaves no orphan behind.
+_RECONCILE_DB_TABLES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(n:DbTable)
+WHERE NOT n.qualified_name IN $keep_ids
+DETACH DELETE n
+"""
+
+_RECONCILE_DB_COLUMNS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(n:DbColumn)
+WHERE NOT n.qualified_name IN $keep_ids
+DETACH DELETE n
+"""
+
+_RECONCILE_DB_VIEWS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(n:DbView)
+WHERE NOT n.qualified_name IN $keep_ids
+DETACH DELETE n
+"""
+
+_RECONCILE_DB_INDEXES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(n:DbIndex)
+WHERE NOT n.qualified_name IN $keep_ids
+DETACH DELETE n
+"""
+
 
 class GraphWriter:
     """Idempotently upserts a `ParsedDocument` into Neo4j."""
@@ -158,6 +252,20 @@ class GraphWriter:
                 session.execute_write(self._write_imports, batch)
             for batch in self._batched(self._render_pairs(document)):
                 session.execute_write(self._write_renders, batch)
+            for batch in self._batched([t.model_dump(mode="json") for t in document.db_tables]):
+                session.execute_write(self._write_db_tables, document.source.path, batch)
+            for batch in self._batched([c.model_dump(mode="json") for c in document.db_columns]):
+                session.execute_write(self._write_db_columns, document.source.path, batch)
+            for batch in self._batched([v.model_dump(mode="json") for v in document.db_views]):
+                session.execute_write(self._write_db_views, document.source.path, batch)
+            for batch in self._batched([i.model_dump(mode="json") for i in document.db_indexes]):
+                session.execute_write(self._write_db_indexes, document.source.path, batch)
+            for batch in self._batched(self._column_reference_pairs(document)):
+                session.execute_write(self._write_column_references, batch)
+            for batch in self._batched(self._table_reference_pairs(document)):
+                session.execute_write(self._write_table_references, batch)
+            for batch in self._batched(self._view_depends_on_pairs(document)):
+                session.execute_write(self._write_view_depends_on, batch)
             for batch in self._batched([r.model_dump(mode="json") for r in document.policy_rules]):
                 session.execute_write(self._write_policy_rules, document.source.path, batch)
             for batch in self._batched(self._applies_to_pairs(document)):
@@ -181,6 +289,26 @@ class GraphWriter:
                 self._reconcile_policy_rules,
                 document.source.path,
                 [r.id for r in document.policy_rules],
+            )
+            session.execute_write(
+                self._reconcile_db_tables,
+                document.source.path,
+                [t.qualified_name for t in document.db_tables],
+            )
+            session.execute_write(
+                self._reconcile_db_columns,
+                document.source.path,
+                [c.qualified_name for c in document.db_columns],
+            )
+            session.execute_write(
+                self._reconcile_db_views,
+                document.source.path,
+                [v.qualified_name for v in document.db_views],
+            )
+            session.execute_write(
+                self._reconcile_db_indexes,
+                document.source.path,
+                [i.qualified_name for i in document.db_indexes],
             )
 
     def get_source_content_hash(self, path: str) -> str | None:
@@ -233,6 +361,34 @@ class GraphWriter:
         tx.run(cast(LiteralString, _MERGE_RENDERS), pairs=pairs)
 
     @staticmethod
+    def _write_db_tables(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_DB_TABLES), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_db_columns(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_DB_COLUMNS), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_db_views(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_DB_VIEWS), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_db_indexes(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_DB_INDEXES), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_column_references(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_COLUMN_REFERENCES), pairs=pairs)
+
+    @staticmethod
+    def _write_table_references(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_TABLE_REFERENCES), pairs=pairs)
+
+    @staticmethod
+    def _write_view_depends_on(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_VIEW_DEPENDS_ON), pairs=pairs)
+
+    @staticmethod
     def _write_policy_rules(tx: ManagedTransaction, source_path: str, rules: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_POLICY_RULES), rules=rules, source_path=source_path)
 
@@ -269,6 +425,32 @@ class GraphWriter:
         )
 
     @staticmethod
+    def _reconcile_db_tables(tx: ManagedTransaction, source_path: str, keep_ids: list[str]) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_DB_TABLES), source_path=source_path, keep_ids=keep_ids
+        )
+
+    @staticmethod
+    def _reconcile_db_columns(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_DB_COLUMNS), source_path=source_path, keep_ids=keep_ids
+        )
+
+    @staticmethod
+    def _reconcile_db_views(tx: ManagedTransaction, source_path: str, keep_ids: list[str]) -> None:
+        tx.run(cast(LiteralString, _RECONCILE_DB_VIEWS), source_path=source_path, keep_ids=keep_ids)
+
+    @staticmethod
+    def _reconcile_db_indexes(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_DB_INDEXES), source_path=source_path, keep_ids=keep_ids
+        )
+
+    @staticmethod
     def _chunk_pairs(document: ParsedDocument) -> list[dict]:
         # section_id embeds a zero-padded index, so this sort is full document reading order.
         ordered = sorted(document.chunks, key=lambda c: (c.section_id, c.order))
@@ -296,6 +478,42 @@ class GraphWriter:
             {"from": entity.qualified_name, "to": rendered}
             for entity in document.code_entities
             for rendered in entity.renders
+        ]
+
+    @staticmethod
+    def _column_reference_pairs(document: ParsedDocument) -> list[dict]:
+        pairs = [
+            {"from": column.qualified_name, "to": target}
+            for column in document.db_columns
+            for target in column.references
+        ]
+        pairs.extend(
+            {"from": reference.from_qualified_name, "to": reference.to_qualified_name}
+            for reference in document.db_references
+            if reference.level == "column"
+        )
+        return pairs
+
+    @staticmethod
+    def _table_reference_pairs(document: ParsedDocument) -> list[dict]:
+        pairs = [
+            {"from": table.qualified_name, "to": target}
+            for table in document.db_tables
+            for target in table.references
+        ]
+        pairs.extend(
+            {"from": reference.from_qualified_name, "to": reference.to_qualified_name}
+            for reference in document.db_references
+            if reference.level == "table"
+        )
+        return pairs
+
+    @staticmethod
+    def _view_depends_on_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": view.qualified_name, "to": target}
+            for view in document.db_views
+            for target in view.depends_on
         ]
 
     @staticmethod

@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +16,12 @@ class Settings(BaseSettings):
     # sentence-transformers/all-MiniLM-L6-v2 default — 384 dimensions.
     embedding_dimensions: int = 384
     embedding_similarity_function: str = "cosine"
+
+    # Default `sqlglot` dialect for `SqlParser` (`postgres` / `mysql` / `tsql`
+    # / `oracle` / `snowflake` / `bigquery`). `None` — or "ansi" / "generic" —
+    # selects sqlglot's dialect-agnostic parser. A per-file
+    # `-- grag:dialect=<name>` marker comment overrides this.
+    sql_dialect: str | None = Field(default=None, validation_alias="GRAG_SQL_DIALECT")
 
 
 settings = Settings()
