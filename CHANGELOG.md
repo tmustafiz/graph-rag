@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `examples/agent-memory/` instructions snippets (`AGENTS.md.example`,
+  `copilot/copilot-instructions.md.example`): firmer, more directive wording
+  so an agent actually writes memory during a task instead of treating it as
+  optional — enumerated `remember` triggers per `kind` and an explicit
+  "before you end your turn" checkpoint that folds saving into task
+  completion. No behavior change; prompt text only.
+
 ## [0.4.0] - 2026-09-05
 
 ### Added
