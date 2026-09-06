@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- React-aware enrichment (`ReactEnricher`, run automatically by
+  `JavaScriptParser` on `.jsx` / `.tsx` and `react`-importing `.js` / `.ts`).
+  A `function` / `class` `CodeEntity` that returns JSX or extends
+  `React.Component` is retagged `kind="component"`; each PascalCase JSX element
+  it mounts that resolves to a local definition or an import becomes a new
+  `(component)-[:RENDERS]->(component)` edge (lowercase host tags and
+  unresolved names skipped, like `calls`); the hook calls (`useState`,
+  `useEffect`, custom `useX`) and prop names (first-argument destructuring or
+  `props.` member accesses) it uses are folded into `embed_text` / `signature`
+  so `search_code("component that uses useAuth")` can match. `CodeEntity` gains
+  a `renders` list; `GraphWriter` writes the `RENDERS` edge. Prop types and
+  lifecycle call graphs are out of scope.
+  ([#63](https://github.com/tmustafiz/graph-rag/issues/63))
 - JavaScript / TypeScript source parser (`JavaScriptParser`, opt-in
   `grag-mcp[js]` extra, same `tree-sitter` backend). One parser for
   `.js` / `.mjs` / `.cjs` / `.jsx` / `.ts` / `.tsx` — TS and JSX are grammar

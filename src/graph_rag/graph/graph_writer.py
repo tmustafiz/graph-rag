@@ -74,6 +74,13 @@ MERGE (imported:CodeEntity {qualified_name: pair.to})
 MERGE (importer)-[:IMPORTS]->(imported)
 """
 
+_MERGE_RENDERS = """
+UNWIND $pairs AS pair
+MATCH (parent:CodeEntity {qualified_name: pair.from})
+MERGE (child:CodeEntity {qualified_name: pair.to})
+MERGE (parent)-[:RENDERS]->(child)
+"""
+
 _MERGE_POLICY_RULES = """
 UNWIND $rules AS row
 MERGE (p:PolicyRule {id: row.id})
@@ -149,6 +156,8 @@ class GraphWriter:
                 session.execute_write(self._write_calls, batch)
             for batch in self._batched(self._import_pairs(document)):
                 session.execute_write(self._write_imports, batch)
+            for batch in self._batched(self._render_pairs(document)):
+                session.execute_write(self._write_renders, batch)
             for batch in self._batched([r.model_dump(mode="json") for r in document.policy_rules]):
                 session.execute_write(self._write_policy_rules, document.source.path, batch)
             for batch in self._batched(self._applies_to_pairs(document)):
@@ -220,6 +229,10 @@ class GraphWriter:
         tx.run(cast(LiteralString, _MERGE_IMPORTS), pairs=pairs)
 
     @staticmethod
+    def _write_renders(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_RENDERS), pairs=pairs)
+
+    @staticmethod
     def _write_policy_rules(tx: ManagedTransaction, source_path: str, rules: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_POLICY_RULES), rules=rules, source_path=source_path)
 
@@ -275,6 +288,14 @@ class GraphWriter:
             {"from": entity.qualified_name, "to": imported}
             for entity in document.code_entities
             for imported in entity.imports
+        ]
+
+    @staticmethod
+    def _render_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": entity.qualified_name, "to": rendered}
+            for entity in document.code_entities
+            for rendered in entity.renders
         ]
 
     @staticmethod
