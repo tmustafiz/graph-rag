@@ -13,18 +13,20 @@ board](ROADMAP.md), not in this repo.
 
 ```mermaid
 flowchart TD
-    A["Files: PDF / Markdown / Python / Java / YAML"] --> B["Ingestion CLI / POST /ingest / ingest_path tool"]
+    A["Files: PDF / Markdown / Python / Java / JS / TS / YAML"] --> B["Ingestion CLI / POST /ingest / ingest_path tool"]
     B --> C{"ParserRegistry (by extension)"}
     C --> C1["PdfParser (PyMuPDF)"]
     C --> C2["MarkdownParser"]
     C --> C3["PythonParser (ast)"]
     C --> C4["JavaParser (tree-sitter)"]
-    C --> C5["YamlParser (Checkov-aware)"]
+    C --> C5["JavaScriptParser (tree-sitter, JS + TS)"]
+    C --> C6["YamlParser (Checkov-aware)"]
     C1 --> D["Chunker (structure-aware)"]
     C2 --> D
     C3 --> D
     C4 --> D
     C5 --> D
+    C6 --> D
     D --> E["Enricher (SentenceTransformer embeddings)"]
     E --> F["GraphWriter (idempotent upsert by content hash)"]
     F --> G[("Neo4j — APOC + GDS")]
@@ -134,6 +136,22 @@ verbatim from source, since there is no type resolution); fields are folded
 into the owning type's `embed_text` rather than emitted as entities; and there
 is no file-level `module` entity (Java has no unit below the package), so a
 file's `imports` attach to its first top-level type.
+
+`JavaScriptParser` (`grag-mcp[js]`, same backend) handles JavaScript,
+TypeScript, and their JSX variants in one parser
+(`.js` `.mjs` `.cjs` `.jsx` `.ts` `.tsx`) — TS and JSX are grammar variants of
+the same parse, not separate parsers. Unlike Java it *does* emit a file-level
+`module` entity (`qualified_name` is the project-relative path — nearest
+`package.json` / `tsconfig.json` ancestor — dotted and extension-stripped, with
+`index` collapsed to its directory), and the module carries the `imports`.
+`kind` is `module` | `function` | `class` | `method` | `constructor` |
+`interface` | `type` | `enum`; exported arrow/function `const`s become
+`function` entities; TS `interface` / `type` / `enum` are signature-only (no
+members-as-entities). Relative import specifiers (`./`, `../`) resolve against
+the project tree to the same dotted form (named imports as `module.symbol`,
+like Python's `from x import y`); bare specifiers (`react`, `lodash`) are kept
+verbatim. `imports` covers ESM (`import`, `export … from`, `export *`, dynamic
+`import()`) and CommonJS (`require`).
 
 ## Retrieval
 

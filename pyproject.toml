@@ -57,6 +57,10 @@ java = [
     "tree-sitter>=0.23",
     "tree-sitter-language-pack>=0.9",
 ]
+js = [
+    "tree-sitter>=0.23",
+    "tree-sitter-language-pack>=0.9",
+]
 
 [dependency-groups]
 dev = [

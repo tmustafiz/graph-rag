@@ -50,10 +50,10 @@ uv tool install 'grag-mcp[pdf]'    # or: pipx install 'grag-mcp[pdf]'
 
 You still need a Neo4j instance (APOC + GDS plugins) reachable at `NEO4J_URI` /
 `NEO4J_USER` / `NEO4J_PASSWORD` — see [docker-compose.yml](docker-compose.yml)
-for a ready-made one. The `[pdf]` extra pulls in PyMuPDF (AGPL-licensed) and
-the `[java]` extra pulls in tree-sitter for `.java` files; leave either off if
-you don't ingest that file type (`uv tool install 'grag-mcp[pdf,java]'` for
-both).
+for a ready-made one. The `[pdf]` extra pulls in PyMuPDF (AGPL-licensed); the
+`[java]` extra pulls in tree-sitter for `.java` files and `[js]` for
+`.js` / `.mjs` / `.cjs` / `.jsx` / `.ts` / `.tsx`. Leave off any you don't
+ingest (`uv tool install 'grag-mcp[pdf,java,js]'` for all).
 
 On Linux, pass `--torch-backend=cpu` (`uvx --torch-backend=cpu …`) unless you
 want the multi-gigabyte CUDA build of PyTorch — the embedding model runs on CPU.
@@ -140,7 +140,7 @@ reachable at `NEO4J_URI`.
 | Tool | What it does |
 | --- | --- |
 | `search` | Hybrid (vector + full-text) search over ingested prose / Markdown / generic-YAML chunks. Does **not** cover source code or Checkov policy text. |
-| `search_code` | Same hybrid search, over ingested source-code entities — functions / classes / modules / methods (Python built-in; Java via the `[java]` extra). |
+| `search_code` | Same hybrid search, over ingested source-code entities — functions / classes / modules / methods (Python built-in; Java via the `[java]` extra, JavaScript / TypeScript via `[js]`). |
 | `search_policies` | Hybrid search over Checkov policy content — the fuzzy complement to `find_policies_for`. |
 | `find_policies_for` | **Exact-match** traversal: policies whose `APPLIES_TO` edge names a Terraform resource type precisely (e.g. `aws_db_instance`). No fuzzy fallback. |
 | `get_section` / `get_outline` | Full section text (paginated via `max_chars`) or a source's table-of-contents tree. |
@@ -154,7 +154,7 @@ reachable at `NEO4J_URI`.
 ## Ingesting your own content
 
 `grag-mcp ingest <path>` takes a file or a directory (recursed), parses
-whichever of PDF / Markdown / Python / Java / YAML it finds, and upserts into the
+whichever of PDF / Markdown / Python / Java / JS / TS / YAML it finds, and upserts into the
 graph. Re-running is cheap: a file whose content hash is unchanged since the
 last ingest is skipped entirely, and re-ingesting a changed file removes any
 Section / Chunk / CodeEntity / PolicyRule it no longer produces.
@@ -344,18 +344,20 @@ covered in [`examples/agent-memory/`](examples/agent-memory/README.md).
 
 ```mermaid
 flowchart TD
-    A["Files: PDF / Markdown / Python / Java / YAML"] --> B["Ingestion CLI / API"]
+    A["Files: PDF / Markdown / Python / Java / JS / TS / YAML"] --> B["Ingestion CLI / API"]
     B --> C{"Parser registry (by extension)"}
     C --> C1["PdfParser"]
     C --> C2["MarkdownParser"]
     C --> C3["PythonParser (ast)"]
     C --> C4["JavaParser (tree-sitter)"]
-    C --> C5["YamlParser (Checkov-aware)"]
+    C --> C5["JavaScriptParser (tree-sitter, JS + TS)"]
+    C --> C6["YamlParser (Checkov-aware)"]
     C1 --> D["Structure-aware Chunker"]
     C2 --> D
     C3 --> D
     C4 --> D
     C5 --> D
+    C6 --> D
     D --> E["Enricher (embeddings + optional LLM entity/relation extraction)"]
     E --> F["Graph writer (idempotent upsert by content hash)"]
     F --> G[("Neo4j (Docker)")]

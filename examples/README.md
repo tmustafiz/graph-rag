@@ -20,6 +20,23 @@ Then, from an MCP client:
 - `find_policies_for("aws_db_instance")` → the RDS encryption + public-access rules
 - `search_policies("is my S3 bucket versioned")` → the S3 versioning rule
 
+## `java/` and `js/`
+
+Tiny source trees — a Java package and a TypeScript project — for exercising
+the code parsers and `search_code`:
+
+```bash
+uv run grag-mcp ingest examples/java   # needs the [java] extra
+uv run grag-mcp ingest examples/js     # needs the [js] extra
+```
+
+Then, from an MCP client:
+
+- `search_code("where are expedited orders routed")` → `OrderService.submit`
+  in both trees
+- `get_neighbors("src.orders.order-service.OrderService.submit")` → its
+  `CALLS` out to `publish` / `accepts`
+
 ## `agent-memory/`
 
 Copy-paste templates for wiring a coding agent in a **different** project up

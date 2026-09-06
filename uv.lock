@@ -272,6 +272,10 @@ java = [
     { name = "tree-sitter" },
     { name = "tree-sitter-language-pack" },
 ]
+js = [
+    { name = "tree-sitter" },
+    { name = "tree-sitter-language-pack" },
+]
 pdf = [
     { name = "pymupdf" },
 ]
@@ -296,12 +300,14 @@ requires-dist = [
     { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.2" },
     { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.2", index = "https://download.pytorch.org/whl/cpu" },
     { name = "tree-sitter", marker = "extra == 'java'", specifier = ">=0.23" },
+    { name = "tree-sitter", marker = "extra == 'js'", specifier = ">=0.23" },
     { name = "tree-sitter-language-pack", marker = "extra == 'java'", specifier = ">=0.9" },
+    { name = "tree-sitter-language-pack", marker = "extra == 'js'", specifier = ">=0.9" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "watchdog", specifier = ">=4.0" },
 ]
-provides-extras = ["pdf", "java"]
+provides-extras = ["pdf", "java", "js"]
 
 [package.metadata.requires-dev]
 dev = [
