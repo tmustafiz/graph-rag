@@ -1,0 +1,486 @@
+import hashlib
+import re
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from ..models import CodeEntity, ParsedDocument, Source
+
+if TYPE_CHECKING:
+    from tree_sitter import Node
+
+_WHITESPACE_RE = re.compile(r"\s+")
+
+# Java type-declaration node types → the `CodeEntity.kind` we emit for each.
+_TYPE_KINDS: dict[str, str] = {
+    "class_declaration": "class",
+    "interface_declaration": "interface",
+    "enum_declaration": "enum",
+    "record_declaration": "record",
+    "annotation_type_declaration": "annotation",
+}
+_MEMBER_KINDS: dict[str, str] = {
+    "method_declaration": "method",
+    "constructor_declaration": "constructor",
+}
+
+
+class JavaParser:
+    """Parses a `.java` file into a `Source` + `CodeEntity` list via tree-sitter.
+
+    Types (class / interface / enum / record / `@interface`) and their
+    methods / constructors become `CodeEntity` nodes; fields are folded into
+    the owning type's `embed_text` rather than emitted as entities (they are
+    never `CALLS`/`IMPORTS` endpoints). There is no file-level `module` entity
+    — Java has no first-class unit below the package — so the file's imports
+    are attached to its first top-level type.
+
+    `qualified_name` is the fully-qualified, overload-safe name
+    (`com.acme.orders.OrderService.submit(Order,boolean)`); parameter types are
+    taken verbatim from the source since there is no type resolution.
+    `calls`/`imports` are best-effort static only, resolved just for the shapes
+    that need no type inference — everything else is skipped rather than
+    guessed, matching `PythonParser`.
+    """
+
+    @staticmethod
+    def can_handle(path: Path) -> bool:
+        return path.suffix.lower() == ".java"
+
+    def parse(self, path: Path) -> ParsedDocument:
+        try:
+            from tree_sitter_language_pack import get_parser
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Parsing Java needs the optional 'java' extra. Install it with "
+                "`pip install 'grag-mcp[java]'` (or `uv sync --extra java`)."
+            ) from exc
+
+        content = path.read_bytes()
+        source = Source(
+            path=str(path),
+            source_type="java",
+            content_hash=hashlib.sha256(content).hexdigest(),
+            ingested_at=datetime.now(UTC),
+        )
+
+        tree = get_parser("java").parse(content)
+        root = tree.root_node
+
+        package = self._package_name(root, content)
+        imports, static_aliases, imported_types = self._collect_imports(root, content)
+
+        type_nodes = [child for child in root.children if child.type in _TYPE_KINDS]
+        same_file_types = self._same_file_type_names(type_nodes, package, content)
+
+        entities: list[CodeEntity] = []
+        for index, type_node in enumerate(type_nodes):
+            entities.extend(
+                self._build_type_entities(
+                    type_node,
+                    content,
+                    path=path,
+                    parent_qualified_name=None,
+                    package_prefix=package,
+                    file_imports=imports if index == 0 else [],
+                    static_aliases=static_aliases,
+                    imported_types=imported_types,
+                    same_file_types=same_file_types,
+                )
+            )
+
+        return ParsedDocument(source=source, code_entities=entities)
+
+    # -- naming -------------------------------------------------------------
+
+    @staticmethod
+    def _text(node: "Node", content: bytes) -> str:
+        return content[node.start_byte : node.end_byte].decode("utf-8", "replace")
+
+    @staticmethod
+    def _collapse(text: str) -> str:
+        return _WHITESPACE_RE.sub(" ", text).strip()
+
+    @classmethod
+    def _package_name(cls, root: "Node", content: bytes) -> str:
+        for child in root.children:
+            if child.type == "package_declaration":
+                name = child.child_by_field_name("name") or child.children[1]
+                return cls._text(name, content)
+        return ""
+
+    @classmethod
+    def _same_file_type_names(
+        cls, type_nodes: list["Node"], package: str, content: bytes
+    ) -> dict[str, str]:
+        """Simple name → qualified name for every type declared in this file,
+        nested types included, so same-file `Type.method(...)` calls resolve.
+        """
+        names: dict[str, str] = {}
+
+        def walk(node: "Node", parent_qualified_name: str | None) -> None:
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                return
+            simple = cls._text(name_node, content)
+            qualified_name = cls._join(parent_qualified_name or package, simple)
+            names.setdefault(simple, qualified_name)
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    if child.type in _TYPE_KINDS:
+                        walk(child, qualified_name)
+
+        for type_node in type_nodes:
+            walk(type_node, None)
+        return names
+
+    @staticmethod
+    def _join(prefix: str, name: str) -> str:
+        return f"{prefix}.{name}" if prefix else name
+
+    # -- imports ----------------------------------------------------------
+
+    @classmethod
+    def _collect_imports(
+        cls, root: "Node", content: bytes
+    ) -> tuple[list[str], dict[str, str], dict[str, str]]:
+        """Returns ``(imports, static_aliases, imported_types)``.
+
+        ``imports`` is what feeds `IMPORTS` edges: a single-type import as the
+        type FQN, an on-demand ``import x.y.*`` as the package ``x.y``, a
+        static import as the member/type it names. ``static_aliases`` maps a
+        statically-imported member's simple name to its FQN; ``imported_types``
+        maps a single-type import's simple name to its FQN.
+        """
+        imports: list[str] = []
+        static_aliases: dict[str, str] = {}
+        imported_types: dict[str, str] = {}
+
+        for child in root.children:
+            if child.type != "import_declaration":
+                continue
+            is_static = any(grandchild.type == "static" for grandchild in child.children)
+            on_demand = any(grandchild.type == "asterisk" for grandchild in child.children)
+            path_node = next(
+                (
+                    grandchild
+                    for grandchild in child.children
+                    if grandchild.type in ("scoped_identifier", "identifier")
+                ),
+                None,
+            )
+            if path_node is None:
+                continue
+            dotted = cls._text(path_node, content)
+            imports.append(dotted)
+            simple = dotted.rsplit(".", 1)[-1]
+            if is_static and not on_demand:
+                static_aliases[simple] = dotted
+            elif not is_static and not on_demand:
+                imported_types[simple] = dotted
+        return imports, static_aliases, imported_types
+
+    # -- type + member entities -----------------------------------------
+
+    @classmethod
+    def _build_type_entities(
+        cls,
+        node: "Node",
+        content: bytes,
+        *,
+        path: Path,
+        parent_qualified_name: str | None,
+        package_prefix: str,
+        file_imports: list[str],
+        static_aliases: dict[str, str],
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> list[CodeEntity]:
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            return []
+        simple_name = cls._text(name_node, content)
+        qualified_name = cls._join(parent_qualified_name or package_prefix, simple_name)
+        kind = _TYPE_KINDS[node.type]
+        body = node.child_by_field_name("body")
+
+        member_nodes = (
+            [child for child in body.children if child.type in _MEMBER_KINDS] if body else []
+        )
+        overloads: dict[str, list[str]] = {}
+        for member in member_nodes:
+            member_name = cls._member_simple_name(member, content, simple_name)
+            overloads.setdefault(member_name, []).append(
+                cls._member_qualified_name(member, content, qualified_name, simple_name)
+            )
+
+        signature = cls._type_signature(node, content, name_node, body)
+        field_names = cls._field_names(body, content) if body else []
+        enum_constants = cls._enum_constant_names(body, content) if body else []
+        docstring = cls._javadoc(node, content)
+        embed_text = docstring or cls._type_summary(
+            kind, simple_name, signature, field_names, enum_constants, list(overloads)
+        )
+
+        entities: list[CodeEntity] = [
+            CodeEntity(
+                qualified_name=qualified_name,
+                name=simple_name,
+                kind=kind,
+                language="java",
+                embed_text=embed_text,
+                file_path=str(path),
+                start_line=node.start_point[0] + 1,
+                end_line=node.end_point[0] + 1,
+                signature=signature or None,
+                docstring=docstring,
+                parent_qualified_name=parent_qualified_name,
+                imports=file_imports,
+            )
+        ]
+
+        if body is None:
+            return entities
+
+        for child in body.children:
+            if child.type in _MEMBER_KINDS:
+                entities.append(
+                    cls._build_member_entity(
+                        child,
+                        content,
+                        path=path,
+                        type_qualified_name=qualified_name,
+                        type_simple_name=simple_name,
+                        overloads=overloads,
+                        static_aliases=static_aliases,
+                        imported_types=imported_types,
+                        same_file_types=same_file_types,
+                    )
+                )
+            elif child.type in _TYPE_KINDS:
+                entities.extend(
+                    cls._build_type_entities(
+                        child,
+                        content,
+                        path=path,
+                        parent_qualified_name=qualified_name,
+                        package_prefix=package_prefix,
+                        file_imports=[],
+                        static_aliases=static_aliases,
+                        imported_types=imported_types,
+                        same_file_types=same_file_types,
+                    )
+                )
+        return entities
+
+    @classmethod
+    def _build_member_entity(
+        cls,
+        node: "Node",
+        content: bytes,
+        *,
+        path: Path,
+        type_qualified_name: str,
+        type_simple_name: str,
+        overloads: dict[str, list[str]],
+        static_aliases: dict[str, str],
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> CodeEntity:
+        simple_name = cls._member_simple_name(node, content, type_simple_name)
+        qualified_name = cls._member_qualified_name(
+            node, content, type_qualified_name, type_simple_name
+        )
+        kind = _MEMBER_KINDS[node.type]
+        body = node.child_by_field_name("body")
+        signature = cls._member_signature(node, content, body)
+        docstring = cls._javadoc(node, content)
+        embed_text = docstring or cls._member_summary(kind, signature, body, content)
+        calls = cls._resolve_calls(
+            body,
+            content,
+            type_qualified_name=type_qualified_name,
+            overloads=overloads,
+            static_aliases=static_aliases,
+            imported_types=imported_types,
+            same_file_types=same_file_types,
+        )
+        return CodeEntity(
+            qualified_name=qualified_name,
+            name=simple_name,
+            kind=kind,
+            language="java",
+            embed_text=embed_text,
+            file_path=str(path),
+            start_line=node.start_point[0] + 1,
+            end_line=node.end_point[0] + 1,
+            signature=signature or None,
+            docstring=docstring,
+            parent_qualified_name=type_qualified_name,
+            calls=calls,
+        )
+
+    @classmethod
+    def _member_simple_name(cls, node: "Node", content: bytes, type_simple_name: str) -> str:
+        name_node = node.child_by_field_name("name")
+        return cls._text(name_node, content) if name_node is not None else type_simple_name
+
+    @classmethod
+    def _member_qualified_name(
+        cls, node: "Node", content: bytes, type_qualified_name: str, type_simple_name: str
+    ) -> str:
+        simple_name = cls._member_simple_name(node, content, type_simple_name)
+        params = cls._parameter_types(node.child_by_field_name("parameters"), content)
+        return f"{type_qualified_name}.{simple_name}({','.join(params)})"
+
+    @classmethod
+    def _parameter_types(cls, parameters: "Node | None", content: bytes) -> list[str]:
+        if parameters is None:
+            return []
+        types: list[str] = []
+        for child in parameters.children:
+            if child.type not in ("formal_parameter", "spread_parameter"):
+                continue
+            type_node = child.child_by_field_name("type")
+            if type_node is None:
+                # spread_parameter has no `type` field — take its first type-ish child.
+                type_node = next(
+                    (grandchild for grandchild in child.children if grandchild.is_named), None
+                )
+            text = cls._collapse(cls._text(type_node, content)) if type_node is not None else "?"
+            if child.type == "spread_parameter":
+                text += "..."
+            types.append(text.replace(" ", ""))
+        return types
+
+    # -- signatures / summaries ---------------------------------------
+
+    @classmethod
+    def _type_signature(
+        cls, node: "Node", content: bytes, name_node: "Node", body: "Node | None"
+    ) -> str:
+        end_byte = body.start_byte if body is not None else node.end_byte
+        return cls._collapse(content[name_node.end_byte : end_byte].decode("utf-8", "replace"))
+
+    @classmethod
+    def _member_signature(cls, node: "Node", content: bytes, body: "Node | None") -> str:
+        end_byte = body.start_byte if body is not None else node.end_byte
+        text = cls._collapse(content[node.start_byte : end_byte].decode("utf-8", "replace"))
+        return text.rstrip("{;").strip()
+
+    @classmethod
+    def _field_names(cls, body: "Node", content: bytes) -> list[str]:
+        names: list[str] = []
+        for child in body.children:
+            if child.type != "field_declaration":
+                continue
+            for declarator in child.children:
+                if declarator.type == "variable_declarator":
+                    name_node = declarator.child_by_field_name("name")
+                    if name_node is not None:
+                        names.append(cls._text(name_node, content))
+        return names
+
+    @classmethod
+    def _enum_constant_names(cls, body: "Node", content: bytes) -> list[str]:
+        return [
+            cls._text(child.child_by_field_name("name"), content)
+            for child in body.children
+            if child.type == "enum_constant" and child.child_by_field_name("name") is not None
+        ]
+
+    @classmethod
+    def _javadoc(cls, node: "Node", content: bytes) -> str | None:
+        sibling = node.prev_named_sibling
+        if sibling is None or sibling.type != "block_comment":
+            return None
+        raw = cls._text(sibling, content)
+        if not raw.startswith("/**"):
+            return None
+        inner = raw[3:]
+        inner = inner[:-2] if inner.endswith("*/") else inner
+        lines = [line.strip().lstrip("*").strip() for line in inner.splitlines()]
+        return " ".join(line for line in lines if line) or None
+
+    @staticmethod
+    def _type_summary(
+        kind: str,
+        name: str,
+        signature: str,
+        field_names: list[str],
+        enum_constants: list[str],
+        method_names: list[str],
+    ) -> str:
+        summary = f"{kind} {name} {signature}".strip()
+        if enum_constants:
+            summary += f". Constants: {', '.join(enum_constants)}"
+        if field_names:
+            summary += f". Fields: {', '.join(field_names)}"
+        if method_names:
+            summary += f". Methods: {', '.join(method_names)}"
+        return summary
+
+    @classmethod
+    def _member_summary(cls, kind: str, signature: str, body: "Node | None", content: bytes) -> str:
+        first_line = ""
+        if body is not None:
+            statement = next((child for child in body.children if child.is_named), None)
+            if statement is not None:
+                first_line = cls._collapse(cls._text(statement, content)).splitlines()[0]
+        summary = f"{kind} {signature}".strip()
+        return f"{summary}: {first_line}" if first_line else summary
+
+    # -- calls ------------------------------------------------------------
+
+    @classmethod
+    def _resolve_calls(
+        cls,
+        body: "Node | None",
+        content: bytes,
+        *,
+        type_qualified_name: str,
+        overloads: dict[str, list[str]],
+        static_aliases: dict[str, str],
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> list[str]:
+        if body is None:
+            return []
+        resolved: dict[str, None] = {}
+        for invocation in cls._descendants(body):
+            if invocation.type != "method_invocation":
+                continue
+            name_node = invocation.child_by_field_name("name")
+            if name_node is None:
+                continue
+            method_name = cls._text(name_node, content)
+            receiver = invocation.child_by_field_name("object")
+
+            if receiver is None:
+                target = cls._only_overload(overloads, method_name) or static_aliases.get(
+                    method_name
+                )
+            elif receiver.type in ("this", "super"):
+                target = cls._only_overload(overloads, method_name)
+            elif receiver.type == "identifier":
+                receiver_name = cls._text(receiver, content)
+                type_qn = imported_types.get(receiver_name) or same_file_types.get(receiver_name)
+                target = f"{type_qn}.{method_name}" if type_qn else None
+            else:
+                target = None  # call on a field access / expression result — skip.
+
+            if target:
+                resolved[target] = None
+        return list(resolved)
+
+    @staticmethod
+    def _only_overload(overloads: dict[str, list[str]], method_name: str) -> str | None:
+        candidates = overloads.get(method_name, [])
+        return candidates[0] if len(candidates) == 1 else None
+
+    @classmethod
+    def _descendants(cls, node: "Node"):
+        for child in node.children:
+            yield child
+            yield from cls._descendants(child)

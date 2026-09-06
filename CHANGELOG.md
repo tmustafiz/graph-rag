@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Java source parser (`JavaParser`, opt-in `grag-mcp[java]` extra, backed by
+  `tree-sitter` + `tree-sitter-language-pack`). A `.java` file becomes a
+  `Source` plus one `CodeEntity` per type (`class` / `interface` / `enum` /
+  `record` / `annotation`) and per `method` / `constructor`, with
+  package-prefixed, overload-safe `qualified_name`s, `CONTAINS` nesting,
+  Javadoc as `docstring`/`embed_text`, `IMPORTS` from all four import forms,
+  and best-effort static `CALLS` for the resolvable shapes (unqualified /
+  `this` / `super` / statically-imported / `Type.method` on a known type) —
+  same no-type-inference policy as `PythonParser`. Fields fold into the
+  owning type's `embed_text`; there is no file-level `module` entity. Feeds
+  `search_code` / `get_neighbors` / `compute-centrality` with no
+  retrieval-side change. Sample tree under `examples/java/`.
+  ([#61](https://github.com/tmustafiz/graph-rag/issues/61))
+
 ### Changed
 - Code parsing is no longer Python-framed. `CodeEntity` carries a `language`
   property, `CodeSearchResult` exposes it, and `qualified_name` is documented
