@@ -130,6 +130,21 @@ def test_run_on_sql_file_counts_db_objects_and_embeds_tables_and_views(tmp_path:
     assert all(view.embedding is not None for view in document.db_views)
 
 
+def test_run_on_stylesheet_emits_embedded_chunks_and_source_imports(tmp_path: Path) -> None:
+    (tmp_path / "_tokens.scss").write_text("$accent: #333;\n")
+    path = tmp_path / "app.scss"
+    path.write_text('@import "tokens";\n.btn { color: $accent; }\n')
+    writer = _FakeGraphWriter()
+
+    results = _pipeline(writer).run(path)
+
+    assert results[0].skipped is False
+    assert results[0].chunks >= 1
+    document = writer.written[0]
+    assert all(chunk.embedding is not None for chunk in document.chunks)
+    assert document.source_imports == [str(tmp_path / "_tokens.scss")]
+
+
 def test_run_records_error_instead_of_raising_when_write_fails(tmp_path: Path) -> None:
     path = tmp_path / "notes.md"
     path.write_text("# Title\n\nSome text.\n")

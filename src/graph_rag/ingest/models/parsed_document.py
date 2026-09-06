@@ -29,3 +29,6 @@ class ParsedDocument(BaseModel):
     db_views: list[DbView] = Field(default_factory=list)
     db_indexes: list[DbIndex] = Field(default_factory=list)
     db_references: list[DbReference] = Field(default_factory=list)
+    # Paths of other `Source` files this one pulls in — stylesheet `@import` /
+    # `@use` / `@forward`; feeds `(Source)-[:IMPORTS]->(Source)` edges.
+    source_imports: list[str] = Field(default_factory=list)

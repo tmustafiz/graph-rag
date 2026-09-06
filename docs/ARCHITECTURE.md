@@ -13,7 +13,7 @@ board](ROADMAP.md), not in this repo.
 
 ```mermaid
 flowchart TD
-    A["Files: PDF / Markdown / Python / Java / JS / TS / SQL / YAML"] --> B["Ingestion CLI / POST /ingest / ingest_path tool"]
+    A["Files: PDF / Markdown / Python / Java / JS / TS / SQL / CSS / YAML"] --> B["Ingestion CLI / POST /ingest / ingest_path tool"]
     B --> C{"ParserRegistry (by extension)"}
     C --> C1["PdfParser (PyMuPDF)"]
     C --> C2["MarkdownParser"]
@@ -21,7 +21,8 @@ flowchart TD
     C --> C4["JavaParser (tree-sitter)"]
     C --> C5["JavaScriptParser (tree-sitter, JS + TS)"]
     C --> C6["SqlParser (sqlglot: schema + PL/SQL)"]
-    C --> C7["YamlParser (Checkov-aware)"]
+    C --> C7["StylesheetParser (tree-sitter, CSS/SCSS/Less)"]
+    C --> C8["YamlParser (Checkov-aware)"]
     C1 --> D["Chunker (structure-aware)"]
     C2 --> D
     C3 --> D
@@ -29,6 +30,7 @@ flowchart TD
     C5 --> D
     C6 --> D
     C7 --> D
+    C8 --> D
     D --> E["Enricher (SentenceTransformer embeddings)"]
     E --> F["GraphWriter (idempotent upsert by content hash)"]
     F --> G[("Neo4j — APOC + GDS")]
@@ -87,6 +89,7 @@ flowchart TD
 - `(DbView)-[:DEPENDS_ON]->(DbTable|DbView)` (tables/views in the view's `SELECT`)
 - `(CodeEntity)-[:READS]->(DbTable)`, `(CodeEntity)-[:WRITES]->(DbTable)` (a SQL routine's `SELECT` vs `INSERT`/`UPDATE`/`DELETE`/`MERGE`)
 - `(CodeEntity)-[:ON]->(DbTable)` (the table a `trigger` fires on)
+- `(Source)-[:IMPORTS]->(Source)` (stylesheet `@import` / `@use` / `@forward`)
 
 **Indexes** (`grag-mcp apply-schema`)
 
@@ -210,6 +213,19 @@ header entity, with a logged warning. Best-effort `CALLS` links routines
 (bare `proc(...)` resolved only when unambiguous, `pkg.proc(...)` when the
 package is known); `READS` / `WRITES` link a routine to the `:DbTable`s its
 body selects from / writes to, and `ON` links a `trigger` to its table.
+
+`StylesheetParser` (`grag-mcp[css]`, tree-sitter `css` / `scss` / `less`
+grammars — `.css` `.scss` `.sass` `.less`) is a **prose-shape** parser: no
+`CodeEntity` (CSS has no call graph), just a `Section` per file (plus one per
+top-level `@media` / `@supports`) and a `Chunk` per rule, so the plain
+`search` tool covers stylesheet content. SCSS nesting is flattened into full
+selector paths (`.card .title`, `.card:hover`); custom properties (`--x`),
+`$variables`, and `@mixin`s each also get their own name-bearing chunk.
+`@import` / `@use` / `@forward` resolve against the file tree to
+`(Source)-[:IMPORTS]->(Source)` edges (Sass built-ins like `sass:math` and
+remote URLs skipped). `.sass` indented syntax and constructs the grammar
+version doesn't cover (`@extend`, some `@include` forms) degrade to a partial
+result with a logged warning.
 
 ## Retrieval
 

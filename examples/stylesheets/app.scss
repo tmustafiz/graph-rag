@@ -1,0 +1,27 @@
+// Sample component styles — imports the shared tokens partial.
+@forward "tokens";
+@import "tokens";
+
+$hover-bg: #2850cc;
+
+.btn {
+  background: var(--accent);
+  color: #fff;
+  border-radius: $radius;
+  padding: 8px 16px;
+
+  .icon {
+    margin-right: 6px;
+  }
+
+  &:hover {
+    background: $hover-bg;
+  }
+}
+
+@media (max-width: 480px) {
+  .btn {
+    display: block;
+    width: 100%;
+  }
+}
