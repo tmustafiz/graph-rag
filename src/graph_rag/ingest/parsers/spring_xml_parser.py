@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import re
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import count
 from pathlib import Path
@@ -60,6 +61,20 @@ def _dedupe(items: list[str]) -> list[str]:
     return list(seen)
 
 
+@dataclass
+class _ScanState:
+    """Accumulators threaded through the (possibly nested) `<beans>` walk."""
+
+    source_path: str
+    counter: "count[int]"
+    beans: list[SpringXmlBean] = field(default_factory=list)
+    scan_packages: list[str] = field(default_factory=list)
+    placeholder_locations: list[str] = field(default_factory=list)
+    import_resources: list[str] = field(default_factory=list)
+    namespace_elements: list[str] = field(default_factory=list)
+    alias_map: dict[str, list[str]] = field(default_factory=dict)
+
+
 class SpringXmlParser:
     """Parses a Spring XML `<beans>` context (`applicationContext.xml`,
     `*-context.xml`, `WEB-INF/*-servlet.xml`, …) into a `ConfigFile` plus one
@@ -71,7 +86,9 @@ class SpringXmlParser:
     of refs, and the `p:` / `c:` shortcut namespaces), `<alias>`, `<import
     resource>`, `<context:component-scan base-package>` and
     `<context:property-placeholder location>`. `${key}` placeholders in `value=`
-    attributes are captured for best-effort `ConfigProperty` linking.
+    attributes are captured for best-effort `ConfigProperty` linking. Nested
+    `<beans profile="...">` blocks are walked recursively, with the `profile`
+    recorded on each bean they contain.
 
     The raw defs are projected into the shared `(:Bean {defined_in:'xml'})`
     graph by the post-ingest `SpringXmlResolver` pass; `<import resource>` and
@@ -108,35 +125,15 @@ class SpringXmlParser:
             logger.warning("could not parse %s as Spring XML: %s", path, exc)
             return ParsedDocument(source=source)
 
-        beans: list[SpringXmlBean] = []
-        scan_packages: list[str] = []
-        placeholder_locations: list[str] = []
-        import_resources: list[str] = []
-        namespace_elements: list[str] = []
-        alias_map: dict[str, list[str]] = {}
-        counter = count(1)
+        state = _ScanState(source_path=source.path, counter=count(1))
+        self._scan_container(root, None, state)
 
-        for element in root:
-            local = _local(element.tag)
-            namespace = _namespace(element.tag)
-            if namespace in ("", _BEANS_NS):
-                if local == "bean":
-                    self._handle_bean(element, source.path, counter, beans)
-                elif local == "alias":
-                    target, alias = element.get("name"), element.get("alias")
-                    if target and alias:
-                        alias_map.setdefault(target, []).append(alias)
-                elif local == "import" and element.get("resource"):
-                    import_resources.append(element.get("resource", ""))
-                continue
-
-            short = _NS_SHORT.get(namespace, namespace.rsplit("/", 1)[-1])
-            namespace_elements.append(f"{short}:{local}")
-            if local == "component-scan":
-                scan_packages.extend(_split_list(element.get("base-package")))
-            elif local == "property-placeholder":
-                placeholder_locations.extend(_split_list(element.get("location")))
-                placeholder_locations.extend(_split_list(element.get("locations")))
+        beans = state.beans
+        scan_packages = state.scan_packages
+        placeholder_locations = state.placeholder_locations
+        import_resources = state.import_resources
+        namespace_elements = state.namespace_elements
+        alias_map = state.alias_map
 
         for bean in beans:
             for alias in alias_map.get(bean.bean_name, []):
@@ -160,6 +157,38 @@ class SpringXmlParser:
             spring_xml_beans=beans,
         )
 
+    # -- <beans> container walk (recurses into nested <beans profile="...">) --
+
+    @classmethod
+    def _scan_container(
+        cls, container: ElementTree.Element, profile: str | None, state: _ScanState
+    ) -> None:
+        for element in container:
+            local = _local(element.tag)
+            namespace = _namespace(element.tag)
+            if namespace in ("", _BEANS_NS):
+                if local == "bean":
+                    cls._handle_bean(
+                        element, state.source_path, state.counter, state.beans, profile
+                    )
+                elif local == "beans":
+                    cls._scan_container(element, element.get("profile") or profile, state)
+                elif local == "alias":
+                    target, alias = element.get("name"), element.get("alias")
+                    if target and alias:
+                        state.alias_map.setdefault(target, []).append(alias)
+                elif local == "import" and element.get("resource"):
+                    state.import_resources.append(element.get("resource", ""))
+                continue
+
+            short = _NS_SHORT.get(namespace, namespace.rsplit("/", 1)[-1])
+            state.namespace_elements.append(f"{short}:{local}")
+            if local == "component-scan":
+                state.scan_packages.extend(_split_list(element.get("base-package")))
+            elif local == "property-placeholder":
+                state.placeholder_locations.extend(_split_list(element.get("location")))
+                state.placeholder_locations.extend(_split_list(element.get("locations")))
+
     # -- <bean> --
 
     @classmethod
@@ -169,6 +198,7 @@ class SpringXmlParser:
         source_path: str,
         counter: "count[int]",
         out: list[SpringXmlBean],
+        profile: str | None = None,
     ) -> str:
         class_name = element.get("class")
         name_tokens = _split_list(element.get("name"))
@@ -214,6 +244,7 @@ class SpringXmlParser:
                 bean_id=bean_id,
                 bean_name=bean_id,
                 class_name=class_name,
+                profile=profile,
                 scope=element.get("scope"),
                 parent=element.get("parent"),
                 factory_bean=element.get("factory-bean"),

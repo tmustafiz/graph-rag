@@ -15,13 +15,15 @@ class SpringXmlBean(BaseModel):
     `<simple-class>#<n>` for an anonymous inner bean. `property_names` and
     `property_refs` are parallel lists (one `<property name ref>` per index).
     `value_placeholder_keys` holds the `${key}` keys seen in `value=` attributes,
-    best-effort linked to `ConfigProperty`s by the resolver.
+    best-effort linked to `ConfigProperty`s by the resolver. `profile` is the
+    enclosing `<beans profile="...">` if the bean sits in a profile-scoped block.
     """
 
     source_path: str
     bean_id: str
     bean_name: str
     class_name: str | None = None
+    profile: str | None = None
     scope: str | None = None
     parent: str | None = None
     factory_bean: str | None = None

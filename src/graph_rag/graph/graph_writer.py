@@ -251,7 +251,8 @@ _MERGE_SPRING_XML_BEANS = """
 UNWIND $rows AS row
 MERGE (b:SpringXmlBean {id: row.id})
 SET b.source_path = row.source_path, b.bean_id = row.bean_id, b.bean_name = row.bean_name,
-    b.class_name = row.class_name, b.scope = row.scope, b.parent = row.parent,
+    b.class_name = row.class_name, b.profile = row.profile,
+    b.scope = row.scope, b.parent = row.parent,
     b.factory_bean = row.factory_bean, b.factory_method = row.factory_method,
     b.primary = row.primary, b.abstract = row.abstract, b.lazy_init = row.lazy_init,
     b.aliases = row.aliases, b.depends_on = row.depends_on,
