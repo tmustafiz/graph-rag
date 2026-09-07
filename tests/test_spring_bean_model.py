@@ -208,6 +208,25 @@ def test_bean_methods_become_beans_and_configuration_produces_them() -> None:
     }
 
 
+def test_bean_method_return_type_strips_modifiers_for_injection() -> None:
+    assembled = SpringBeanResolver._assemble(
+        *_rows(
+            "package a; import org.springframework.context.annotation.*;\n"
+            "@Configuration public class AppConfig {\n"
+            "  @Bean public static javax.sql.DataSource dataSource() { return null; }\n"
+            "}",
+            "package a; import org.springframework.stereotype.Service;\n"
+            "import org.springframework.beans.factory.annotation.Autowired;\n"
+            "@Service public class Repo {\n"
+            "  @Autowired private javax.sql.DataSource dataSource;\n"
+            "}",
+        )
+    )
+
+    assert _beans(assembled)["dataSource"]["bean_type"] == "javax.sql.DataSource"
+    assert ("repo", "dataSource", "field") in _injects(assembled)
+
+
 def test_value_annotation_binds_to_config_property() -> None:
     assembled = SpringBeanResolver._assemble(
         *_rows(
