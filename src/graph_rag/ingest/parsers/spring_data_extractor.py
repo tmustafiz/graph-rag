@@ -121,6 +121,12 @@ _OPERATOR_SUFFIXES = (
     "Equals",
 )
 _GENERIC = re.compile(r"<\s*(.+)\s*>")
+# PascalCase word boundary: `OrderId` -> `Order` | `Id`, `HTTPServer` ->
+# `HTTP` | `Server`. Used to tokenise a derived-query subject so `And` / `Or`
+# are only treated as connectors when they are a whole segment, not letters
+# inside a property name (`OrderId`, `BrandName`, `OrgUnit`).
+_PASCAL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_CONNECTORS = {"And", "Or"}
 
 
 class SpringDataExtractor:
@@ -336,9 +342,16 @@ class SpringDataExtractor:
             if match is None:
                 return []
             body = re.split(r"OrderBy", match.group(2))[0]
+            segments = _PASCAL_BOUNDARY.split(body)
+            groups: list[list[str]] = [[]]
+            for segment in segments:
+                if segment in _CONNECTORS:
+                    groups.append([])
+                else:
+                    groups[-1].append(segment)
             properties: list[str] = []
-            for raw in re.split(r"And|Or", body):
-                token = raw
+            for group in groups:
+                token = "".join(group)
                 changed = True
                 while changed:
                     changed = False
