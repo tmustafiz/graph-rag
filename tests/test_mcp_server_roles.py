@@ -13,6 +13,8 @@ KNOWLEDGE_TOOL_NAMES = {
     "find_policies_for",
     "search_policies",
     "get_neighbors",
+    "get_beans_for",
+    "get_endpoints",
     "get_central_code_entities",
     "cite",
     "ingest_path",

@@ -453,6 +453,35 @@ Graph-native tools sit alongside search: `get_section` / `get_outline`
 (exact `APPLIES_TO` traversal), `get_central_code_entities` (PageRank order),
 `cite` (citation string), `list_sources`.
 
+### Java frameworks
+
+For a Spring / Spring Boot / Jakarta codebase the graph carries beans +
+dependency injection (`SpringBeanResolver` / `SpringXmlResolver`), Spring MVC /
+JAX-RS HTTP endpoints (`HttpEndpointExtractor`), Spring Data repositories + JPA
+entities (`SpringDataExtractor` / `SpringDataResolver`), and application config
+(`ConfigFileParser` / `SpringXmlParser`) — each detailed in **Adding a
+language** above. It is reachable over MCP through:
+
+- **`search_code`** with `stereotype=` (`Service` / `RestController` /
+  `Repository` / `Configuration` / … — a bean stereotype or a bare type-level
+  annotation), `annotation=` (any annotation, simple name or FQN), `module=`
+  (owning `Module.artifact` or a path suffix) — guards baked into the hybrid
+  query so an unfiltered call is unchanged.
+- **`get_beans_for(qualified_name)`** — the bean for a `CodeEntity` /
+  `Bean.id`, its `INJECTS` / `PRODUCES` wiring both ways, and the
+  `ConfigProperty` keys it `BINDS` (annotation- and XML-wired beans alike).
+- **`get_endpoints(path_glob?, http_method?, module?)`** — `HttpEndpoint`s with
+  their handler and module; `path_glob` uses `*` / `?` and whole-path match.
+- **`get_neighbors`** — already relationship-type-generic, so `INJECTS` /
+  `HANDLED_BY` / `MANAGES` / `PERSISTS_AS` / `RELATES_TO` / `BINDS` /
+  `IMPORTS_CONTEXT` traverse like any other edge.
+
+`examples/spring-boot/` is a runnable two-module sample exercising all of the
+above, with a query walkthrough in its `README.md`. Precise cross-file and
+library-level symbol resolution is the v0.7.0 `--scip` path; today's Java graph
+is best-effort static (no type inference), matching the `CALLS` / `IMPORTS`
+caveat above.
+
 ## MCP server
 
 `grag-mcp serve-mcp` runs over **Streamable HTTP** by default — a long-lived

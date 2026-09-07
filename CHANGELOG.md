@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Spring-aware retrieval surface + enterprise-Java example. `search_code` gains
+  optional `stereotype=` / `annotation=` / `module=` filters (guards baked into
+  the hybrid query — an unfiltered call is unchanged). New MCP tools
+  `get_beans_for(qualified_name)` (a bean's `INJECTS` / `PRODUCES` wiring both
+  ways + the `ConfigProperty` keys it `BINDS`, annotation- and XML-wired alike)
+  and `get_endpoints(path_glob?, http_method?, module?)` (Spring MVC / JAX-RS
+  routes with handler + module; `path_glob` is `*` / `?` whole-path match).
+  `get_neighbors` now surfaces `Bean` / `HttpEndpoint` / `ConfigProperty`
+  summaries and its docs call out the Java-framework edges (`INJECTS` /
+  `HANDLED_BY` / `MANAGES` / `PERSISTS_AS` / `RELATES_TO` / `BINDS` /
+  `IMPORTS_CONTEXT`). MCP server instructions describe the Spring graph. New
+  `examples/spring-boot/` — a runnable two-module sample (`@RestController`,
+  `@Service` with constructor + field injection, `@ConfigurationProperties`,
+  `@Repository` + `@Entity` with a `@ManyToOne`, `application.yml`, and an
+  XML-wired bean the `@Autowired` field resolves to) with a query walkthrough in
+  its `README.md`. `docs/ARCHITECTURE.md` gains a "Java frameworks" section;
+  `README.md` notes the Spring capability and the v0.7.0 `--scip` precision path.
+  ([#77](https://github.com/tmustafiz/graph-rag/issues/77))
 - Spring Data repository + JPA entity model. New pure `SpringDataExtractor`
   (inside `JavaParser`) turns repository interfaces (`Repository` /
   `CrudRepository` / `JpaRepository` / `PagingAndSortingRepository` /
