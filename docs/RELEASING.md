@@ -53,11 +53,14 @@ make eval        # only if you touched chunking / embedding / ranking
 ```
 
 commit, push, open a PR **with base `release/vX.Y.0`** and body `Closes #<n>`.
-The repo owner squash-merges.
+The repo owner squash-merges, then **closes `#<n>` manually** — GitHub only
+auto-closes from the default branch, and these PRs target `release/*`. The
+`Closes #<n>` line is still required: the release PR (below) collects them.
 
 ## Cutting the release (repo owner)
 
-Preconditions: every milestone issue closed, `release/vX.Y.0` green.
+Preconditions: `release/vX.Y.0` green, and every milestone issue closed — done
+by hand as each feature PR merges (see above), since none auto-close.
 
 1. **Release-prep PR into `release/vX.Y.0`:**
    - Bump `version` in `pyproject.toml` to `X.Y.0`.
