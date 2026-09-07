@@ -19,6 +19,12 @@ MERGE (s)-[:IN_MODULE]->(nearest)
 RETURN count(*) AS linked
 """
 
+# HTTP endpoints inherit their defining Source's module.
+_LINK_ENDPOINT_MODULE = """
+MATCH (s:Source)-[:IN_MODULE]->(m:Module), (s)-[:DEFINES]->(ep:HttpEndpoint)
+MERGE (ep)-[:IN_MODULE]->(m)
+"""
+
 # A declared dependency whose coordinates match another module in the graph —
 # a Maven GAV that equals a sibling's `group:artifact`, or a Gradle
 # `project:<name>` marker — is really a module→module edge.
@@ -95,6 +101,7 @@ class ProjectModelResolver:
     def _rewire_in_module(tx: ManagedTransaction) -> int:
         tx.run(cast(LiteralString, _CLEAR_IN_MODULE))
         record = tx.run(cast(LiteralString, _LINK_IN_MODULE)).single()
+        tx.run(cast(LiteralString, _LINK_ENDPOINT_MODULE))
         return record["linked"] if record else 0
 
     @staticmethod

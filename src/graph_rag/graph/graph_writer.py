@@ -77,6 +77,21 @@ SET a.owner_qualified_name = row.owner_qualified_name, a.target = row.target,
 MERGE (owner)-[:ANNOTATED_WITH]->(a)
 """
 
+_MERGE_HTTP_ENDPOINTS = """
+UNWIND $rows AS row
+MERGE (h:HttpEndpoint {id: row.id})
+SET h.http_method = row.http_method, h.path = row.path, h.framework = row.framework,
+    h.produces = row.produces, h.consumes = row.consumes, h.params = row.params,
+    h.bindings = row.bindings_json, h.embed_text = row.embed_text, h.embedding = row.embedding,
+    h.handler_qualified_name = row.handler_qualified_name
+WITH h, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(h)
+WITH h, row
+MATCH (handler:CodeEntity {qualified_name: row.handler_qualified_name})
+MERGE (h)-[:HANDLED_BY]->(handler)
+"""
+
 _MERGE_CALLS = """
 UNWIND $pairs AS pair
 MATCH (caller:CodeEntity {qualified_name: pair.from})
@@ -316,6 +331,12 @@ WHERE NOT a.id IN $keep_ids
 DETACH DELETE a
 """
 
+_RECONCILE_HTTP_ENDPOINTS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(h:HttpEndpoint)
+WHERE NOT h.id IN $keep_ids
+DETACH DELETE h
+"""
+
 _RECONCILE_POLICY_RULES = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(p:PolicyRule)
 WHERE NOT p.id IN $keep_ids
@@ -393,6 +414,10 @@ class GraphWriter:
                 session.execute_write(self._write_code_entities, document.source.path, batch)
             for batch in self._batched(self._annotation_rows(document)):
                 session.execute_write(self._write_annotations, batch)
+            for batch in self._batched(
+                [e.model_dump(mode="json") for e in document.http_endpoints]
+            ):
+                session.execute_write(self._write_http_endpoints, document.source.path, batch)
             for batch in self._batched(self._call_pairs(document)):
                 session.execute_write(self._write_calls, batch)
             for batch in self._batched(self._import_pairs(document)):
@@ -462,6 +487,11 @@ class GraphWriter:
                 self._reconcile_annotations,
                 document.source.path,
                 [a.id for a in document.annotations],
+            )
+            session.execute_write(
+                self._reconcile_http_endpoints,
+                document.source.path,
+                [e.id for e in document.http_endpoints],
             )
             session.execute_write(
                 self._reconcile_policy_rules,
@@ -548,6 +578,10 @@ class GraphWriter:
     @staticmethod
     def _write_annotations(tx: ManagedTransaction, rows: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_ANNOTATIONS), rows=rows)
+
+    @staticmethod
+    def _write_http_endpoints(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_HTTP_ENDPOINTS), rows=rows, source_path=source_path)
 
     @staticmethod
     def _write_calls(tx: ManagedTransaction, pairs: list[dict]) -> None:
@@ -669,6 +703,16 @@ class GraphWriter:
     ) -> None:
         tx.run(
             cast(LiteralString, _RECONCILE_ANNOTATIONS),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _reconcile_http_endpoints(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_HTTP_ENDPOINTS),
             source_path=source_path,
             keep_ids=keep_ids,
         )

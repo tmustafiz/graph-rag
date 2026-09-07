@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..models import Annotation, CodeEntity, ParsedDocument, Source
+from .http_endpoint_extractor import HttpEndpointExtractor
 from .lombok_synthesizer import LombokSynthesizer
 
 if TYPE_CHECKING:
@@ -109,7 +110,12 @@ class JavaParser:
                 )
             )
 
-        return ParsedDocument(source=source, code_entities=entities, annotations=annotations)
+        return ParsedDocument(
+            source=source,
+            code_entities=entities,
+            annotations=annotations,
+            http_endpoints=HttpEndpointExtractor.extract(entities, annotations),
+        )
 
     # -- naming -------------------------------------------------------------
 

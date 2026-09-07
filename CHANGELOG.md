@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Spring MVC / JAX-RS HTTP endpoint model. `HttpEndpointExtractor` (inside
+  `JavaParser`) turns controller handler methods into `(:HttpEndpoint
+  {http_method, path, framework, produces, consumes, params, bindings,
+  embed_text})` nodes — Spring MVC (`@RequestMapping` + `@GetMapping` /
+  `@PostMapping` / `@PutMapping` / `@DeleteMapping` / `@PatchMapping`, class +
+  method path composition) and JAX-RS (`@Path` + `@GET` / `@POST` / …). One
+  endpoint per `(http_method, path)`; parameter bindings (`@PathVariable`,
+  `@RequestParam`, `@RequestBody`, `@RequestHeader`, `@ModelAttribute`;
+  `@PathParam`, `@QueryParam`, `@HeaderParam`, `@FormParam`) matched to the
+  handler params by name with types from the signature; `@ExceptionHandler`
+  methods recorded best-effort as `http_method="EXCEPTION"`.
+  `(:HttpEndpoint)-[:HANDLED_BY]->(:CodeEntity)` and, via the project-model
+  resolver, `-[:IN_MODULE]->(:Module)`. `embed_text` is natural language
+  (`"GET /orders/{id} -> OrderController.getOrder (returns Order) [spring-mvc]"`)
+  and endpoints are embedded + get a vector index, so `search` / `search_code`
+  surface routes from natural language. New `http_endpoint_id` constraint,
+  `http_endpoint_fulltext` + `http_endpoint_embedding` indexes.
+  ([#75](https://github.com/tmustafiz/graph-rag/issues/75))
 - Spring / Spring Boot bean & dependency-injection graph. New
   `SpringBeanResolver` — a second post-directory-ingest graph pass, after the
   project-model resolver — derives a `Bean` layer from the annotation,
