@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Spring / Spring Boot bean & dependency-injection graph. New
+  `SpringBeanResolver` — a second post-directory-ingest graph pass, after the
+  project-model resolver — derives a `Bean` layer from the annotation,
+  type-hierarchy and config layers already in Neo4j. Stereotyped classes
+  (`@Component` / `@Service` / `@Repository` / `@Controller` /
+  `@RestController` / `@Configuration` / `@SpringBootApplication` /
+  `@ConfigurationProperties`, plus one level of custom meta-annotated
+  stereotype) and `@Bean` factory methods become
+  `(:Bean {name, stereotype, scope, primary, bean_type})`, linked
+  `(:CodeEntity)-[:IS_BEAN]->(:Bean)`; a `@Configuration` bean
+  `-[:PRODUCES]->` its `@Bean` methods. Constructor parameters (incl. Lombok's
+  synthetic `@RequiredArgsConstructor`), `@Autowired` / `@Inject` / `@Resource`
+  fields and setters resolve to a target `Bean` **by type** — matched against
+  each bean's own type and its `EXTENDS` / `IMPLEMENTS` supertypes, unwrapping
+  `List<X>` / `Optional<X>` / `ObjectProvider<X>` / `X[]` (recorded as
+  `multiplicity`), then narrowed by `@Qualifier` / `@Named` — as
+  `(:Bean)-[:INJECTS {via, qualifier, multiplicity}]->(:Bean)`; ambiguous or
+  unmatched injections are left on `Bean.unresolved_injections` (JSON) with a
+  reason, never guessed. `@Value("${key:default}")` and
+  `@ConfigurationProperties(prefix=…)` add `(:Bean)-[:BINDS]->(:ConfigProperty)`.
+  New `bean_id` constraint + `bean_fulltext` index; `IngestionPipeline` now
+  takes a list of post-ingest resolvers.
+  ([#73](https://github.com/tmustafiz/graph-rag/issues/73))
 - Java type-hierarchy edges. `JavaParser` now records a type's direct
   supertypes on `CodeEntity` (`extends_types` / `implements_types`,
   import-resolved to FQNs where possible, else the simple name) and

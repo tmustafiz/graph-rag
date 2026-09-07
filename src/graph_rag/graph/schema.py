@@ -30,6 +30,7 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT module_path IF NOT EXISTS FOR (n:Module) REQUIRE n.path IS UNIQUE",
     "CREATE CONSTRAINT external_artifact_gav IF NOT EXISTS "
     "FOR (n:ExternalArtifact) REQUIRE n.gav IS UNIQUE",
+    "CREATE CONSTRAINT bean_id IF NOT EXISTS FOR (n:Bean) REQUIRE n.id IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.
@@ -50,6 +51,8 @@ FULLTEXT_INDEXES: list[str] = [
     "FOR (n:ConfigProperty) ON EACH [n.key, n.value]",
     "CREATE FULLTEXT INDEX module_fulltext IF NOT EXISTS "
     "FOR (n:Module) ON EACH [n.artifact, n.group]",
+    "CREATE FULLTEXT INDEX bean_fulltext IF NOT EXISTS "
+    "FOR (n:Bean) ON EACH [n.name, n.stereotype, n.bean_type]",
 ]
 
 # Range indexes for cheap ordering scans (pruner's recency sweep, centrality ranking).
