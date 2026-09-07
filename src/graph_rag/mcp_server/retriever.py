@@ -9,8 +9,11 @@ from graph_rag.ingest.embedders import Embedder
 
 from .cross_encoder_reranker import CrossEncoderReranker
 from .models import (
+    BeanDetail,
+    BeanEdge,
     CodeCentralityResult,
     CodeSearchResult,
+    EndpointResult,
     NeighborResult,
     OutlineNode,
     PolicyResult,
@@ -100,7 +103,8 @@ WHERE (n.id = $node_id OR n.qualified_name = $node_id OR n.path = $node_id OR n.
   AND ($rel_types IS NULL OR type(r) IN $rel_types)
 RETURN type(r) AS relationship_type, labels(m)[0] AS node_label,
        coalesce(m.id, m.qualified_name, m.path, m.name) AS node_key,
-       coalesce(m.title, m.name, m.path, left(m.content, 100), left(m.text, 100)) AS summary
+       coalesce(m.title, m.name, m.path, m.key, m.embed_text,
+                left(m.content, 100), left(m.text, 100)) AS summary
 """
 
 _GET_NEIGHBORS_INCOMING = """
@@ -109,7 +113,8 @@ WHERE (n.id = $node_id OR n.qualified_name = $node_id OR n.path = $node_id OR n.
   AND ($rel_types IS NULL OR type(r) IN $rel_types)
 RETURN type(r) AS relationship_type, labels(m)[0] AS node_label,
        coalesce(m.id, m.qualified_name, m.path, m.name) AS node_key,
-       coalesce(m.title, m.name, m.path, left(m.content, 100), left(m.text, 100)) AS summary
+       coalesce(m.title, m.name, m.path, m.key, m.embed_text,
+                left(m.content, 100), left(m.text, 100)) AS summary
 """
 
 _GET_OUTLINE = """
@@ -134,20 +139,82 @@ ORDER BY e.pagerank DESC
 LIMIT $top_k
 """
 
-_VECTOR_SEARCH_CODE = """
+# Optional graph filters for `search_code`, kept in the base query behind
+# `$x IS NULL OR …` guards so an unfiltered call pays only a null check.
+# `stereotype` matches a Spring `Bean.stereotype` (via `IS_BEAN`) or a bare
+# type-level `@Annotation` name; `annotation` matches an `Annotation` simple
+# name or FQN anywhere on the entity; `module` matches the owning
+# `Module.artifact` or a path suffix.
+_CODE_FILTERS = """
+WHERE ($stereotype IS NULL
+       OR (e)-[:IS_BEAN]->(:Bean {stereotype: $stereotype})
+       OR EXISTS {
+         MATCH (e)-[:ANNOTATED_WITH]->(sa:Annotation {target: 'type'})
+         WHERE sa.name = $stereotype
+       })
+  AND ($annotation IS NULL OR EXISTS {
+         MATCH (e)-[:ANNOTATED_WITH]->(aa:Annotation)
+         WHERE aa.name = $annotation OR aa.fqn = $annotation
+       })
+  AND ($module IS NULL OR EXISTS {
+         MATCH (ms:Source)-[:DEFINES]->(e)
+         MATCH (ms)-[:IN_MODULE]->(mm:Module)
+         WHERE mm.artifact = $module OR mm.path = $module
+               OR mm.path ENDS WITH ('/' + $module)
+       })
+"""
+
+_VECTOR_SEARCH_CODE = f"""
 CALL db.index.vector.queryNodes('code_entity_embedding', $k, $vector)
 YIELD node AS e, score
+{_CODE_FILTERS}
 RETURN e.qualified_name AS qualified_name, e.name AS name, e.kind AS kind,
        e.language AS language,
        e.docstring AS docstring, e.signature AS signature, e.file_path AS file_path,
        e.start_line AS start_line, e.end_line AS end_line, score
 """
 
-_FULLTEXT_SEARCH_CODE = """
+_FULLTEXT_SEARCH_CODE = f"""
 CALL db.index.fulltext.queryNodes('code_entity_text_fulltext', $query) YIELD node AS e, score
+{_CODE_FILTERS}
 RETURN e.qualified_name AS qualified_name, score
 ORDER BY score DESC
 LIMIT $k
+"""
+
+_GET_BEANS_FOR = """
+MATCH (b:Bean)
+WHERE b.id = $key OR EXISTS { MATCH (:CodeEntity {qualified_name: $key})-[:IS_BEAN]->(b) }
+OPTIONAL MATCH (b)-[ri:INJECTS]->(it:Bean)
+OPTIONAL MATCH (si:Bean)-[rin:INJECTS]->(b)
+OPTIONAL MATCH (b)-[:PRODUCES]->(pt:Bean)
+OPTIONAL MATCH (pb:Bean)-[:PRODUCES]->(b)
+OPTIONAL MATCH (b)-[:BINDS]->(cp:ConfigProperty)
+RETURN b.id AS bean_id, b.name AS name, b.stereotype AS stereotype, b.scope AS scope,
+       coalesce(b.primary, false) AS primary, b.bean_type AS bean_type,
+       b.defined_in AS defined_in, b.unresolved_injections AS unresolved_injections,
+       collect(DISTINCT {bean_id: it.id, name: it.name, stereotype: it.stereotype, via: ri.via})
+         AS injects,
+       collect(DISTINCT {bean_id: si.id, name: si.name, stereotype: si.stereotype, via: rin.via})
+         AS injected_by,
+       collect(DISTINCT {bean_id: pt.id, name: pt.name, stereotype: pt.stereotype}) AS produces,
+       collect(DISTINCT {bean_id: pb.id, name: pb.name, stereotype: pb.stereotype}) AS produced_by,
+       collect(DISTINCT cp.key) AS binds
+"""
+
+_GET_ENDPOINTS = """
+MATCH (h:HttpEndpoint)
+WHERE ($http_method IS NULL OR h.http_method = $http_method)
+  AND ($path_regex IS NULL OR h.path =~ $path_regex)
+OPTIONAL MATCH (h)-[:HANDLED_BY]->(handler:CodeEntity)
+OPTIONAL MATCH (h)-[:IN_MODULE]->(mod:Module)
+WITH h, handler, mod
+WHERE $module IS NULL OR mod.artifact = $module OR mod.path ENDS WITH ('/' + $module)
+RETURN h.http_method AS http_method, h.path AS path, h.framework AS framework,
+       h.produces AS produces, h.consumes AS consumes, h.embed_text AS summary,
+       handler.qualified_name AS handler_qualified_name, mod.artifact AS module
+ORDER BY h.path, h.http_method
+LIMIT $limit
 """
 
 _VECTOR_SEARCH_POLICY = """
@@ -435,37 +502,114 @@ class Retriever:
                 for row in rows
             ]
 
+    def get_beans_for(self, qualified_name: str) -> BeanDetail | None:
+        """The Spring bean for a `CodeEntity.qualified_name` (or a `Bean.id`),
+        with its `INJECTS` / `PRODUCES` wiring in both directions and the
+        `ConfigProperty` keys it `BINDS`. `None` if no bean matches.
+        """
+        with self._driver.session() as session:
+            record = session.run(cast(LiteralString, _GET_BEANS_FOR), key=qualified_name).single()
+        if record is None:
+            return None
+        row = dict(record)
+        return BeanDetail(
+            bean_id=row["bean_id"],
+            name=row["name"],
+            stereotype=row["stereotype"],
+            scope=row["scope"],
+            primary=bool(row["primary"]),
+            bean_type=row["bean_type"],
+            defined_in=row["defined_in"],
+            injects=_bean_edges(row["injects"]),
+            injected_by=_bean_edges(row["injected_by"]),
+            produces=_bean_edges(row["produces"]),
+            produced_by=_bean_edges(row["produced_by"]),
+            binds=[key for key in row["binds"] if key],
+            unresolved_injections=row["unresolved_injections"],
+        )
+
+    def get_endpoints(
+        self,
+        path_glob: str | None = None,
+        http_method: str | None = None,
+        module: str | None = None,
+        limit: int = 100,
+    ) -> list[EndpointResult]:
+        """Spring MVC / JAX-RS `HttpEndpoint`s, optionally filtered by a
+        `path_glob` (`*` / `?` wildcards, whole-path match), an exact
+        `http_method` (`GET` / `POST` / … / `EXCEPTION`), and/or the owning
+        `Module.artifact`. Ordered by path then method.
+        """
+        params = {
+            "path_regex": _glob_to_regex(path_glob) if path_glob else None,
+            "http_method": http_method.upper() if http_method else None,
+            "module": module,
+            "limit": limit,
+        }
+        with self._driver.session() as session:
+            rows = session.run(cast(LiteralString, _GET_ENDPOINTS), params)
+            return [
+                EndpointResult(
+                    http_method=row["http_method"],
+                    path=row["path"],
+                    framework=row["framework"],
+                    handler_qualified_name=row["handler_qualified_name"],
+                    module=row["module"],
+                    produces=row["produces"] or [],
+                    consumes=row["consumes"] or [],
+                    summary=row["summary"],
+                )
+                for row in rows
+            ]
+
     def _code_candidates(
-        self, session: Any, query: str, candidate_k: int
+        self, session: Any, query: str, candidate_k: int, filters: dict[str, str | None]
     ) -> tuple[dict[str, dict[str, Any]], dict[str, float]]:
         """One hybrid-search pass for `search_code`: `({qualified_name: row}, {qn: score})`."""
         vector = self._embedder.embed([query])[0]
         vector_rows = [
             dict(row)
             for row in session.run(
-                cast(LiteralString, _VECTOR_SEARCH_CODE), k=candidate_k, vector=vector
+                cast(LiteralString, _VECTOR_SEARCH_CODE),
+                k=candidate_k,
+                vector=vector,
+                **filters,
             )
         ]
         fulltext_scores = self._fulltext_scores(
             session,
             cast(LiteralString, _FULLTEXT_SEARCH_CODE),
-            {"query": _escape_lucene(query), "k": candidate_k},
+            {"query": _escape_lucene(query), "k": candidate_k, **filters},
             "qualified_name",
         )
         by_id = {row["qualified_name"]: row for row in vector_rows}
         combined = combine_scores({qn: row["score"] for qn, row in by_id.items()}, fulltext_scores)
         return by_id, combined
 
-    def search_code(self, query: str, top_k: int = 5) -> list[CodeSearchResult]:
+    def search_code(
+        self,
+        query: str,
+        top_k: int = 5,
+        stereotype: str | None = None,
+        annotation: str | None = None,
+        module: str | None = None,
+    ) -> list[CodeSearchResult]:
         """Hybrid (vector + full-text) search over `CodeEntity` nodes —
         the code-search complement to `search` (which covers prose chunks only).
+        Optional `stereotype` / `annotation` / `module` narrow the hits to the
+        Spring / Java-framework graph.
         """
         candidate_k = top_k * CANDIDATE_MULTIPLIER
+        filters: dict[str, str | None] = {
+            "stereotype": stereotype,
+            "annotation": annotation,
+            "module": module,
+        }
         by_id: dict[str, dict[str, Any]] = {}
         combined_scores: dict[str, float] = {}
         with self._driver.session() as session:
             for variant in self._search_queries(query):
-                rows, scores = self._code_candidates(session, variant, candidate_k)
+                rows, scores = self._code_candidates(session, variant, candidate_k, filters)
                 by_id.update(rows)
                 _merge_keeping_max(combined_scores, scores)
 
@@ -598,6 +742,38 @@ def _min_max_normalize(scores: dict[str, float]) -> dict[str, float]:
     if high == low:
         return dict.fromkeys(scores, 1.0)
     return {chunk_id: (score - low) / (high - low) for chunk_id, score in scores.items()}
+
+
+def _bean_edges(rows: list[dict[str, Any]] | None) -> list[BeanEdge]:
+    """Drop the all-null placeholder map a Cypher `collect(DISTINCT {…})` emits
+    when its `OPTIONAL MATCH` found nothing, and shape the rest as `BeanEdge`s.
+    """
+    return [
+        BeanEdge(
+            bean_id=row["bean_id"],
+            name=row.get("name") or row["bean_id"],
+            stereotype=row.get("stereotype"),
+            via=row.get("via"),
+        )
+        for row in (rows or [])
+        if row and row.get("bean_id")
+    ]
+
+
+def _glob_to_regex(glob: str) -> str:
+    """A shell-style `path_glob` (`*` = any run, `?` = one char) as a Neo4j
+    `=~` regex — every other metacharacter is escaped, and the match is
+    whole-string (Neo4j anchors `=~`).
+    """
+    out: list[str] = []
+    for char in glob:
+        if char == "*":
+            out.append(".*")
+        elif char == "?":
+            out.append(".")
+        else:
+            out.append(re.escape(char))
+    return "".join(out)
 
 
 def _neighbor_results(rows: Any, direction: str) -> list[NeighborResult]:
