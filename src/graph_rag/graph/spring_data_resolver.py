@@ -249,7 +249,10 @@ class SpringDataResolver:
             target_qn = cls._resolve(raw_target, entity_qns, entity_qn_by_simple) or cls._resolve(
                 raw_target, all_qns, {}
             )
-            if target_qn is None or target_qn == entity_qn:
+            if target_qn is None:
+                # a self-edge (target == entity) is kept: tree / hierarchy
+                # models (Category.parent / .children) need it, and the
+                # RELATES_TO {field} key already separates the two directions
                 continue
             relations.append(
                 {

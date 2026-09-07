@@ -279,7 +279,7 @@ def test_assemble_persists_as_only_on_unambiguous_table_name() -> None:
     assert ambiguous.persists_as == []
 
 
-def test_assemble_relates_to_resolves_target_and_skips_self() -> None:
+def test_assemble_relates_to_resolves_target_and_keeps_self_edges() -> None:
     order = _entity_def(
         qualified_name="com.acme.Order",
         simple_name="Order",
@@ -309,7 +309,14 @@ def test_assemble_relates_to_resolves_target_and_skips_self() -> None:
             "field": "lines",
             "kind": "one-to-many",
             "mapped_by": "order",
-        }
+        },
+        {
+            "from": "com.acme.Order",
+            "to": "com.acme.Order",
+            "field": "parent",
+            "kind": "many-to-one",
+            "mapped_by": "",
+        },
     ]
 
 
