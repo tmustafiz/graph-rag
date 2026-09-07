@@ -1,9 +1,9 @@
 import hashlib
 import logging
 from pathlib import Path
+from typing import Protocol
 
 from .graph.graph_writer import GraphWriter
-from .graph.project_model_resolver import ProjectModelResolver
 from .ingest.embedders import Embedder
 from .ingest.enricher import Enricher
 from .ingest.parser import Parser
@@ -15,6 +15,14 @@ from .unsupported_file_type_error import UnsupportedFileTypeError
 logger = logging.getLogger(__name__)
 
 _BUILD_FILE_NAMES = ("pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle")
+
+
+class PostIngestResolver(Protocol):
+    """A graph pass run once after a whole directory ingest (project model,
+    Spring beans, …). Idempotent; returns a small stats dict for logging.
+    """
+
+    def resolve(self) -> dict[str, int]: ...
 
 
 def _ingest_rank(path: Path) -> int:
@@ -55,12 +63,12 @@ class IngestionPipeline:
         registry: ParserRegistry,
         embedder: Embedder,
         writer: GraphWriter,
-        resolver: ProjectModelResolver | None = None,
+        resolvers: list[PostIngestResolver] | None = None,
     ) -> None:
         self._registry = registry
         self._enricher = Enricher(embedder)
         self._writer = writer
-        self._resolver = resolver
+        self._resolvers = resolvers or []
 
     def run(self, path: Path, dry_run: bool = False) -> list[IngestionResult]:
         logger.info("ingestion run starting: path=%s dry_run=%s", path, dry_run)
@@ -85,8 +93,9 @@ class IngestionPipeline:
                 for file, parser in pairs
                 if parser is not None
             ]
-            if not dry_run and self._resolver is not None:
-                self._resolver.resolve()
+            if not dry_run:
+                for resolver in self._resolvers:
+                    resolver.resolve()
 
         skipped = sum(1 for r in results if r.skipped)
         failed = sum(1 for r in results if r.error is not None)

@@ -12,6 +12,7 @@ from .graph.client import check_connectivity, driver_session
 from .graph.graph_writer import GraphWriter
 from .graph.project_model_resolver import ProjectModelResolver
 from .graph.schema import apply_schema
+from .graph.spring_bean_resolver import SpringBeanResolver
 from .http_app import build_http_app
 from .ingest.embedders import build_embedder
 from .ingest.parser_registry import ParserRegistry
@@ -84,7 +85,7 @@ def ingest(
             ParserRegistry(),
             build_embedder(),
             GraphWriter(driver),
-            ProjectModelResolver(driver),
+            [ProjectModelResolver(driver), SpringBeanResolver(driver)],
         )
         try:
             results = pipeline.run(path, dry_run=dry_run)
@@ -219,7 +220,10 @@ def eval_retrieval(
             )
             raise typer.Exit(code=1)
         pipeline = IngestionPipeline(
-            ParserRegistry(), embedder, GraphWriter(driver), ProjectModelResolver(driver)
+            ParserRegistry(),
+            embedder,
+            GraphWriter(driver),
+            [ProjectModelResolver(driver), SpringBeanResolver(driver)],
         )
         pipeline.run(EVAL_CORPUS_DIR)
         baseline = RetrievalEvaluator(Retriever(driver, embedder)).run(cases)
@@ -303,7 +307,10 @@ def serve_mcp(
             retriever = Retriever(driver, embedder, build_reranker(), build_query_rewriter())
             writer = GraphWriter(driver)
             ingestion_pipeline = IngestionPipeline(
-                ParserRegistry(), embedder, writer, ProjectModelResolver(driver)
+                ParserRegistry(),
+                embedder,
+                writer,
+                [ProjectModelResolver(driver), SpringBeanResolver(driver)],
             )
         if role in (McpRole.MEMORY, McpRole.ALL):
             memory_writer = MemoryWriter(driver, embedder)

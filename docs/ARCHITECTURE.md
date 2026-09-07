@@ -51,6 +51,7 @@ flowchart TD
 | `graph_rag.graph.schema` | Constraint + index DDL (`apply-schema`). Idempotent. |
 | `graph_rag.graph.graph_writer` | Cypher `MERGE` upserts for every node/edge type. |
 | `graph_rag.graph.project_model_resolver` | Post-directory-ingest pass: `(Source)-[:IN_MODULE]->(Module)`, sibling-dependency promotion, and `IMPORTS.external` classification. |
+| `graph_rag.graph.spring_bean_resolver` | Post-directory-ingest pass: `Bean` nodes + `IS_BEAN` / `INJECTS` / `PRODUCES` / `BINDS` from the annotation + type-hierarchy + config layers. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
@@ -80,6 +81,7 @@ flowchart TD
 | `ConfigProperty` | `id` (hash of file + profile + key + line) | `key` (dotted, list items `[i]`), `value` (string), `profile` (`None` = default), `origin_line` |
 | `Module` | `path` (module directory, absolute) | `artifact`, `group`, `version`, `build_tool` (`maven` / `gradle`), `packages` (owned package prefixes), `source_roots` |
 | `ExternalArtifact` | `gav` (`group:artifact`) | `group`, `artifact`, `version` |
+| `Bean` | `id` (= the owning `CodeEntity.qualified_name`) | `name` (Spring bean name), `stereotype`, `scope`, `primary`, `bean_type`, `unresolved_injections` (JSON) |
 
 **Relationships**
 
@@ -102,12 +104,13 @@ flowchart TD
 - `(Source)-[:IMPORTS]->(Source)` (stylesheet `@import` / `@use` / `@forward`)
 - `(Source)-[:DEFINES]->(Module)`, `(Source)-[:IN_MODULE]->(Module)` (every file → its nearest module directory)
 - `(Module)-[:DEPENDS_ON {scope}]->(Module)` (Maven reactor / sibling GAV / Gradle `project(':x')`), `(Module)-[:DEPENDS_ON_EXTERNAL {gav, scope}]->(ExternalArtifact)`
+- `(CodeEntity)-[:IS_BEAN]->(Bean)`, `(Bean)-[:INJECTS {via, qualifier, multiplicity}]->(Bean)`, `(Bean)-[:PRODUCES]->(Bean)` (`@Bean` method), `(Bean)-[:BINDS]->(ConfigProperty)` (`@Value` / `@ConfigurationProperties`)
 
 **Indexes** (`grag-mcp apply-schema`)
 
 - Uniqueness constraints on every node key above.
 - Vector indexes (cosine, 384-d) on `Chunk`, `CodeEntity`, `PolicyRule`, `AgentMemory`, `DbTable`, `DbView` `.embedding`.
-- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text), `Annotation` (name/fqn), `ConfigProperty` (key/value), `Module` (artifact/group).
+- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text), `Annotation` (name/fqn), `ConfigProperty` (key/value), `Module` (artifact/group), `Bean` (name/stereotype/bean_type).
 - Range indexes on `AgentMemory.last_accessed_at` and `CodeEntity.pagerank`.
 
 ## Ingestion
@@ -124,8 +127,9 @@ skipped without aborting the batch.
 
 On a **directory** ingest, build files (`pom.xml`, `*.gradle*`) parse first so
 the `Module` layer exists before the `.java` files, and once the batch is done
-`ProjectModelResolver` runs a single graph pass to wire `IN_MODULE`, promote
-sibling dependencies, and classify `IMPORTS.external`.
+two graph passes run: `ProjectModelResolver` wires `IN_MODULE`, promotes
+sibling dependencies and classifies `IMPORTS.external`; then
+`SpringBeanResolver` derives the `Bean` layer.
 
 The same operation is reachable three ways: the CLI, the `ingest_path` MCP tool,
 and `POST /ingest` (for CI / pre-commit hooks with no MCP client).
@@ -300,6 +304,28 @@ nesting ignored) and a grammar gap logs a warning and yields a partial
 `Module`. Sibling resolution (`project(':x')` and matching GAVs →
 `DEPENDS_ON`) and `IMPORTS.external` classification happen afterwards in
 `ProjectModelResolver`, not in the parsers.
+
+`SpringBeanResolver` is the second post-directory-ingest pass and reads only
+from the graph. Type-level stereotype `Annotation`s (`@Component` / `@Service` /
+`@Repository` / `@Controller` / `@RestController` / `@Configuration` /
+`@SpringBootApplication` / `@ConfigurationProperties`, plus one level of custom
+meta-annotated stereotype — an annotation type in-graph that is itself
+stereotyped) and `@Bean` methods inside a bean class become
+`(:Bean {name, stereotype, scope, primary, bean_type})` keyed by the owning
+`CodeEntity.qualified_name`, linked `(:CodeEntity)-[:IS_BEAN]->(:Bean)`, and a
+`@Configuration` bean `-[:PRODUCES]->` its `@Bean` methods. Injection points —
+constructor parameters (the sole constructor, or the `@Autowired` one,
+including Lombok's synthetic `@RequiredArgsConstructor`), and `@Autowired` /
+`@Inject` / `@Resource` fields and setters — resolve to a target `Bean` by
+**type**: the declared type (or the element type of `List<X>` / `Optional<X>` /
+`ObjectProvider<X>` / `X[]`, recorded as `multiplicity`) is matched against
+every bean's own type and its `EXTENDS` / `IMPLEMENTS` supertypes, then
+narrowed by `@Qualifier` / `@Named`. A unique hit is an
+`(:Bean)-[:INJECTS {via, qualifier, multiplicity}]->(:Bean)` edge; zero or
+several go on `Bean.unresolved_injections` (a JSON list of
+`{type, via, reason}`) — never guessed. `@Value("${key:default}")` and
+`@ConfigurationProperties(prefix=…)` add `(:Bean)-[:BINDS]->(:ConfigProperty)`
+edges. The `:Bean` layer is rebuilt from scratch each run.
 
 ## Retrieval
 
