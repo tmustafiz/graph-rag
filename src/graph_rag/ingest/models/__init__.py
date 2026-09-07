@@ -8,6 +8,9 @@ from .db_index import DbIndex
 from .db_reference import DbReference
 from .db_table import DbTable
 from .db_view import DbView
+from .external_artifact import ExternalArtifact
+from .module import Module
+from .module_dependency import ModuleDependency
 from .parsed_document import ParsedDocument
 from .policy_rule import PolicyRule
 from .section import Section
@@ -24,6 +27,9 @@ __all__ = [
     "DbReference",
     "DbTable",
     "DbView",
+    "ExternalArtifact",
+    "Module",
+    "ModuleDependency",
     "ParsedDocument",
     "PolicyRule",
     "Section",

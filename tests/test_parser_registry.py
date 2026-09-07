@@ -2,9 +2,11 @@ from pathlib import Path
 
 from graph_rag.ingest.parser_registry import ParserRegistry
 from graph_rag.ingest.parsers import (
+    GradleParser,
     JavaParser,
     JavaScriptParser,
     MarkdownParser,
+    MavenParser,
     PdfParser,
     PythonParser,
     SqlParser,
@@ -31,6 +33,10 @@ def test_for_path_routes_by_extension() -> None:
     assert isinstance(registry.for_path(Path("theme.less")), StylesheetParser)
     assert isinstance(registry.for_path(Path("policy.yaml")), YamlParser)
     assert isinstance(registry.for_path(Path("policy.yml")), YamlParser)
+    assert isinstance(registry.for_path(Path("service/pom.xml")), MavenParser)
+    assert isinstance(registry.for_path(Path("app/build.gradle")), GradleParser)
+    assert isinstance(registry.for_path(Path("app/build.gradle.kts")), GradleParser)
+    assert isinstance(registry.for_path(Path("settings.gradle")), GradleParser)
 
 
 def test_for_path_returns_none_for_unsupported_extension() -> None:

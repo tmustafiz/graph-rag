@@ -10,6 +10,9 @@ from .db_index import DbIndex
 from .db_reference import DbReference
 from .db_table import DbTable
 from .db_view import DbView
+from .external_artifact import ExternalArtifact
+from .module import Module
+from .module_dependency import ModuleDependency
 from .policy_rule import PolicyRule
 from .section import Section
 from .source import Source
@@ -35,6 +38,13 @@ class ParsedDocument(BaseModel):
     # `(:ConfigFile)-[:HAS_PROPERTY]->(:ConfigProperty)-[:REFERENCES]->(:ConfigProperty)`.
     config_files: list[ConfigFile] = Field(default_factory=list)
     config_properties: list[ConfigProperty] = Field(default_factory=list)
+    # Maven/Gradle project model: one `Module` per parsed build file, its
+    # declared third-party `ExternalArtifact`s, and its `ModuleDependency`
+    # edges; feeds `(:Module)-[:DEPENDS_ON|DEPENDS_ON_EXTERNAL]->(...)` and,
+    # after the resolver pass, `(:Source)-[:IN_MODULE]->(:Module)`.
+    modules: list[Module] = Field(default_factory=list)
+    external_artifacts: list[ExternalArtifact] = Field(default_factory=list)
+    module_dependencies: list[ModuleDependency] = Field(default_factory=list)
     db_tables: list[DbTable] = Field(default_factory=list)
     db_columns: list[DbColumn] = Field(default_factory=list)
     db_views: list[DbView] = Field(default_factory=list)

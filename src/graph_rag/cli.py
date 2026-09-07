@@ -10,6 +10,7 @@ from .eval.retrieval_evaluator import EVAL_CORPUS_DIR, RetrievalEvaluator
 from .graph.centrality_analyzer import CentralityAnalyzer
 from .graph.client import check_connectivity, driver_session
 from .graph.graph_writer import GraphWriter
+from .graph.project_model_resolver import ProjectModelResolver
 from .graph.schema import apply_schema
 from .http_app import build_http_app
 from .ingest.embedders import build_embedder
@@ -79,7 +80,12 @@ def ingest(
     Skips any file whose content is unchanged since the last ingest.
     """
     with driver_session() as driver:
-        pipeline = IngestionPipeline(ParserRegistry(), build_embedder(), GraphWriter(driver))
+        pipeline = IngestionPipeline(
+            ParserRegistry(),
+            build_embedder(),
+            GraphWriter(driver),
+            ProjectModelResolver(driver),
+        )
         try:
             results = pipeline.run(path, dry_run=dry_run)
         except UnsupportedFileTypeError as exc:
@@ -212,7 +218,9 @@ def eval_retrieval(
                 fg=typer.colors.RED,
             )
             raise typer.Exit(code=1)
-        pipeline = IngestionPipeline(ParserRegistry(), embedder, GraphWriter(driver))
+        pipeline = IngestionPipeline(
+            ParserRegistry(), embedder, GraphWriter(driver), ProjectModelResolver(driver)
+        )
         pipeline.run(EVAL_CORPUS_DIR)
         baseline = RetrievalEvaluator(Retriever(driver, embedder)).run(cases)
         if not rerank and not rewrite:
@@ -294,7 +302,9 @@ def serve_mcp(
         if role in (McpRole.KNOWLEDGE, McpRole.ALL):
             retriever = Retriever(driver, embedder, build_reranker(), build_query_rewriter())
             writer = GraphWriter(driver)
-            ingestion_pipeline = IngestionPipeline(ParserRegistry(), embedder, writer)
+            ingestion_pipeline = IngestionPipeline(
+                ParserRegistry(), embedder, writer, ProjectModelResolver(driver)
+            )
         if role in (McpRole.MEMORY, McpRole.ALL):
             memory_writer = MemoryWriter(driver, embedder)
             memory_recaller = MemoryRecaller(driver, embedder)

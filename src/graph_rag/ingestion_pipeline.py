@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 from .graph.graph_writer import GraphWriter
+from .graph.project_model_resolver import ProjectModelResolver
 from .ingest.embedders import Embedder
 from .ingest.enricher import Enricher
 from .ingest.parser import Parser
@@ -11,6 +12,17 @@ from .ingestion_result import IngestionResult
 from .unsupported_file_type_error import UnsupportedFileTypeError
 
 logger = logging.getLogger(__name__)
+
+_BUILD_FILE_NAMES = ("pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle")
+
+
+def _ingest_rank(path: Path) -> int:
+    """Directory ingest order: build files first (so `Module` nodes exist
+    before the `.java` files that resolve against them), then everything else.
+    """
+    if path.name in _BUILD_FILE_NAMES or path.name.endswith((".gradle", ".gradle.kts")):
+        return 0
+    return 1
 
 
 class IngestionPipeline:
@@ -23,10 +35,17 @@ class IngestionPipeline:
     with `error` set, rather than aborting the rest of the batch.
     """
 
-    def __init__(self, registry: ParserRegistry, embedder: Embedder, writer: GraphWriter) -> None:
+    def __init__(
+        self,
+        registry: ParserRegistry,
+        embedder: Embedder,
+        writer: GraphWriter,
+        resolver: ProjectModelResolver | None = None,
+    ) -> None:
         self._registry = registry
         self._enricher = Enricher(embedder)
         self._writer = writer
+        self._resolver = resolver
 
     def run(self, path: Path, dry_run: bool = False) -> list[IngestionResult]:
         logger.info("ingestion run starting: path=%s dry_run=%s", path, dry_run)
@@ -43,13 +62,15 @@ class IngestionPipeline:
                     for file in path.rglob("*")
                     if file.is_file()
                 ),
-                key=lambda pair: pair[0],
+                key=lambda pair: (_ingest_rank(pair[0]), pair[0]),
             )
             results = [
                 self._ingest_one(file, parser, dry_run)
                 for file, parser in pairs
                 if parser is not None
             ]
+            if not dry_run and self._resolver is not None:
+                self._resolver.resolve()
 
         skipped = sum(1 for r in results if r.skipped)
         failed = sum(1 for r in results if r.error is not None)

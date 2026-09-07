@@ -50,6 +50,7 @@ flowchart TD
 | `graph_rag.ingestion_pipeline` | Orchestrates parse → hash-check → enrich → write. Skips unchanged files; deletes stale children of changed files. |
 | `graph_rag.graph.schema` | Constraint + index DDL (`apply-schema`). Idempotent. |
 | `graph_rag.graph.graph_writer` | Cypher `MERGE` upserts for every node/edge type. |
+| `graph_rag.graph.project_model_resolver` | Post-directory-ingest pass: `(Source)-[:IN_MODULE]->(Module)`, sibling-dependency promotion, and `IMPORTS.external` classification. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
@@ -77,13 +78,15 @@ flowchart TD
 | `Annotation` | `id` (hash of owner + target + fqn + line) | `name`, `fqn` (import-resolved), `target` (`type`/`method`/`constructor`/`field`/`param:<name>`), `attributes` (JSON string), `line` |
 | `ConfigFile` | `path` (= owning `Source.path`) | `format` (`properties` / `yaml`) |
 | `ConfigProperty` | `id` (hash of file + profile + key + line) | `key` (dotted, list items `[i]`), `value` (string), `profile` (`None` = default), `origin_line` |
+| `Module` | `path` (module directory, absolute) | `artifact`, `group`, `version`, `build_tool` (`maven` / `gradle`), `packages` (owned package prefixes), `source_roots` |
+| `ExternalArtifact` | `gav` (`group:artifact`) | `group`, `artifact`, `version` |
 
 **Relationships**
 
 - `(Source)-[:HAS_SECTION]->(Section)`, `(Section)-[:PARENT_OF]->(Section)`
 - `(Section)-[:HAS_CHUNK]->(Chunk)`, `(Chunk)-[:NEXT]->(Chunk)` (reading order)
 - `(Source)-[:DEFINES]->(CodeEntity)`, `(CodeEntity)-[:CONTAINS]->(CodeEntity)` (class → method)
-- `(CodeEntity)-[:CALLS]->(CodeEntity)`, `(CodeEntity)-[:IMPORTS]->(CodeEntity)`
+- `(CodeEntity)-[:CALLS]->(CodeEntity)`, `(CodeEntity)-[:IMPORTS]->(CodeEntity)` (`IMPORTS.external` — set by the project-model resolver: `false` for first-party / in-project targets, `true` for third-party)
 - `(CodeEntity)-[:RENDERS]->(CodeEntity)` (React `component` → child component, from the JSX it mounts)
 - `(CodeEntity)-[:ANNOTATED_WITH]->(Annotation)` (Java annotations on a type / method / constructor / annotated field / parameter)
 - `(Source)-[:DEFINES]->(ConfigFile)`, `(ConfigFile)-[:HAS_PROPERTY]->(ConfigProperty)`
@@ -96,12 +99,14 @@ flowchart TD
 - `(CodeEntity)-[:READS]->(DbTable)`, `(CodeEntity)-[:WRITES]->(DbTable)` (a SQL routine's `SELECT` vs `INSERT`/`UPDATE`/`DELETE`/`MERGE`)
 - `(CodeEntity)-[:ON]->(DbTable)` (the table a `trigger` fires on)
 - `(Source)-[:IMPORTS]->(Source)` (stylesheet `@import` / `@use` / `@forward`)
+- `(Source)-[:DEFINES]->(Module)`, `(Source)-[:IN_MODULE]->(Module)` (every file → its nearest module directory)
+- `(Module)-[:DEPENDS_ON {scope}]->(Module)` (Maven reactor / sibling GAV / Gradle `project(':x')`), `(Module)-[:DEPENDS_ON_EXTERNAL {gav, scope}]->(ExternalArtifact)`
 
 **Indexes** (`grag-mcp apply-schema`)
 
 - Uniqueness constraints on every node key above.
 - Vector indexes (cosine, 384-d) on `Chunk`, `CodeEntity`, `PolicyRule`, `AgentMemory`, `DbTable`, `DbView` `.embedding`.
-- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text), `Annotation` (name/fqn), `ConfigProperty` (key/value).
+- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text), `Annotation` (name/fqn), `ConfigProperty` (key/value), `Module` (artifact/group).
 - Range indexes on `AgentMemory.last_accessed_at` and `CodeEntity.pagerank`.
 
 ## Ingestion
@@ -115,6 +120,11 @@ since the last run is skipped entirely (no re-parse, no re-embed). Re-ingesting
 a changed file removes any `Section` / `Chunk` / `CodeEntity` / `PolicyRule` it
 no longer produces. A file that fails to parse/embed/write is recorded and
 skipped without aborting the batch.
+
+On a **directory** ingest, build files (`pom.xml`, `*.gradle*`) parse first so
+the `Module` layer exists before the `.java` files, and once the batch is done
+`ProjectModelResolver` runs a single graph pass to wire `IN_MODULE`, promote
+sibling dependencies, and classify `IMPORTS.external`.
 
 The same operation is reachable three ways: the CLI, the `ingest_path` MCP tool,
 and `POST /ingest` (for CI / pre-commit hooks with no MCP client).
@@ -256,6 +266,23 @@ within the same file. Real line numbers survive (`yaml.compose_all`). A
 plain `search` tool; values under secret-looking keys (`password`, `secret`,
 `token`, `credential`, a `key` segment) are redacted to `***` in that chunk
 text only — the real value stays on the `ConfigProperty` node.
+
+`MavenParser` (`pom.xml`, stdlib `xml.etree`) and `GradleParser`
+(`build.gradle` / `build.gradle.kts` / `settings.gradle(.kts)`, tree-sitter
+`groovy` / `kotlin`) build the **project model**. Each yields one `Module`
+(`groupId` / `artifactId` / `version`, inherited from a Maven `<parent>` when
+absent; Gradle `group` / `version` / `rootProject.name`), its declared
+dependencies as `ExternalArtifact` + `ModuleDependency` (Maven `<scope>` /
+Gradle configuration → the edge `scope`), reactor / `include` children as
+`reactor` `ModuleDependency` edges, and discovered `source_roots`
+(`src/main|test/java`, a `<sourceDirectory>` / `srcDirs` override, and
+`target/generated-sources` / `build/generated` when they exist). Maven `${...}`
+property interpolation is build-free and best-effort; Gradle extraction is
+deliberately shallow (every call and `name = "value"` assignment, block
+nesting ignored) and a grammar gap logs a warning and yields a partial
+`Module`. Sibling resolution (`project(':x')` and matching GAVs →
+`DEPENDS_ON`) and `IMPORTS.external` classification happen afterwards in
+`ProjectModelResolver`, not in the parsers.
 
 ## Retrieval
 

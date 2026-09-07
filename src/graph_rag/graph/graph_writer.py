@@ -231,6 +231,38 @@ MATCH (target:ConfigProperty {id: pair.to})
 MERGE (cp)-[:REFERENCES]->(target)
 """
 
+_MERGE_MODULES = """
+UNWIND $rows AS row
+MERGE (m:Module {path: row.path})
+SET m.artifact = row.artifact, m.group = row.group, m.version = row.version,
+    m.build_tool = row.build_tool, m.packages = row.packages, m.source_roots = row.source_roots
+WITH m
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(m)
+"""
+
+_MERGE_EXTERNAL_ARTIFACTS = """
+UNWIND $rows AS row
+MERGE (e:ExternalArtifact {gav: row.gav})
+SET e.group = row.group, e.artifact = row.artifact, e.version = row.version
+"""
+
+_MERGE_MODULE_DEPENDS_ON = """
+UNWIND $pairs AS pair
+MATCH (m:Module {path: pair.from})
+MERGE (t:Module {path: pair.to})
+MERGE (m)-[d:DEPENDS_ON]->(t)
+SET d.scope = pair.scope
+"""
+
+_MERGE_MODULE_DEPENDS_ON_EXTERNAL = """
+UNWIND $pairs AS pair
+MATCH (m:Module {path: pair.from})
+MERGE (e:ExternalArtifact {gav: pair.gav})
+MERGE (m)-[d:DEPENDS_ON_EXTERNAL]->(e)
+SET d.gav = pair.gav, d.scope = pair.scope
+"""
+
 _GET_SOURCE_CONTENT_HASH = """
 MATCH (s:Source {path: $path})
 RETURN s.content_hash AS content_hash
@@ -273,6 +305,15 @@ _RECONCILE_POLICY_RULES = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(p:PolicyRule)
 WHERE NOT p.id IN $keep_ids
 DETACH DELETE p
+"""
+
+# A re-parsed build file that no longer declares a module drops the stale
+# `Module` (its `DEPENDS_ON` edges go with the DETACH); shared
+# `ExternalArtifact` nodes are left for the resolver / left harmless.
+_RECONCILE_MODULES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:Module)
+WHERE NOT m.path IN $keep_ids
+DETACH DELETE m
 """
 
 # Config properties then their file — a re-parsed `application.yml` that drops a
@@ -373,6 +414,16 @@ class GraphWriter:
                 session.execute_write(self._write_config_properties, batch)
             for batch in self._batched(self._config_property_reference_pairs(document)):
                 session.execute_write(self._write_config_property_references, batch)
+            for batch in self._batched([m.model_dump(mode="json") for m in document.modules]):
+                session.execute_write(self._write_modules, document.source.path, batch)
+            for batch in self._batched(
+                [a.model_dump(mode="json") for a in document.external_artifacts]
+            ):
+                session.execute_write(self._write_external_artifacts, batch)
+            for batch in self._batched(self._module_depends_on_pairs(document)):
+                session.execute_write(self._write_module_depends_on, batch)
+            for batch in self._batched(self._module_depends_on_external_pairs(document)):
+                session.execute_write(self._write_module_depends_on_external, batch)
             session.execute_write(
                 self._reconcile_chunks,
                 document.source.path,
@@ -407,6 +458,11 @@ class GraphWriter:
                 self._reconcile_config_files,
                 document.source.path,
                 [f.path for f in document.config_files],
+            )
+            session.execute_write(
+                self._reconcile_modules,
+                document.source.path,
+                [m.path for m in document.modules],
             )
             session.execute_write(
                 self._reconcile_db_tables,
@@ -547,6 +603,22 @@ class GraphWriter:
         tx.run(cast(LiteralString, _MERGE_CONFIG_PROPERTY_REFERENCES), pairs=pairs)
 
     @staticmethod
+    def _write_modules(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_MODULES), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_external_artifacts(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_EXTERNAL_ARTIFACTS), rows=rows)
+
+    @staticmethod
+    def _write_module_depends_on(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_MODULE_DEPENDS_ON), pairs=pairs)
+
+    @staticmethod
+    def _write_module_depends_on_external(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_MODULE_DEPENDS_ON_EXTERNAL), pairs=pairs)
+
+    @staticmethod
     def _reconcile_chunks(tx: ManagedTransaction, source_path: str, keep_ids: list[str]) -> None:
         tx.run(cast(LiteralString, _RECONCILE_CHUNKS), source_path=source_path, keep_ids=keep_ids)
 
@@ -600,6 +672,14 @@ class GraphWriter:
     ) -> None:
         tx.run(
             cast(LiteralString, _RECONCILE_CONFIG_FILES),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _reconcile_modules(tx: ManagedTransaction, source_path: str, keep_ids: list[str]) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_MODULES),
             source_path=source_path,
             keep_ids=keep_ids,
         )
@@ -769,6 +849,22 @@ class GraphWriter:
             {"from": prop.id, "to": target_id}
             for prop in document.config_properties
             for target_id in prop.references
+        ]
+
+    @staticmethod
+    def _module_depends_on_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": dep.module_path, "to": dep.target_path, "scope": dep.scope}
+            for dep in document.module_dependencies
+            if dep.target_path is not None
+        ]
+
+    @staticmethod
+    def _module_depends_on_external_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": dep.module_path, "gav": dep.target_gav, "scope": dep.scope}
+            for dep in document.module_dependencies
+            if dep.target_path is None and dep.target_gav is not None
         ]
 
     @staticmethod
