@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..models import Annotation, CodeEntity, ParsedDocument, Source
+from .lombok_synthesizer import LombokSynthesizer
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -261,6 +262,16 @@ class JavaParser:
         ]
         cls._collect_annotations(
             node, content, qualified_name, "type", imported_types, same_file_types, annotations
+        )
+        entities.extend(
+            LombokSynthesizer.synthesize(
+                node,
+                content,
+                type_qualified_name=qualified_name,
+                type_simple_name=simple_name,
+                path=path,
+                existing_members=set(overloads) | set(field_names),
+            )
         )
 
         if body is None:

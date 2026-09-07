@@ -67,7 +67,7 @@ flowchart TD
 | `Source` | `path` | `source_type`, `content_hash`, `ingested_at` |
 | `Section` | `id` | `title`, `level`, `breadcrumb`, `order`, page range |
 | `Chunk` | `id` | `text`, `token_count`, `embedding` (384-d), page/line range |
-| `CodeEntity` | `qualified_name` (globally unique across every language) | `name`, `kind` (per-language vocabulary), `language`, `signature`, `docstring`, `path`, line range, `embedding`, `pagerank` |
+| `CodeEntity` | `qualified_name` (globally unique across every language) | `name`, `kind` (per-language vocabulary), `language`, `signature`, `docstring`, `path`, line range, `embedding`, `pagerank`, `synthetic` / `origin` (compile-time-synthesized members, e.g. Lombok) |
 | `PolicyRule` | `id` | `name`, `category`, `severity`, `guideline`, `embedding` |
 | `Concept` | `name` | e.g. a Terraform `resource_type` |
 | `AgentMemory` | `id` | `content`, `embedding`, `last_accessed_at`, access count, soft-delete flag |
@@ -173,6 +173,20 @@ annotated fields, and parameters become `Annotation` nodes via
 against the file's imports, else the simple name); and there is no file-level
 `module` entity (Java has no unit below the package), so a file's `imports`
 attach to its first top-level type.
+
+`LombokSynthesizer` runs inside `JavaParser`: a type carrying `@Data` /
+`@Getter` / `@Setter` / `@Value` / `@*ArgsConstructor` / `@Builder` /
+`@Slf4j`(&friends) gets the members Lombok would generate at compile time
+materialised as `CodeEntity`s — `getX()` / `isX()` / `setX()` per field, a
+constructor with the right params (`@RequiredArgsConstructor` → the `final`,
+un-initialised and `@NonNull` fields — this is what Spring injects through),
+`builder()` + a `<Type>Builder` stub, and a `log` field. Each is flagged
+`synthetic=true`, `origin="lombok"`, with `start_line`/`end_line` on the
+annotated type; a field that already has an explicit accessor of the same name
+is left alone. Separately, annotation-processor **output** under
+`target/generated-sources` / `build/generated` is ingested as normal `.java` on
+a directory run (run the build first); `GRAG_INGEST_GENERATED_SOURCES=false`
+skips it.
 
 `JavaScriptParser` (`grag-mcp[js]`, same backend) handles JavaScript,
 TypeScript, and their JSX variants in one parser

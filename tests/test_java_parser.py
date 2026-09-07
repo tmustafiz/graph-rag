@@ -428,6 +428,122 @@ def test_graph_writer_annotation_rows_shape(tmp_path: Path) -> None:
     ]
 
 
+def _by_qn(document: object) -> dict[str, object]:
+    return {entity.qualified_name: entity for entity in document.code_entities}
+
+
+def test_lombok_data_synthesizes_getters_and_setters(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Customer",
+        "import lombok.Data;\n\n"
+        "@Data\n"
+        "public class Customer {\n"
+        "    private Long id;\n"
+        "    private String name;\n"
+        "    private boolean active;\n"
+        "}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+
+    getter = by_qn["com.acme.Customer.getId()"]
+    assert getter.kind == "method"
+    assert getter.synthetic is True
+    assert getter.origin == "lombok"
+    assert by_qn["com.acme.Customer.setId(Long)"].synthetic is True
+    assert "com.acme.Customer.isActive()" in by_qn  # boolean → isX
+    assert "com.acme.Customer.setName(String)" in by_qn
+
+
+def test_lombok_requiredargsconstructor_uses_final_fields(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "OrderService",
+        "import lombok.RequiredArgsConstructor;\n\n"
+        "@RequiredArgsConstructor\n"
+        "public class OrderService {\n"
+        "    private final OrderRepository repo;\n"
+        "    private final Clock clock;\n"
+        "    private int cacheSize = 100;\n"
+        "}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+
+    constructor = by_qn["com.acme.OrderService.OrderService(OrderRepository,Clock)"]
+    assert constructor.kind == "constructor"
+    assert constructor.synthetic is True
+    assert constructor.origin == "lombok"
+    # the initialised, non-final field is not a constructor parameter
+    assert "com.acme.OrderService.OrderService(OrderRepository,Clock,int)" not in by_qn
+
+
+def test_lombok_slf4j_synthesizes_a_log_field(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Worker",
+        "import lombok.extern.slf4j.Slf4j;\n\n@Slf4j\npublic class Worker {\n}",
+    )
+
+    log = _by_qn(JavaParser().parse(path))["com.acme.Worker#log"]
+    assert log.kind == "field"
+    assert log.name == "log"
+    assert (log.synthetic, log.origin) == (True, "lombok")
+
+
+def test_lombok_value_is_immutable_no_setters_and_builder(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Money",
+        "import lombok.Value;\nimport lombok.Builder;\n\n"
+        "@Value\n@Builder\npublic class Money {\n"
+        "    String currency;\n"
+        "    long amount;\n"
+        "}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+
+    assert "com.acme.Money.getCurrency()" in by_qn
+    assert not any(qn.startswith("com.acme.Money.set") for qn in by_qn)
+    assert by_qn["com.acme.Money.MoneyBuilder"].kind == "class"
+    assert by_qn["com.acme.Money.builder()"].synthetic is True
+    # @Value implies an all-args constructor
+    assert "com.acme.Money.Money(String,long)" in by_qn
+
+
+def test_explicit_accessor_is_not_duplicated_by_lombok(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Account",
+        "import lombok.Data;\n\n@Data\npublic class Account {\n"
+        "    private String owner;\n"
+        "    public String getOwner() { return owner; }\n"
+        "}",
+    )
+
+    owners = [e for e in JavaParser().parse(path).code_entities if e.name == "getOwner"]
+    assert len(owners) == 1
+    assert owners[0].synthetic is False
+
+
+def test_non_lombok_class_has_no_synthetic_entities(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Plain",
+        "public class Plain {\n    private int count;\n}",
+    )
+
+    assert all(not e.synthetic for e in JavaParser().parse(path).code_entities)
+
+
 def test_parse_without_tree_sitter_raises_actionable_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
