@@ -371,20 +371,30 @@ WHERE NOT sec.id IN $keep_ids
 DETACH DELETE sec
 """
 
+# Deleting the entity also deletes its `Annotation` nodes: `DETACH DELETE e`
+# alone drops only the `ANNOTATED_WITH` edge, orphaning the far node, which
+# `_RECONCILE_ANNOTATIONS` (reachability-based) can then never see (#121).
 _RECONCILE_CODE_ENTITIES = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(e:CodeEntity)
 WHERE NOT e.qualified_name IN $keep_ids
-DETACH DELETE e
+OPTIONAL MATCH (e)-[:ANNOTATED_WITH]->(a:Annotation)
+DETACH DELETE e, a
 """
 
 # Annotations reachable from a CodeEntity this Source defines but no longer
-# emitted (an `@Deprecated` removed, a field un-annotated) — swept after the
-# code-entity reconcile, which has already DETACH-deleted annotations hanging
-# off entities that vanished entirely.
+# emitted (an `@Deprecated` removed, a field un-annotated); plus a sweep of any
+# fully-orphaned `Annotation` (no owner edge) — self-heals leaks from earlier
+# runs before the code-entity reconcile started deleting them.
 _RECONCILE_ANNOTATIONS = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(:CodeEntity)-[:ANNOTATED_WITH]->(a:Annotation)
 WHERE NOT a.id IN $keep_ids
 DETACH DELETE a
+"""
+
+_SWEEP_ORPHAN_ANNOTATIONS = """
+MATCH (a:Annotation)
+WHERE NOT ()-[:ANNOTATED_WITH]->(a)
+DELETE a
 """
 
 _RECONCILE_HTTP_ENDPOINTS = """
@@ -828,6 +838,7 @@ class GraphWriter:
             source_path=source_path,
             keep_ids=keep_ids,
         )
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_ANNOTATIONS))
 
     @staticmethod
     def _reconcile_http_endpoints(
