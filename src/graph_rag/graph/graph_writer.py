@@ -263,6 +263,30 @@ MATCH (cf:ConfigFile {path: row.source_path})
 MERGE (cf)-[:DECLARES_BEAN]->(b)
 """
 
+_MERGE_JPA_ENTITY_DEFS = """
+UNWIND $rows AS row
+MERGE (d:JpaEntityDef {qualified_name: row.qualified_name})
+SET d.simple_name = row.simple_name, d.kind = row.kind, d.table = row.table,
+    d.id_fields = row.id_fields, d.association_fields = row.association_fields,
+    d.association_targets = row.association_targets, d.association_kinds = row.association_kinds,
+    d.association_mapped_by = row.association_mapped_by
+WITH d
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(d)
+"""
+
+_MERGE_SPRING_DATA_REPO_DEFS = """
+UNWIND $rows AS row
+MERGE (d:SpringDataRepoDef {qualified_name: row.qualified_name})
+SET d.simple_name = row.simple_name, d.base = row.base, d.entity_type = row.entity_type,
+    d.id_type = row.id_type, d.reactive = row.reactive, d.method_qns = row.method_qns,
+    d.method_names = row.method_names, d.method_query_kinds = row.method_query_kinds,
+    d.method_query_texts = row.method_query_texts, d.method_properties = row.method_properties
+WITH d
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(d)
+"""
+
 _MERGE_CONFIG_PROPERTIES = """
 UNWIND $rows AS row
 MERGE (cp:ConfigProperty {id: row.id})
@@ -393,6 +417,21 @@ WHERE NOT b.id IN $keep_ids
 DETACH DELETE b
 """
 
+# A re-parsed `.java` file that stops being a JPA entity / Spring Data
+# repository drops its stale def node (the `SpringDataResolver` pass then
+# re-derives the `:Repository` / `:JpaEntity` marks and edges).
+_RECONCILE_JPA_ENTITY_DEFS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(d:JpaEntityDef)
+WHERE NOT d.qualified_name IN $keep_ids
+DETACH DELETE d
+"""
+
+_RECONCILE_SPRING_DATA_REPO_DEFS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(d:SpringDataRepoDef)
+WHERE NOT d.qualified_name IN $keep_ids
+DETACH DELETE d
+"""
+
 # One reconcile per `:Db*` label — a re-parsed migration file that no longer
 # produces a table / column / view / index leaves no orphan behind.
 _RECONCILE_DB_TABLES = """
@@ -489,6 +528,14 @@ class GraphWriter:
                 [b.model_dump(mode="json") for b in document.spring_xml_beans]
             ):
                 session.execute_write(self._write_spring_xml_beans, document.source.path, batch)
+            for batch in self._batched([e.model_dump(mode="json") for e in document.jpa_entities]):
+                session.execute_write(self._write_jpa_entity_defs, document.source.path, batch)
+            for batch in self._batched(
+                [r.model_dump(mode="json") for r in document.spring_data_repositories]
+            ):
+                session.execute_write(
+                    self._write_spring_data_repo_defs, document.source.path, batch
+                )
             for batch in self._batched([m.model_dump(mode="json") for m in document.modules]):
                 session.execute_write(self._write_modules, document.source.path, batch)
             for batch in self._batched(
@@ -538,6 +585,16 @@ class GraphWriter:
                 self._reconcile_spring_xml_beans,
                 document.source.path,
                 [b.id for b in document.spring_xml_beans],
+            )
+            session.execute_write(
+                self._reconcile_jpa_entity_defs,
+                document.source.path,
+                [e.qualified_name for e in document.jpa_entities],
+            )
+            session.execute_write(
+                self._reconcile_spring_data_repo_defs,
+                document.source.path,
+                [r.qualified_name for r in document.spring_data_repositories],
             )
             session.execute_write(
                 self._reconcile_config_files,
@@ -704,6 +761,18 @@ class GraphWriter:
         tx.run(cast(LiteralString, _MERGE_SPRING_XML_BEANS), rows=rows, source_path=source_path)
 
     @staticmethod
+    def _write_jpa_entity_defs(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_JPA_ENTITY_DEFS), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_spring_data_repo_defs(
+        tx: ManagedTransaction, source_path: str, rows: list[dict]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _MERGE_SPRING_DATA_REPO_DEFS), rows=rows, source_path=source_path
+        )
+
+    @staticmethod
     def _write_modules(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_MODULES), rows=rows, source_path=source_path)
 
@@ -783,6 +852,26 @@ class GraphWriter:
     ) -> None:
         tx.run(
             cast(LiteralString, _RECONCILE_SPRING_XML_BEANS),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _reconcile_jpa_entity_defs(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_JPA_ENTITY_DEFS),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _reconcile_spring_data_repo_defs(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_SPRING_DATA_REPO_DEFS),
             source_path=source_path,
             keep_ids=keep_ids,
         )

@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Spring Data repository + JPA entity model. New pure `SpringDataExtractor`
+  (inside `JavaParser`) turns repository interfaces (`Repository` /
+  `CrudRepository` / `JpaRepository` / `PagingAndSortingRepository` /
+  `List*Repository` / reactive `ReactiveCrudRepository` / `R2dbcRepository` / …,
+  Mongo / Cassandra / ES, plus `@RepositoryDefinition`; `@NoRepositoryBean`
+  suppressed) into `SpringDataRepoDef`s — managed `entity_type` / `id_type` from
+  the base's generic arguments (`JpaRepository<Order, Long>`, read from the AST
+  since `CodeEntity.extends_types` drops generics), and every declared method
+  classified `derived` / `jpql` / `native` / `modifying` / `procedure` /
+  `inherited` with `@Query` / procedure text and, for derived queries, a
+  best-effort property-path parse of the method name
+  (`findByCustomerIdAndStatusOrderByCreatedAtDesc` → `customerId`, `status`)
+  that never raises on an unparseable name. JPA entities (`@Entity` /
+  `@Embeddable` / `@MappedSuperclass`, `@Table(name)`, `@Id`, `@OneToMany` /
+  `@ManyToOne` / `@ManyToMany` / `@OneToOne` + `mappedBy`) become `JpaEntityDef`s.
+  New `SpringDataResolver` — a fourth post-directory-ingest pass — tags the
+  `CodeEntity`s `:Repository` / `:JpaEntity` (with `repository_*` / `jpa_*`
+  props), tags repo methods with `query_kind` / `query_text` /
+  `query_properties`, and wires `(:Repository)-[:MANAGES]->(:JpaEntity)`,
+  `(:JpaEntity)-[:PERSISTS_AS]->(:DbTable)` (only when a `DbTable` of that name
+  was ingested — the SQL-schema bridge) and
+  `(:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(:JpaEntity)`. New
+  `jpa_entity_def_qn` / `spring_data_repo_def_qn` constraints;
+  `(:Source)-[:DEFINES]->(:SpringDataRepoDef|:JpaEntityDef)`.
+  ([#76](https://github.com/tmustafiz/graph-rag/issues/76))
 - Spring XML context parser (`<beans>`) into the same bean/DI graph. New
   `SpringXmlParser` (stdlib `xml.etree`, registered ahead of `ConfigFileParser`,
   matches only `.xml` files whose root element is `<beans>`) turns each `<bean>`
