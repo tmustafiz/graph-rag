@@ -34,6 +34,10 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT http_endpoint_id IF NOT EXISTS FOR (n:HttpEndpoint) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT spring_xml_bean_id IF NOT EXISTS "
     "FOR (n:SpringXmlBean) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT jpa_entity_def_qn IF NOT EXISTS "
+    "FOR (n:JpaEntityDef) REQUIRE n.qualified_name IS UNIQUE",
+    "CREATE CONSTRAINT spring_data_repo_def_qn IF NOT EXISTS "
+    "FOR (n:SpringDataRepoDef) REQUIRE n.qualified_name IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.

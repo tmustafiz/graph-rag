@@ -53,6 +53,7 @@ flowchart TD
 | `graph_rag.graph.project_model_resolver` | Post-directory-ingest pass: `(Source)-[:IN_MODULE]->(Module)`, sibling-dependency promotion, and `IMPORTS.external` classification. |
 | `graph_rag.graph.spring_bean_resolver` | Post-directory-ingest pass: `Bean` nodes + `IS_BEAN` / `INJECTS` / `PRODUCES` / `BINDS` from the annotation + type-hierarchy + config layers. |
 | `graph_rag.graph.spring_xml_resolver` | Post-directory-ingest pass (after `spring_bean_resolver`): projects `SpringXmlBean` defs into the same `Bean` graph (`defined_in:'xml'`), resolves `<ref>` wiring across XML + annotation beans, and `IMPORTS_CONTEXT` for `<import resource>` / `<context:property-placeholder>`. |
+| `graph_rag.graph.spring_data_resolver` | Post-directory-ingest pass (after `spring_xml_resolver`): tags repository / entity `CodeEntity`s `:Repository` / `:JpaEntity`, tags repo methods with `query_kind` / `query_text`, and wires `MANAGES` / `PERSISTS_AS` / `RELATES_TO` from the `SpringDataRepoDef` / `JpaEntityDef` defs. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
@@ -85,6 +86,9 @@ flowchart TD
 | `ExternalArtifact` | `gav` (`group:artifact`) | `group`, `artifact`, `version` |
 | `Bean` | `id` (owning `CodeEntity.qualified_name`; XML beans use a `source_path`+`bean_id` hash, stubs `xml-stub::<ref>`) | `name` (Spring bean name), `stereotype` (`XmlBean` / `XmlBeanStub` for XML-wired), `scope`, `primary`, `bean_type`, `defined_in` (`xml` when from a `<beans>` context), `unresolved_injections` (JSON) |
 | `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs`), `produces`, `consumes`, `params`, `bindings` (JSON), `embed_text`, `embedding` (384-d) |
+| `SpringDataRepoDef` / `JpaEntityDef` | `qualified_name` | Per-`.java` raw extract of a Spring Data repository (`base`, `entity_type`, `id_type`, `reactive`, parallel `method_*` arrays) / JPA type (`kind`, `table`, `id_fields`, parallel `association_*` arrays); projected onto the `CodeEntity` by `SpringDataResolver` |
+
+A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `repository_entity_type` / `repository_id_type` / `repository_reactive`), a **`:JpaEntity`** label (`jpa_kind` / `jpa_table`), or, on a repository method, `query_kind` (`derived` / `jpql` / `native` / `modifying` / `procedure` / `inherited`) + `query_text` + `query_properties` — all set by `SpringDataResolver`.
 
 **Relationships**
 
@@ -111,6 +115,8 @@ flowchart TD
 - `(Module)-[:DEPENDS_ON {scope}]->(Module)` (Maven reactor / sibling GAV / Gradle `project(':x')`), `(Module)-[:DEPENDS_ON_EXTERNAL {gav, scope}]->(ExternalArtifact)`
 - `(CodeEntity)-[:IS_BEAN]->(Bean)`, `(Bean)-[:INJECTS {via, qualifier, multiplicity, property}]->(Bean)` (`via` also `xml-constructor` / `xml-property` for XML-wired), `(Bean)-[:PRODUCES]->(Bean)` (`@Bean` method), `(Bean)-[:BINDS]->(ConfigProperty)` (`@Value` / `@ConfigurationProperties` / XML `<property value="${…}">`)
 - `(HttpEndpoint)-[:HANDLED_BY]->(CodeEntity)` (the Spring MVC / JAX-RS handler method), `(HttpEndpoint)-[:IN_MODULE]->(Module)`
+- `(Source)-[:DEFINES]->(SpringDataRepoDef|JpaEntityDef)` (per-`.java` raw extract)
+- `(CodeEntity:Repository)-[:MANAGES]->(CodeEntity:JpaEntity)` (repo's managed domain type), `(CodeEntity:JpaEntity)-[:PERSISTS_AS]->(DbTable)` (only when a `DbTable` with that name was ingested), `(CodeEntity:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(CodeEntity:JpaEntity)` (`@OneToMany` / `@ManyToOne` / `@ManyToMany` / `@OneToOne`)
 
 **Indexes** (`grag-mcp apply-schema`)
 
@@ -133,11 +139,12 @@ skipped without aborting the batch.
 
 On a **directory** ingest, build files (`pom.xml`, `*.gradle*`) parse first so
 the `Module` layer exists before the `.java` files, and once the batch is done
-three graph passes run in order: `ProjectModelResolver` wires `IN_MODULE`,
+four graph passes run in order: `ProjectModelResolver` wires `IN_MODULE`,
 promotes sibling dependencies and classifies `IMPORTS.external`;
-`SpringBeanResolver` derives the annotation `Bean` layer; then
-`SpringXmlResolver` folds the `SpringXmlBean` defs from any `<beans>` contexts
-into that same `Bean` layer.
+`SpringBeanResolver` derives the annotation `Bean` layer; `SpringXmlResolver`
+folds the `SpringXmlBean` defs from any `<beans>` contexts into that same `Bean`
+layer; then `SpringDataResolver` tags the repository / JPA-entity `CodeEntity`s
+and wires `MANAGES` / `PERSISTS_AS` / `RELATES_TO`.
 
 The same operation is reachable three ways: the CLI, the `ingest_path` MCP tool,
 and `POST /ingest` (for CI / pre-commit hooks with no MCP client).
@@ -376,6 +383,36 @@ ambiguous one → `Bean.unresolved_injections`), links `${key}` property values 
 and `<context:property-placeholder>` targets that were also ingested. Rebuilt
 from scratch each run (`defined_in:'xml'` beans and `IMPORTS_CONTEXT` edges
 dropped first).
+
+`SpringDataExtractor` runs inside `JavaParser` (single-file — a repository
+interface / entity class and its members live in one file). It reads the
+already-built `CodeEntity` / `Annotation` lists plus a small `repo_bindings`
+dict `JavaParser` pulls from the AST — the `JpaRepository<Order, Long>` generic
+type arguments, which `CodeEntity.extends_types` has dropped. Recognised bases:
+`Repository` / `CrudRepository` / `JpaRepository` /
+`PagingAndSortingRepository` / `List*Repository` / reactive
+`ReactiveCrudRepository` / `R2dbcRepository` / … (Mongo / Cassandra / ES too),
+plus `@RepositoryDefinition`; `@NoRepositoryBean` suppresses. Each declared
+method is classified best-effort — `@Modifying` → `modifying` (keeping any
+`@Query` text), `@Procedure` → `procedure`, `@Query` → `jpql` / `native`
+(`nativeQuery=true`), a CRUD-base name (`save` / `findById` / …) → `inherited`,
+otherwise `derived` with a property-path parse of the method name
+(`findByCustomerIdAndStatus…` → `customerId`, `status`) wrapped so an
+unparseable name never raises. JPA entities come from `@Entity` / `@Embeddable`
+/ `@MappedSuperclass`, `@Table(name)` (or the class name), `@Id` / `@EmbeddedId`
+fields, and `@OneToMany` / `@ManyToOne` / `@ManyToMany` / `@OneToOne`
+(`mappedBy`) associations (target from the field's element type). The raw
+extract lands as `(:Source)-[:DEFINES]->(:SpringDataRepoDef|:JpaEntityDef)`.
+
+`SpringDataResolver` is the fourth post-directory-ingest pass. Rebuilt from
+scratch each run (labels, method tags and `MANAGES` / `PERSISTS_AS` /
+`RELATES_TO` edges dropped first): it tags the repository / entity
+`CodeEntity`s `:Repository` / `:JpaEntity` with their props, tags each repo
+method with `query_kind` / `query_text` / `query_properties`, and wires
+`(:Repository)-[:MANAGES]->(:JpaEntity)` (managed type resolved to an ingested
+entity, exact then unique-simple-name), `(:JpaEntity)-[:PERSISTS_AS]->(:DbTable)`
+(only when exactly one `DbTable` carries that name — the SQL-schema bridge), and
+`(:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(:JpaEntity)`.
 
 ## Retrieval
 

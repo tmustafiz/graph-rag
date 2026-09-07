@@ -10,6 +10,7 @@ from .pdf_parser import PdfParser
 from .procedural_sql_extractor import ProceduralSqlExtractor
 from .python_parser import PythonParser
 from .react_enricher import ReactEnricher
+from .spring_data_extractor import SpringDataExtractor
 from .spring_xml_parser import SpringXmlParser
 from .sql_parser import SqlParser
 from .stylesheet_parser import StylesheetParser
@@ -28,6 +29,7 @@ __all__ = [
     "ProceduralSqlExtractor",
     "PythonParser",
     "ReactEnricher",
+    "SpringDataExtractor",
     "SpringXmlParser",
     "SqlParser",
     "StylesheetParser",

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from ..models import Annotation, CodeEntity, ParsedDocument, Source
 from .http_endpoint_extractor import HttpEndpointExtractor
 from .lombok_synthesizer import LombokSynthesizer
+from .spring_data_extractor import REACTIVE_BASES, SPRING_DATA_BASES, SpringDataExtractor
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -110,11 +111,20 @@ class JavaParser:
                 )
             )
 
+        repo_bindings = self._collect_repo_bindings(
+            type_nodes, content, package, imported_types, same_file_types
+        )
+        jpa_entities, spring_data_repositories = SpringDataExtractor.extract(
+            entities, annotations, repo_bindings
+        )
+
         return ParsedDocument(
             source=source,
             code_entities=entities,
             annotations=annotations,
             http_endpoints=HttpEndpointExtractor.extract(entities, annotations),
+            jpa_entities=jpa_entities,
+            spring_data_repositories=spring_data_repositories,
         )
 
     # -- naming -------------------------------------------------------------
@@ -739,6 +749,94 @@ class JavaParser:
         if "." in raw_name:
             return raw_name
         return imported_types.get(raw_name) or same_file_types.get(raw_name) or raw_name
+
+    # -- Spring Data repository bindings -----------------------------
+
+    @classmethod
+    def _collect_repo_bindings(
+        cls,
+        type_nodes: list["Node"],
+        content: bytes,
+        package: str,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> dict[str, dict[str, Any]]:
+        """`{interface qualified_name: {base, entity_type, id_type, reactive}}`
+        for every interface extending a recognised Spring Data base. The generic
+        type arguments (`JpaRepository<Order, Long>`) live only in the AST —
+        `CodeEntity.extends_types` has already dropped them.
+        """
+        bindings: dict[str, dict[str, Any]] = {}
+
+        def walk(node: "Node", parent_qualified_name: str | None) -> None:
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                return
+            qualified_name = cls._join(
+                parent_qualified_name or package, cls._text(name_node, content)
+            )
+            if node.type == "interface_declaration":
+                binding = cls._repository_binding(node, content, imported_types, same_file_types)
+                if binding is not None:
+                    bindings[qualified_name] = binding
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    if child.type in _TYPE_KINDS:
+                        walk(child, qualified_name)
+
+        for type_node in type_nodes:
+            walk(type_node, None)
+        return bindings
+
+    @classmethod
+    def _repository_binding(
+        cls,
+        node: "Node",
+        content: bytes,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> dict[str, Any] | None:
+        best: dict[str, Any] | None = None
+        for child in node.children:
+            if child.type not in ("extends_interfaces", "super_interfaces"):
+                continue
+            for member in cls._type_list_members(child):
+                if member.type != "generic_type" or not member.children:
+                    continue
+                base = cls._collapse(cls._text(member.children[0], content))
+                base = base.split("<", 1)[0].rsplit(".", 1)[-1].strip()
+                if base not in SPRING_DATA_BASES:
+                    continue
+                args = cls._generic_type_args(member, content, imported_types, same_file_types)
+                candidate = {
+                    "base": base,
+                    "entity_type": args[0] if args else None,
+                    "id_type": args[1] if len(args) > 1 else None,
+                    "reactive": base in REACTIVE_BASES,
+                }
+                if best is None or (candidate["id_type"] and not best["id_type"]):
+                    best = candidate
+        return best
+
+    @classmethod
+    def _generic_type_args(
+        cls,
+        generic_node: "Node",
+        content: bytes,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> list[str]:
+        for child in generic_node.children:
+            if child.type == "type_arguments":
+                return [
+                    cls._resolve_type_name(
+                        cls._type_name_text(arg, content), imported_types, same_file_types
+                    )
+                    for arg in child.children
+                    if arg.is_named
+                ]
+        return []
 
     @classmethod
     def _enum_constant_names(cls, body: "Node", content: bytes) -> list[str]:

@@ -12,11 +12,13 @@ from .db_table import DbTable
 from .db_view import DbView
 from .external_artifact import ExternalArtifact
 from .http_endpoint import HttpEndpoint
+from .jpa_entity import JpaEntity
 from .module import Module
 from .module_dependency import ModuleDependency
 from .policy_rule import PolicyRule
 from .section import Section
 from .source import Source
+from .spring_data_repository import SpringDataRepository
 from .spring_xml_bean import SpringXmlBean
 
 
@@ -44,6 +46,12 @@ class ParsedDocument(BaseModel):
     # `(:ConfigFile)-[:DECLARES_BEAN]->(:SpringXmlBean)`, projected by the
     # `SpringXmlResolver` pass into the shared `(:Bean {defined_in:'xml'})` graph.
     spring_xml_beans: list[SpringXmlBean] = Field(default_factory=list)
+    # Spring Data repositories + JPA entities extracted from a `.java` file;
+    # feed `(:Source)-[:DEFINES]->(:SpringDataRepoDef|:JpaEntityDef)`, projected
+    # by the `SpringDataResolver` pass onto the `CodeEntity`s (`:Repository` /
+    # `:JpaEntity` labels, `MANAGES` / `PERSISTS_AS` / `RELATES_TO`).
+    jpa_entities: list[JpaEntity] = Field(default_factory=list)
+    spring_data_repositories: list[SpringDataRepository] = Field(default_factory=list)
     # Maven/Gradle project model: one `Module` per parsed build file, its
     # declared third-party `ExternalArtifact`s, and its `ModuleDependency`
     # edges; feeds `(:Module)-[:DEPENDS_ON|DEPENDS_ON_EXTERNAL]->(...)` and,
