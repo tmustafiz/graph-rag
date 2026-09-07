@@ -17,6 +17,7 @@ from .module_dependency import ModuleDependency
 from .policy_rule import PolicyRule
 from .section import Section
 from .source import Source
+from .spring_xml_bean import SpringXmlBean
 
 
 class ParsedDocument(BaseModel):
@@ -39,6 +40,10 @@ class ParsedDocument(BaseModel):
     # `(:ConfigFile)-[:HAS_PROPERTY]->(:ConfigProperty)-[:REFERENCES]->(:ConfigProperty)`.
     config_files: list[ConfigFile] = Field(default_factory=list)
     config_properties: list[ConfigProperty] = Field(default_factory=list)
+    # Spring XML `<beans>` context: one `SpringXmlBean` per `<bean>` def; feeds
+    # `(:ConfigFile)-[:DECLARES_BEAN]->(:SpringXmlBean)`, projected by the
+    # `SpringXmlResolver` pass into the shared `(:Bean {defined_in:'xml'})` graph.
+    spring_xml_beans: list[SpringXmlBean] = Field(default_factory=list)
     # Maven/Gradle project model: one `Module` per parsed build file, its
     # declared third-party `ExternalArtifact`s, and its `ModuleDependency`
     # edges; feeds `(:Module)-[:DEPENDS_ON|DEPENDS_ON_EXTERNAL]->(...)` and,

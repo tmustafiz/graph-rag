@@ -10,6 +10,7 @@ from .pdf_parser import PdfParser
 from .procedural_sql_extractor import ProceduralSqlExtractor
 from .python_parser import PythonParser
 from .react_enricher import ReactEnricher
+from .spring_xml_parser import SpringXmlParser
 from .sql_parser import SqlParser
 from .stylesheet_parser import StylesheetParser
 from .yaml_parser import YamlParser
@@ -27,6 +28,7 @@ __all__ = [
     "ProceduralSqlExtractor",
     "PythonParser",
     "ReactEnricher",
+    "SpringXmlParser",
     "SqlParser",
     "StylesheetParser",
     "YamlParser",

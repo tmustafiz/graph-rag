@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Spring XML context parser (`<beans>`) into the same bean/DI graph. New
+  `SpringXmlParser` (stdlib `xml.etree`, registered ahead of `ConfigFileParser`,
+  matches only `.xml` files whose root element is `<beans>`) turns each `<bean>`
+  — inner beans included — into a `SpringXmlBean` def carrying its `class`,
+  `scope`, `parent`, `factory-*`, `primary`, `abstract`, aliases (`<alias>` +
+  extra `name` tokens), `<constructor-arg ref>` / `<property name ref>` wiring
+  (`<ref bean>`, inner `<bean>`, `<list>` / `<set>` / `<map>` of refs, `p:` /
+  `c:` shortcut namespaces) and the `${key}`s in `value=` attributes.
+  `<context:component-scan>`, `<context:property-placeholder>`, `<import
+  resource>` and non-`beans` namespace elements (`aop:*`, `tx:*`, `util:*` —
+  recorded) land on the `ConfigFile` (`format="spring-xml"`). New
+  `SpringXmlResolver` — a third post-directory-ingest pass, after
+  `SpringBeanResolver` — projects each `SpringXmlBean` into the **same** `Bean`
+  graph (`(:Bean {defined_in:'xml', stereotype:'XmlBean'})`), links
+  `(:CodeEntity)-[:IS_BEAN]->` when the class was ingested, resolves refs by
+  name/alias across XML **and** annotation beans into
+  `(:Bean)-[:INJECTS {via:'xml-constructor'|'xml-property', property}]->(:Bean)`
+  (unknown ref → `stereotype:'XmlBeanStub'` bean; ambiguous →
+  `Bean.unresolved_injections`), links `${key}` property values via `BINDS`, and
+  wires `(:ConfigFile)-[:IMPORTS_CONTEXT {kind:'import'|'property-placeholder'}]->(:ConfigFile)`.
+  New `spring_xml_bean_id` constraint; `(:ConfigFile)-[:DECLARES_BEAN]->(:SpringXmlBean)`.
+  ([#74](https://github.com/tmustafiz/graph-rag/issues/74))
 - Spring MVC / JAX-RS HTTP endpoint model. `HttpEndpointExtractor` (inside
   `JavaParser`) turns controller handler methods into `(:HttpEndpoint
   {http_method, path, framework, produces, consumes, params, bindings,

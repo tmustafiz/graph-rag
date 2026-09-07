@@ -52,6 +52,7 @@ flowchart TD
 | `graph_rag.graph.graph_writer` | Cypher `MERGE` upserts for every node/edge type. |
 | `graph_rag.graph.project_model_resolver` | Post-directory-ingest pass: `(Source)-[:IN_MODULE]->(Module)`, sibling-dependency promotion, and `IMPORTS.external` classification. |
 | `graph_rag.graph.spring_bean_resolver` | Post-directory-ingest pass: `Bean` nodes + `IS_BEAN` / `INJECTS` / `PRODUCES` / `BINDS` from the annotation + type-hierarchy + config layers. |
+| `graph_rag.graph.spring_xml_resolver` | Post-directory-ingest pass (after `spring_bean_resolver`): projects `SpringXmlBean` defs into the same `Bean` graph (`defined_in:'xml'`), resolves `<ref>` wiring across XML + annotation beans, and `IMPORTS_CONTEXT` for `<import resource>` / `<context:property-placeholder>`. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
@@ -77,11 +78,12 @@ flowchart TD
 | `DbView` | `qualified_name` (`schema.view`) | `name`, `schema_name`, `materialized`, `embed_text`, `embedding` |
 | `DbIndex` | `qualified_name` (`schema.table.index`) | `name`, `columns`, `unique` |
 | `Annotation` | `id` (hash of owner + target + fqn + line) | `name`, `fqn` (import-resolved), `target` (`type`/`method`/`constructor`/`field`/`param:<name>`), `attributes` (JSON string), `line` |
-| `ConfigFile` | `path` (= owning `Source.path`) | `format` (`properties` / `yaml`) |
+| `ConfigFile` | `path` (= owning `Source.path`) | `format` (`properties` / `yaml` / `spring-xml`); for `spring-xml` also `scan_packages`, `placeholder_locations`, `import_resources`, `namespace_elements` |
 | `ConfigProperty` | `id` (hash of file + profile + key + line) | `key` (dotted, list items `[i]`), `value` (string), `profile` (`None` = default), `origin_line` |
+| `SpringXmlBean` | `id` (hash of `source_path` + `bean_id`) | `bean_id` / `bean_name`, `class_name`, `scope`, `parent`, `factory_bean` / `factory_method`, `primary`, `abstract`, `aliases`, `constructor_arg_refs`, `property_names` / `property_refs`, `value_placeholder_keys` — raw `<bean>` def, projected into `Bean` by the XML resolver |
 | `Module` | `path` (module directory, absolute) | `artifact`, `group`, `version`, `build_tool` (`maven` / `gradle`), `packages` (owned package prefixes), `source_roots` |
 | `ExternalArtifact` | `gav` (`group:artifact`) | `group`, `artifact`, `version` |
-| `Bean` | `id` (= the owning `CodeEntity.qualified_name`) | `name` (Spring bean name), `stereotype`, `scope`, `primary`, `bean_type`, `unresolved_injections` (JSON) |
+| `Bean` | `id` (owning `CodeEntity.qualified_name`; XML beans use a `source_path`+`bean_id` hash, stubs `xml-stub::<ref>`) | `name` (Spring bean name), `stereotype` (`XmlBean` / `XmlBeanStub` for XML-wired), `scope`, `primary`, `bean_type`, `defined_in` (`xml` when from a `<beans>` context), `unresolved_injections` (JSON) |
 | `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs`), `produces`, `consumes`, `params`, `bindings` (JSON), `embed_text`, `embedding` (384-d) |
 
 **Relationships**
@@ -95,6 +97,8 @@ flowchart TD
 - `(CodeEntity)-[:ANNOTATED_WITH]->(Annotation)` (Java annotations on a type / method / constructor / annotated field / parameter)
 - `(Source)-[:DEFINES]->(ConfigFile)`, `(ConfigFile)-[:HAS_PROPERTY]->(ConfigProperty)`
 - `(ConfigProperty)-[:REFERENCES]->(ConfigProperty)` (`${a.b}` placeholder, resolved within the file)
+- `(ConfigFile)-[:DECLARES_BEAN]->(SpringXmlBean)` (one per `<bean>` in a Spring XML context)
+- `(ConfigFile)-[:IMPORTS_CONTEXT {kind}]->(ConfigFile)` (`kind` = `import` for `<import resource>`, `property-placeholder` for `<context:property-placeholder location>`; only when the target file was ingested)
 - `(Source)-[:DEFINES]->(PolicyRule)`, `(PolicyRule)-[:APPLIES_TO]->(Concept)`
 - `(Source)-[:DEFINES]->(DbTable|DbColumn|DbView|DbIndex)`
 - `(DbTable)-[:HAS_COLUMN]->(DbColumn)`, `(DbTable)-[:HAS_INDEX]->(DbIndex)`
@@ -105,7 +109,7 @@ flowchart TD
 - `(Source)-[:IMPORTS]->(Source)` (stylesheet `@import` / `@use` / `@forward`)
 - `(Source)-[:DEFINES]->(Module)`, `(Source)-[:IN_MODULE]->(Module)` (every file → its nearest module directory)
 - `(Module)-[:DEPENDS_ON {scope}]->(Module)` (Maven reactor / sibling GAV / Gradle `project(':x')`), `(Module)-[:DEPENDS_ON_EXTERNAL {gav, scope}]->(ExternalArtifact)`
-- `(CodeEntity)-[:IS_BEAN]->(Bean)`, `(Bean)-[:INJECTS {via, qualifier, multiplicity}]->(Bean)`, `(Bean)-[:PRODUCES]->(Bean)` (`@Bean` method), `(Bean)-[:BINDS]->(ConfigProperty)` (`@Value` / `@ConfigurationProperties`)
+- `(CodeEntity)-[:IS_BEAN]->(Bean)`, `(Bean)-[:INJECTS {via, qualifier, multiplicity, property}]->(Bean)` (`via` also `xml-constructor` / `xml-property` for XML-wired), `(Bean)-[:PRODUCES]->(Bean)` (`@Bean` method), `(Bean)-[:BINDS]->(ConfigProperty)` (`@Value` / `@ConfigurationProperties` / XML `<property value="${…}">`)
 - `(HttpEndpoint)-[:HANDLED_BY]->(CodeEntity)` (the Spring MVC / JAX-RS handler method), `(HttpEndpoint)-[:IN_MODULE]->(Module)`
 
 **Indexes** (`grag-mcp apply-schema`)
@@ -129,9 +133,11 @@ skipped without aborting the batch.
 
 On a **directory** ingest, build files (`pom.xml`, `*.gradle*`) parse first so
 the `Module` layer exists before the `.java` files, and once the batch is done
-two graph passes run: `ProjectModelResolver` wires `IN_MODULE`, promotes
-sibling dependencies and classifies `IMPORTS.external`; then
-`SpringBeanResolver` derives the `Bean` layer.
+three graph passes run in order: `ProjectModelResolver` wires `IN_MODULE`,
+promotes sibling dependencies and classifies `IMPORTS.external`;
+`SpringBeanResolver` derives the annotation `Bean` layer; then
+`SpringXmlResolver` folds the `SpringXmlBean` defs from any `<beans>` contexts
+into that same `Bean` layer.
 
 The same operation is reachable three ways: the CLI, the `ingest_path` MCP tool,
 and `POST /ingest` (for CI / pre-commit hooks with no MCP client).
@@ -343,6 +349,33 @@ several go on `Bean.unresolved_injections` (a JSON list of
 `{type, via, reason}`) — never guessed. `@Value("${key:default}")` and
 `@ConfigurationProperties(prefix=…)` add `(:Bean)-[:BINDS]->(:ConfigProperty)`
 edges. The `:Bean` layer is rebuilt from scratch each run.
+
+`SpringXmlParser` (stdlib `xml.etree`, registered ahead of `ConfigFileParser`,
+`can_handle` matches only files whose root element is `<beans>`) parses a Spring
+XML application context (`applicationContext.xml`, `*-context.xml`,
+`WEB-INF/*-servlet.xml`, …). Each `<bean>` — including inner beans, and
+resolving `id` / first `name` token / a generated `<Class>#<n>` — becomes a
+`SpringXmlBean` carrying its `class`, `scope`, `parent`, `factory-*`, `primary`,
+`abstract`, aliases (`<alias>` + extra `name` tokens), `<constructor-arg ref>` /
+`<property name ref>` wiring (`<ref bean>`, inner `<bean>`, `<list>` / `<set>` /
+`<map>` of refs, and the `p:` / `c:` shortcut namespaces), and the `${key}`s
+seen in `value=` attributes. File-level `<context:component-scan base-package>`,
+`<context:property-placeholder location>`, `<import resource>` and the distinct
+non-`beans` namespace elements (`aop:*`, `tx:*`, `util:*` — recorded, modelled
+later) are stored on the `ConfigFile`. `SpringXmlResolver` is the third
+post-directory-ingest pass, run after `SpringBeanResolver` so the annotation
+beans already exist: it projects each `SpringXmlBean` into a
+`(:Bean {defined_in:'xml', stereotype:'XmlBean'})`, links
+`(:CodeEntity)-[:IS_BEAN]->` when the `class` was ingested, resolves each `ref`
+by name/alias against **both** XML and annotation beans into
+`(:Bean)-[:INJECTS {via:'xml-constructor'|'xml-property', property}]->(:Bean)`
+(an unknown ref → a `stereotype:'XmlBeanStub'` bean keyed by the ref name; an
+ambiguous one → `Bean.unresolved_injections`), links `${key}` property values to
+`(:ConfigProperty)` via `BINDS`, and wires
+`(:ConfigFile)-[:IMPORTS_CONTEXT {kind}]->(:ConfigFile)` for `<import resource>`
+and `<context:property-placeholder>` targets that were also ingested. Rebuilt
+from scratch each run (`defined_in:'xml'` beans and `IMPORTS_CONTEXT` edges
+dropped first).
 
 ## Retrieval
 
