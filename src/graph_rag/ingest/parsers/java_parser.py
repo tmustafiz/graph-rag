@@ -293,7 +293,8 @@ class JavaParser:
                 type_qualified_name=qualified_name,
                 type_simple_name=simple_name,
                 path=path,
-                existing_members=set(overloads) | set(field_names),
+                existing_members=set(overloads),
+                existing_fields=set(field_names),
             )
         )
 

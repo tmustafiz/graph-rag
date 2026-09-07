@@ -9,6 +9,9 @@ if TYPE_CHECKING:
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _ORIGIN = "lombok"
+# `boolean isEnabled;` — Lombok reuses the field name for the getter
+# (`isEnabled()`), it does not prepend another `is`.
+_BOOLEAN_IS_PREFIX = re.compile(r"is[A-Z0-9_]")
 
 # Lombok annotations whose synthesized members we can name without a build.
 _GETTER = {"Getter", "Data", "Value"}
@@ -48,7 +51,10 @@ class LombokSynthesizer:
     Best-effort and single-file: a field that already has an explicit
     accessor/constructor of the same shape is left alone, unknown annotations
     are ignored, and every emitted entity is flagged `synthetic=True`,
-    `origin="lombok"`.
+    `origin="lombok"`. Honours `@Accessors(fluent=…, chain=…)` (fluent
+    accessors reuse the field name; chained setters return the enclosing
+    type), a `boolean isX` field's getter is the field name itself, and
+    `@AllArgsConstructor` excludes already-initialised `final` fields.
     """
 
     @classmethod
@@ -61,16 +67,21 @@ class LombokSynthesizer:
         type_simple_name: str,
         path: Path,
         existing_members: set[str],
+        existing_fields: set[str] | None = None,
     ) -> list[CodeEntity]:
         markers = cls._type_annotations(type_node, content)
         if markers.isdisjoint(_ALL_LOMBOK):
             return []
+        # a declared field named `log` / `builder` also blocks its synthetic
+        # counterpart, but a fluent accessor legitimately shares a field's name
+        existing_non_accessor = existing_members | (existing_fields or set())
 
         body = type_node.child_by_field_name("body")
         if body is None:
             return []
         fields = cls._fields(body, content)
         instance_fields = [field for field in fields if not field.is_static]
+        fluent, chain = cls._accessors_config(type_node, content)
         line = type_node.start_point[0] + 1
 
         emitted: dict[str, CodeEntity] = {}
@@ -86,6 +97,8 @@ class LombokSynthesizer:
             path,
             line,
             existing_members,
+            fluent=fluent,
+            chain=chain,
         ):
             add(entity)
         for entity in cls._constructors(
@@ -99,12 +112,12 @@ class LombokSynthesizer:
         ):
             add(entity)
         builder = cls._builder(
-            markers, type_qualified_name, type_simple_name, path, line, existing_members
+            markers, type_qualified_name, type_simple_name, path, line, existing_non_accessor
         )
         for entity in builder:
             add(entity)
         log = cls._log_field(
-            markers, type_qualified_name, type_simple_name, path, line, existing_members
+            markers, type_qualified_name, type_simple_name, path, line, existing_non_accessor
         )
         if log is not None:
             add(log)
@@ -122,44 +135,60 @@ class LombokSynthesizer:
         path: Path,
         line: int,
         existing: set[str],
+        *,
+        fluent: bool,
+        chain: bool,
     ) -> list[CodeEntity]:
         entities: list[CodeEntity] = []
         want_get = bool(markers & _GETTER)
         want_set = bool(markers & _SETTER) and "Value" not in markers
+        setter_return = type_name if (fluent or chain) else "void"
         for field in fields:
-            capitalized = field.name[:1].upper() + field.name[1:]
-            if want_get:
-                verb = "is" if field.type == "boolean" else "get"
-                getter = f"{verb}{capitalized}"
-                if getter not in existing:
-                    entities.append(
-                        cls._method(
-                            type_qn,
-                            type_name,
-                            path,
-                            line,
-                            name=getter,
-                            params=[],
-                            returns=field.type,
-                            summary=f"{field.type} {getter}() for field {field.name}",
-                        )
+            getter, setter, property_hint = cls._accessor_names(field, fluent)
+            if want_get and getter not in existing:
+                entities.append(
+                    cls._method(
+                        type_qn,
+                        type_name,
+                        path,
+                        line,
+                        name=getter,
+                        params=[],
+                        returns=field.type,
+                        summary=f"{field.type} {getter}() for field {field.name}",
                     )
-            if want_set and not field.is_final:
-                setter = f"set{capitalized}"
-                if setter not in existing:
-                    entities.append(
-                        cls._method(
-                            type_qn,
-                            type_name,
-                            path,
-                            line,
-                            name=setter,
-                            params=[field.type],
-                            returns="void",
-                            summary=f"void {setter}({field.type}) for field {field.name}",
-                        )
+                )
+            if want_set and not field.is_final and setter not in existing:
+                entities.append(
+                    cls._method(
+                        type_qn,
+                        type_name,
+                        path,
+                        line,
+                        name=setter,
+                        params=[field.type],
+                        returns=setter_return,
+                        summary=f"{setter_return} {setter}({field.type}) for field {property_hint}",
                     )
+                )
         return entities
+
+    @staticmethod
+    def _accessor_names(field: _Field, fluent: bool) -> tuple[str, str, str]:
+        """`(getter, setter, property_name)` for a field. Fluent accessors reuse
+        the field name; a `boolean isX` field's getter is the field name itself,
+        and its setter drops the `is` (`setX`)."""
+        boolean_is = field.type == "boolean" and bool(_BOOLEAN_IS_PREFIX.match(field.name))
+        property_name = field.name[2:] if boolean_is else field.name
+        capitalized = property_name[:1].upper() + property_name[1:]
+        if fluent:
+            return field.name, field.name, property_name
+        getter = (
+            field.name
+            if boolean_is
+            else (f"is{capitalized}" if field.type == "boolean" else f"get{capitalized}")
+        )
+        return getter, f"set{capitalized}", property_name
 
     # -- constructors --
 
@@ -179,9 +208,9 @@ class LombokSynthesizer:
         if markers & _NO_ARGS:
             entities.append(cls._constructor(type_qn, type_name, path, line, params=[]))
         if markers & _ALL_ARGS:
-            entities.append(
-                cls._constructor(type_qn, type_name, path, line, params=[f.type for f in fields])
-            )
+            # real Lombok omits initialised `final` fields (already assigned)
+            all_args = [f.type for f in fields if not (f.is_final and f.has_initializer)]
+            entities.append(cls._constructor(type_qn, type_name, path, line, params=all_args))
         required = [
             field.type
             for field in fields
@@ -338,6 +367,35 @@ class LombokSynthesizer:
             if name_node is not None:
                 names.add(cls._text(name_node, content).rsplit(".", 1)[-1])
         return names
+
+    @classmethod
+    def _accessors_config(cls, type_node: "Node", content: bytes) -> tuple[bool, bool]:
+        """`(fluent, chain)` from a type-level `@Accessors(fluent = true,
+        chain = true)`; both default `False`. `fluent` implies `chain`."""
+        modifiers = next((child for child in type_node.children if child.type == "modifiers"), None)
+        if modifiers is None:
+            return False, False
+        fluent = chain = False
+        for child in modifiers.children:
+            if child.type != "annotation":
+                continue
+            name_node = child.child_by_field_name("name")
+            if name_node is None or cls._text(name_node, content).rsplit(".", 1)[-1] != "Accessors":
+                continue
+            arguments = child.child_by_field_name("arguments")
+            for pair in arguments.children if arguments is not None else []:
+                if pair.type != "element_value_pair":
+                    continue
+                key_node = pair.child_by_field_name("key")
+                value_node = pair.child_by_field_name("value")
+                if key_node is None or value_node is None:
+                    continue
+                is_true = cls._text(value_node, content).strip() == "true"
+                if cls._text(key_node, content).strip() == "fluent":
+                    fluent = is_true
+                elif cls._text(key_node, content).strip() == "chain":
+                    chain = is_true
+        return fluent, (chain or fluent)
 
     @classmethod
     def _fields(cls, body: "Node", content: bytes) -> list[_Field]:
