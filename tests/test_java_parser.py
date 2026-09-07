@@ -432,6 +432,72 @@ def _by_qn(document: object) -> dict[str, object]:
     return {entity.qualified_name: entity for entity in document.code_entities}
 
 
+def test_class_supertypes_are_resolved_and_split(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme.orders",
+        "OrderService",
+        "import com.acme.common.BaseService;\n"
+        "import java.io.Serializable;\n\n"
+        "public class OrderService extends BaseService implements Runnable, Serializable, Local {\n"
+        "}",
+    )
+
+    entity = _by_qn(JavaParser().parse(path))["com.acme.orders.OrderService"]
+
+    assert entity.extends_types == ["com.acme.common.BaseService"]  # resolved via import
+    assert entity.implements_types == ["Runnable", "java.io.Serializable", "Local"]
+
+
+def test_interface_super_interfaces_count_as_extends(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Repo",
+        "public interface Repo extends java.io.Closeable, AutoCloseable {\n}",
+    )
+
+    entity = _by_qn(JavaParser().parse(path))["com.acme.Repo"]
+
+    assert entity.extends_types == ["java.io.Closeable", "AutoCloseable"]
+    assert entity.implements_types == []
+
+
+def test_same_file_supertype_resolves_to_its_qualified_name(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Outer",
+        "public class Outer {\n"
+        "    interface Handler {}\n"
+        "    static class DefaultHandler implements Handler {}\n"
+        "}",
+    )
+
+    entity = _by_qn(JavaParser().parse(path))["com.acme.Outer.DefaultHandler"]
+
+    assert entity.implements_types == ["com.acme.Outer.Handler"]
+
+
+def test_graph_writer_extends_and_implements_pairs(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Impl",
+        "public class Impl extends Base implements A, B {\n}",
+    )
+
+    document = JavaParser().parse(path)
+
+    from graph_rag.graph.graph_writer import GraphWriter
+
+    assert GraphWriter._extends_pairs(document) == [{"from": "com.acme.Impl", "to": "Base"}]
+    assert GraphWriter._implements_pairs(document) == [
+        {"from": "com.acme.Impl", "to": "A"},
+        {"from": "com.acme.Impl", "to": "B"},
+    ]
+
+
 def test_lombok_data_synthesizes_getters_and_setters(tmp_path: Path) -> None:
     path = _write(
         tmp_path,

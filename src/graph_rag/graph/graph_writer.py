@@ -98,6 +98,20 @@ MERGE (child:CodeEntity {qualified_name: pair.to})
 MERGE (parent)-[:RENDERS]->(child)
 """
 
+_MERGE_EXTENDS = """
+UNWIND $pairs AS pair
+MATCH (sub:CodeEntity {qualified_name: pair.from})
+MERGE (super:CodeEntity {qualified_name: pair.to})
+MERGE (sub)-[:EXTENDS]->(super)
+"""
+
+_MERGE_IMPLEMENTS = """
+UNWIND $pairs AS pair
+MATCH (impl:CodeEntity {qualified_name: pair.from})
+MERGE (iface:CodeEntity {qualified_name: pair.to})
+MERGE (impl)-[:IMPLEMENTS]->(iface)
+"""
+
 _MERGE_READS = """
 UNWIND $pairs AS pair
 MATCH (routine:CodeEntity {qualified_name: pair.from})
@@ -385,6 +399,10 @@ class GraphWriter:
                 session.execute_write(self._write_imports, batch)
             for batch in self._batched(self._render_pairs(document)):
                 session.execute_write(self._write_renders, batch)
+            for batch in self._batched(self._extends_pairs(document)):
+                session.execute_write(self._write_extends, batch)
+            for batch in self._batched(self._implements_pairs(document)):
+                session.execute_write(self._write_implements, batch)
             for batch in self._batched([t.model_dump(mode="json") for t in document.db_tables]):
                 session.execute_write(self._write_db_tables, document.source.path, batch)
             for batch in self._batched([c.model_dump(mode="json") for c in document.db_columns]):
@@ -542,6 +560,14 @@ class GraphWriter:
     @staticmethod
     def _write_renders(tx: ManagedTransaction, pairs: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_RENDERS), pairs=pairs)
+
+    @staticmethod
+    def _write_extends(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_EXTENDS), pairs=pairs)
+
+    @staticmethod
+    def _write_implements(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_IMPLEMENTS), pairs=pairs)
 
     @staticmethod
     def _write_reads(tx: ManagedTransaction, pairs: list[dict]) -> None:
@@ -760,6 +786,22 @@ class GraphWriter:
             {"from": entity.qualified_name, "to": rendered}
             for entity in document.code_entities
             for rendered in entity.renders
+        ]
+
+    @staticmethod
+    def _extends_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": entity.qualified_name, "to": supertype}
+            for entity in document.code_entities
+            for supertype in entity.extends_types
+        ]
+
+    @staticmethod
+    def _implements_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": entity.qualified_name, "to": interface}
+            for entity in document.code_entities
+            for interface in entity.implements_types
         ]
 
     @staticmethod
