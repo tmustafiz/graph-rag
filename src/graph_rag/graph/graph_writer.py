@@ -305,11 +305,23 @@ MATCH (target:ConfigProperty {id: pair.to})
 MERGE (cp)-[:REFERENCES]->(target)
 """
 
+# A Gradle root dir emits a Module row from both `build.gradle` (with
+# group/version/packages) and `settings.gradle` (without) on the same path.
+# coalesce / non-empty guards keep the second MERGE from nulling coordinates
+# the first one populated (#119).
 _MERGE_MODULES = """
 UNWIND $rows AS row
 MERGE (m:Module {path: row.path})
-SET m.artifact = row.artifact, m.group = row.group, m.version = row.version,
-    m.build_tool = row.build_tool, m.packages = row.packages, m.source_roots = row.source_roots
+SET m.artifact = row.artifact,
+    m.group = coalesce(row.group, m.group),
+    m.version = coalesce(row.version, m.version),
+    m.build_tool = coalesce(row.build_tool, m.build_tool),
+    m.packages = CASE
+        WHEN row.packages IS NOT NULL AND size(row.packages) > 0 THEN row.packages
+        ELSE coalesce(m.packages, row.packages) END,
+    m.source_roots = CASE
+        WHEN row.source_roots IS NOT NULL AND size(row.source_roots) > 0 THEN row.source_roots
+        ELSE coalesce(m.source_roots, row.source_roots) END
 WITH m
 MATCH (src:Source {path: $source_path})
 MERGE (src)-[:DEFINES]->(m)

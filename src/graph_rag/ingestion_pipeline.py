@@ -18,8 +18,10 @@ _BUILD_FILE_NAMES = ("pom.xml", "build.gradle", "build.gradle.kts", "settings.gr
 
 
 class PostIngestResolver(Protocol):
-    """A graph pass run once after a whole directory ingest (project model,
-    Spring beans, …). Idempotent; returns a small stats dict for logging.
+    """A graph pass run once after an ingest completes (project model, Spring
+    beans, …) — after both a directory ingest and a single-file ingest, since
+    each resolver is a full-graph rebuild. Idempotent; returns a small stats
+    dict for logging.
     """
 
     def resolve(self) -> dict[str, int]: ...
@@ -71,15 +73,28 @@ class IngestionPipeline:
         self._resolvers = resolvers or []
 
     def run(self, path: Path, dry_run: bool = False) -> list[IngestionResult]:
+        # Resolve up front so `Source.path` is always absolute and matches the
+        # `.resolve()`d `Module.path` the build-file parsers store — otherwise a
+        # relative-path ingest wires zero `IN_MODULE` edges (#116).
+        path = path.resolve()
         logger.info("ingestion run starting: path=%s dry_run=%s", path, dry_run)
+        skip_generated = not settings.ingest_generated_sources
 
         if path.is_file():
+            if skip_generated and _is_generated_source(path):
+                return [IngestionResult(path=path, skipped=True)]
             parser = self._registry.for_path(path)
             if parser is None:
                 raise UnsupportedFileTypeError(path)
             results = [self._ingest_one(path, parser, dry_run)]
+            # a single-file ingest still re-projects the whole graph: the
+            # resolvers are full rebuilds, so `ingest_path` / `grag ingest
+            # <file>` / `--watch` keep `:Bean` / `IN_MODULE` / `MANAGES` / …
+            # in sync with the edit (#120)
+            if not dry_run:
+                for resolver in self._resolvers:
+                    resolver.resolve()
         else:
-            skip_generated = not settings.ingest_generated_sources
             pairs = sorted(
                 (
                     (file, self._registry.for_path(file))
