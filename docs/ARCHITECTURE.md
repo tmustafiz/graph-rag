@@ -74,6 +74,7 @@ flowchart TD
 | `DbColumn` | `qualified_name` (`schema.table.column`) | `name`, `data_type`, `nullable`, `default`, `primary_key` |
 | `DbView` | `qualified_name` (`schema.view`) | `name`, `schema_name`, `materialized`, `embed_text`, `embedding` |
 | `DbIndex` | `qualified_name` (`schema.table.index`) | `name`, `columns`, `unique` |
+| `Annotation` | `id` (hash of owner + target + fqn + line) | `name`, `fqn` (import-resolved), `target` (`type`/`method`/`constructor`/`field`/`param:<name>`), `attributes` (JSON string), `line` |
 
 **Relationships**
 
@@ -82,6 +83,7 @@ flowchart TD
 - `(Source)-[:DEFINES]->(CodeEntity)`, `(CodeEntity)-[:CONTAINS]->(CodeEntity)` (class → method)
 - `(CodeEntity)-[:CALLS]->(CodeEntity)`, `(CodeEntity)-[:IMPORTS]->(CodeEntity)`
 - `(CodeEntity)-[:RENDERS]->(CodeEntity)` (React `component` → child component, from the JSX it mounts)
+- `(CodeEntity)-[:ANNOTATED_WITH]->(Annotation)` (Java annotations on a type / method / constructor / annotated field / parameter)
 - `(Source)-[:DEFINES]->(PolicyRule)`, `(PolicyRule)-[:APPLIES_TO]->(Concept)`
 - `(Source)-[:DEFINES]->(DbTable|DbColumn|DbView|DbIndex)`
 - `(DbTable)-[:HAS_COLUMN]->(DbColumn)`, `(DbTable)-[:HAS_INDEX]->(DbIndex)`
@@ -95,7 +97,7 @@ flowchart TD
 
 - Uniqueness constraints on every node key above.
 - Vector indexes (cosine, 384-d) on `Chunk`, `CodeEntity`, `PolicyRule`, `AgentMemory`, `DbTable`, `DbView` `.embedding`.
-- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text).
+- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text), `Annotation` (name/fqn).
 - Range indexes on `AgentMemory.last_accessed_at` and `CodeEntity.pagerank`.
 
 ## Ingestion
@@ -146,12 +148,17 @@ change.
 `tree-sitter-language-pack`) is the first non-Python implementation and the
 reference for the points above: `kind` is one of
 `class` | `interface` | `enum` | `record` | `annotation` | `method` |
-`constructor`; `qualified_name` is the package-prefixed, overload-safe name
-(`com.acme.orders.OrderService.submit(Order,boolean)` — parameter types taken
-verbatim from source, since there is no type resolution); fields are folded
-into the owning type's `embed_text` rather than emitted as entities; and there
-is no file-level `module` entity (Java has no unit below the package), so a
-file's `imports` attach to its first top-level type.
+`constructor` | `field`; `qualified_name` is the package-prefixed, overload-safe
+name (`com.acme.orders.OrderService.submit(Order,boolean)` — parameter types
+taken verbatim from source, since there is no type resolution); plain fields are
+folded into the owning type's `embed_text`, but an *annotated* field is emitted
+as a `field` entity keyed `<type>#<field>` so framework wiring (`@Autowired`,
+`@Value`, `@Column`) is visible; annotations on types, methods, constructors,
+annotated fields, and parameters become `Annotation` nodes via
+`ANNOTATED_WITH` (attribute values parsed to a JSON string; FQN resolved
+against the file's imports, else the simple name); and there is no file-level
+`module` entity (Java has no unit below the package), so a file's `imports`
+attach to its first top-level type.
 
 `JavaScriptParser` (`grag-mcp[js]`, same backend) handles JavaScript,
 TypeScript, and their JSX variants in one parser

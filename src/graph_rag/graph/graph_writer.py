@@ -67,6 +67,15 @@ FOREACH (_ IN CASE WHEN row.parent_qualified_name IS NOT NULL THEN [1] ELSE [] E
 )
 """
 
+_MERGE_ANNOTATIONS = """
+UNWIND $rows AS row
+MATCH (owner:CodeEntity {qualified_name: row.owner_qualified_name})
+MERGE (a:Annotation {id: row.id})
+SET a.owner_qualified_name = row.owner_qualified_name, a.target = row.target,
+    a.fqn = row.fqn, a.name = row.name, a.attributes = row.attributes_json, a.line = row.line
+MERGE (owner)-[:ANNOTATED_WITH]->(a)
+"""
+
 _MERGE_CALLS = """
 UNWIND $pairs AS pair
 MATCH (caller:CodeEntity {qualified_name: pair.from})
@@ -224,6 +233,16 @@ WHERE NOT e.qualified_name IN $keep_ids
 DETACH DELETE e
 """
 
+# Annotations reachable from a CodeEntity this Source defines but no longer
+# emitted (an `@Deprecated` removed, a field un-annotated) — swept after the
+# code-entity reconcile, which has already DETACH-deleted annotations hanging
+# off entities that vanished entirely.
+_RECONCILE_ANNOTATIONS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(:CodeEntity)-[:ANNOTATED_WITH]->(a:Annotation)
+WHERE NOT a.id IN $keep_ids
+DETACH DELETE a
+"""
+
 _RECONCILE_POLICY_RULES = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(p:PolicyRule)
 WHERE NOT p.id IN $keep_ids
@@ -276,6 +295,8 @@ class GraphWriter:
                 session.execute_write(self._write_next, batch)
             for batch in self._batched([e.model_dump(mode="json") for e in document.code_entities]):
                 session.execute_write(self._write_code_entities, document.source.path, batch)
+            for batch in self._batched(self._annotation_rows(document)):
+                session.execute_write(self._write_annotations, batch)
             for batch in self._batched(self._call_pairs(document)):
                 session.execute_write(self._write_calls, batch)
             for batch in self._batched(self._import_pairs(document)):
@@ -320,6 +341,11 @@ class GraphWriter:
                 self._reconcile_code_entities,
                 document.source.path,
                 [e.qualified_name for e in document.code_entities],
+            )
+            session.execute_write(
+                self._reconcile_annotations,
+                document.source.path,
+                [a.id for a in document.annotations],
             )
             session.execute_write(
                 self._reconcile_policy_rules,
@@ -387,6 +413,10 @@ class GraphWriter:
         tx.run(
             cast(LiteralString, _MERGE_CODE_ENTITIES), entities=entities, source_path=source_path
         )
+
+    @staticmethod
+    def _write_annotations(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_ANNOTATIONS), rows=rows)
 
     @staticmethod
     def _write_calls(tx: ManagedTransaction, pairs: list[dict]) -> None:
@@ -467,6 +497,16 @@ class GraphWriter:
         )
 
     @staticmethod
+    def _reconcile_annotations(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_ANNOTATIONS),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
     def _reconcile_policy_rules(
         tx: ManagedTransaction, source_path: str, keep_ids: list[str]
     ) -> None:
@@ -513,6 +553,21 @@ class GraphWriter:
         # section_id embeds a zero-padded index, so this sort is full document reading order.
         ordered = sorted(document.chunks, key=lambda c: (c.section_id, c.order))
         return [{"from": a.id, "to": b.id} for a, b in zip(ordered, ordered[1:], strict=False)]
+
+    @staticmethod
+    def _annotation_rows(document: ParsedDocument) -> list[dict]:
+        return [
+            {
+                "id": annotation.id,
+                "owner_qualified_name": annotation.owner_qualified_name,
+                "target": annotation.target,
+                "fqn": annotation.fqn,
+                "name": annotation.name,
+                "attributes_json": annotation.attributes_json,
+                "line": annotation.line,
+            }
+            for annotation in document.annotations
+        ]
 
     @staticmethod
     def _call_pairs(document: ParsedDocument) -> list[dict]:
