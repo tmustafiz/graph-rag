@@ -1,0 +1,9 @@
+// Design tokens shared across the sample stylesheet.
+$accent: #3366ff;
+$text: #1a1a1a;
+$radius: 6px;
+
+:root {
+  --accent: #{$accent};
+  --text: #{$text};
+}

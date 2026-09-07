@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CSS / SCSS / Less stylesheet parser (`StylesheetParser`, opt-in
+  `grag-mcp[css]` extra, tree-sitter `css` / `scss` / `less` grammars).
+  `.css` / `.scss` / `.sass` / `.less` ingest as `Section` + `Chunk` (no
+  `CodeEntity` — CSS has no call graph), so the plain `search` tool covers
+  them: one `Section` per file (plus one per top-level `@media` / `@supports`)
+  and one `Chunk` per rule, with SCSS nesting flattened into full selector
+  paths (`.card .title`, `.card:hover`). Custom properties (`--x`), SCSS
+  `$variables`, and `@mixin`s each also get a small name-bearing chunk.
+  `@import` / `@use` / `@forward` resolve against the file tree to a new
+  `(Source)-[:IMPORTS]->(Source)` edge (Sass built-ins and remote URLs
+  skipped). `.sass` indented syntax and grammar-version gaps (`@extend`, some
+  `@include` forms) degrade to a partial result with a logged warning.
+  `ParsedDocument` gains `source_imports`. Sample under `examples/stylesheets/`.
+  ([#66](https://github.com/tmustafiz/graph-rag/issues/66))
 - Procedural SQL parsing (`ProceduralSqlExtractor`, run by `SqlParser` on the
   same `grag-mcp[sql]` extra). Stored procedures, functions, packages, package
   bodies, and triggers become `CodeEntity` nodes (`kind` ∈ `package` |

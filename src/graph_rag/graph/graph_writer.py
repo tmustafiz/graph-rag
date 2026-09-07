@@ -12,6 +12,13 @@ SET s.type = $type, s.content_hash = $content_hash,
     s.ingested_at = $ingested_at, s.version = $version
 """
 
+_MERGE_SOURCE_IMPORTS = """
+UNWIND $pairs AS pair
+MATCH (importer:Source {path: pair.from})
+MERGE (imported:Source {path: pair.to})
+MERGE (importer)-[:IMPORTS]->(imported)
+"""
+
 _MERGE_SECTIONS = """
 UNWIND $sections AS row
 MERGE (sec:Section {id: row.id})
@@ -259,6 +266,8 @@ class GraphWriter:
     def write(self, document: ParsedDocument) -> None:
         with self._driver.session() as session:
             session.execute_write(self._write_source, document)
+            for batch in self._batched(self._source_import_pairs(document)):
+                session.execute_write(self._write_source_imports, batch)
             for batch in self._batched([s.model_dump(mode="json") for s in document.sections]):
                 session.execute_write(self._write_sections, document.source.path, batch)
             for batch in self._batched([c.model_dump(mode="json") for c in document.chunks]):
@@ -354,6 +363,10 @@ class GraphWriter:
             ingested_at=document.source.ingested_at.isoformat(),
             version=document.source.version,
         )
+
+    @staticmethod
+    def _write_source_imports(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_SOURCE_IMPORTS), pairs=pairs)
 
     @staticmethod
     def _write_sections(tx: ManagedTransaction, source_path: str, sections: list[dict]) -> None:
@@ -488,6 +501,12 @@ class GraphWriter:
         tx.run(
             cast(LiteralString, _RECONCILE_DB_INDEXES), source_path=source_path, keep_ids=keep_ids
         )
+
+    @staticmethod
+    def _source_import_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": document.source.path, "to": imported} for imported in document.source_imports
+        ]
 
     @staticmethod
     def _chunk_pairs(document: ParsedDocument) -> list[dict]:

@@ -52,10 +52,11 @@ You still need a Neo4j instance (APOC + GDS plugins) reachable at `NEO4J_URI` /
 `NEO4J_USER` / `NEO4J_PASSWORD` — see [docker-compose.yml](docker-compose.yml)
 for a ready-made one. The `[pdf]` extra pulls in PyMuPDF (AGPL-licensed); the
 `[java]` extra pulls in tree-sitter for `.java` files, `[js]` for
-`.js` / `.mjs` / `.cjs` / `.jsx` / `.ts` / `.tsx`, and `[sql]` pulls in
+`.js` / `.mjs` / `.cjs` / `.jsx` / `.ts` / `.tsx`, `[sql]` pulls in
 `sqlglot` for `.sql` schema DDL **and** procedural code (PL/SQL, PL/pgSQL,
-T-SQL — also `.pks` / `.pkb` / `.prc` / `.fnc` / `.trg`). Leave off any you don't ingest
-(`uv tool install 'grag-mcp[pdf,java,js,sql]'` for all).
+T-SQL — also `.pks` / `.pkb` / `.prc` / `.fnc` / `.trg`), and `[css]` pulls in
+tree-sitter for `.css` / `.scss` / `.sass` / `.less`. Leave off any you don't ingest
+(`uv tool install 'grag-mcp[pdf,java,js,sql,css]'` for all).
 
 On Linux, pass `--torch-backend=cpu` (`uvx --torch-backend=cpu …`) unless you
 want the multi-gigabyte CUDA build of PyTorch — the embedding model runs on CPU.
@@ -141,7 +142,7 @@ reachable at `NEO4J_URI`.
 
 | Tool | What it does |
 | --- | --- |
-| `search` | Hybrid (vector + full-text) search over ingested prose / Markdown / generic-YAML chunks. Does **not** cover source code or Checkov policy text. |
+| `search` | Hybrid (vector + full-text) search over ingested prose / Markdown / generic-YAML chunks — and stylesheet rules (`.css` / `.scss` / `.sass` / `.less` via `[css]`; one chunk per rule, `@import`/`@use` → `(Source)-[:IMPORTS]->(Source)`). Does **not** cover source code or Checkov policy text. |
 | `search_code` | Same hybrid search, over ingested source-code entities — functions / classes / modules / methods (Python built-in; Java via the `[java]` extra, JavaScript / TypeScript via `[js]`). SQL (`[sql]`): schema DDL ingests as a `:DbTable` / `:DbColumn` / `:DbView` graph, and stored procedures / functions / packages / triggers ingest as `CodeEntity` routines with `CALLS` + `READS`/`WRITES`/`ON` edges to those tables — all walkable with `get_neighbors`. |
 | `search_policies` | Hybrid search over Checkov policy content — the fuzzy complement to `find_policies_for`. |
 | `find_policies_for` | **Exact-match** traversal: policies whose `APPLIES_TO` edge names a Terraform resource type precisely (e.g. `aws_db_instance`). No fuzzy fallback. |
@@ -156,7 +157,7 @@ reachable at `NEO4J_URI`.
 ## Ingesting your own content
 
 `grag-mcp ingest <path>` takes a file or a directory (recursed), parses
-whichever of PDF / Markdown / Python / Java / JS / TS / SQL / YAML it finds, and upserts into the
+whichever of PDF / Markdown / Python / Java / JS / TS / SQL / CSS / YAML it finds, and upserts into the
 graph. Re-running is cheap: a file whose content hash is unchanged since the
 last ingest is skipped entirely, and re-ingesting a changed file removes any
 Section / Chunk / CodeEntity / PolicyRule it no longer produces.
@@ -346,7 +347,7 @@ covered in [`examples/agent-memory/`](examples/agent-memory/README.md).
 
 ```mermaid
 flowchart TD
-    A["Files: PDF / Markdown / Python / Java / JS / TS / SQL / YAML"] --> B["Ingestion CLI / API"]
+    A["Files: PDF / Markdown / Python / Java / JS / TS / SQL / CSS / YAML"] --> B["Ingestion CLI / API"]
     B --> C{"Parser registry (by extension)"}
     C --> C1["PdfParser"]
     C --> C2["MarkdownParser"]
@@ -354,7 +355,8 @@ flowchart TD
     C --> C4["JavaParser (tree-sitter)"]
     C --> C5["JavaScriptParser (tree-sitter, JS + TS)"]
     C --> C6["SqlParser (sqlglot: schema + PL/SQL)"]
-    C --> C7["YamlParser (Checkov-aware)"]
+    C --> C7["StylesheetParser (tree-sitter, CSS/SCSS/Less)"]
+    C --> C8["YamlParser (Checkov-aware)"]
     C1 --> D["Structure-aware Chunker"]
     C2 --> D
     C3 --> D
@@ -362,6 +364,7 @@ flowchart TD
     C5 --> D
     C6 --> D
     C7 --> D
+    C8 --> D
     D --> E["Enricher (embeddings + optional LLM entity/relation extraction)"]
     E --> F["Graph writer (idempotent upsert by content hash)"]
     F --> G[("Neo4j (Docker)")]

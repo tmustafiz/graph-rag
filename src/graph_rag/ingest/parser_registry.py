@@ -8,6 +8,7 @@ from .parsers import (
     PdfParser,
     PythonParser,
     SqlParser,
+    StylesheetParser,
     YamlParser,
 )
 
@@ -27,6 +28,7 @@ class ParserRegistry:
             JavaParser(),
             JavaScriptParser(),
             SqlParser(),
+            StylesheetParser(),
             YamlParser(),
         ]
 

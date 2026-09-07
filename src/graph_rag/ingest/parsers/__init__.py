@@ -6,6 +6,7 @@ from .procedural_sql_extractor import ProceduralSqlExtractor
 from .python_parser import PythonParser
 from .react_enricher import ReactEnricher
 from .sql_parser import SqlParser
+from .stylesheet_parser import StylesheetParser
 from .yaml_parser import YamlParser
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "PythonParser",
     "ReactEnricher",
     "SqlParser",
+    "StylesheetParser",
     "YamlParser",
 ]

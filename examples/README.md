@@ -71,6 +71,24 @@ tables — ingest the whole directory (`examples/sql-schema`) and try:
 - `get_neighbors("sales.trg_order_line_audit")` → `ON` → `sales.order_line`,
   `WRITES` → `sales.orders`
 
+## `stylesheets/`
+
+An SCSS entrypoint (`app.scss`) and the `_tokens.scss` partial it pulls in —
+for the `.css` / `.scss` / `.sass` / `.less` parser and the plain `search`
+tool.
+
+```bash
+uv run grag-mcp ingest examples/stylesheets   # needs the [css] extra
+```
+
+Then, from an MCP client:
+
+- `search("button hover background")` → the `.btn:hover` rule chunk
+- `search("--accent custom property")` → the `--accent` token chunk from
+  `_tokens.scss`
+- `get_neighbors("<abs path>/examples/stylesheets/app.scss")` → `IMPORTS` →
+  `_tokens.scss` (from `@forward` / `@import`)
+
 ## `agent-memory/`
 
 Copy-paste templates for wiring a coding agent in a **different** project up
