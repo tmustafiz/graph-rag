@@ -1,3 +1,4 @@
+from .config_file_parser import ConfigFileParser
 from .java_parser import JavaParser
 from .javascript_parser import JavaScriptParser
 from .markdown_parser import MarkdownParser
@@ -10,6 +11,7 @@ from .stylesheet_parser import StylesheetParser
 from .yaml_parser import YamlParser
 
 __all__ = [
+    "ConfigFileParser",
     "JavaParser",
     "JavaScriptParser",
     "MarkdownParser",

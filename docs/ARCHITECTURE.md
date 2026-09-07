@@ -75,6 +75,8 @@ flowchart TD
 | `DbView` | `qualified_name` (`schema.view`) | `name`, `schema_name`, `materialized`, `embed_text`, `embedding` |
 | `DbIndex` | `qualified_name` (`schema.table.index`) | `name`, `columns`, `unique` |
 | `Annotation` | `id` (hash of owner + target + fqn + line) | `name`, `fqn` (import-resolved), `target` (`type`/`method`/`constructor`/`field`/`param:<name>`), `attributes` (JSON string), `line` |
+| `ConfigFile` | `path` (= owning `Source.path`) | `format` (`properties` / `yaml`) |
+| `ConfigProperty` | `id` (hash of file + profile + key + line) | `key` (dotted, list items `[i]`), `value` (string), `profile` (`None` = default), `origin_line` |
 
 **Relationships**
 
@@ -84,6 +86,8 @@ flowchart TD
 - `(CodeEntity)-[:CALLS]->(CodeEntity)`, `(CodeEntity)-[:IMPORTS]->(CodeEntity)`
 - `(CodeEntity)-[:RENDERS]->(CodeEntity)` (React `component` → child component, from the JSX it mounts)
 - `(CodeEntity)-[:ANNOTATED_WITH]->(Annotation)` (Java annotations on a type / method / constructor / annotated field / parameter)
+- `(Source)-[:DEFINES]->(ConfigFile)`, `(ConfigFile)-[:HAS_PROPERTY]->(ConfigProperty)`
+- `(ConfigProperty)-[:REFERENCES]->(ConfigProperty)` (`${a.b}` placeholder, resolved within the file)
 - `(Source)-[:DEFINES]->(PolicyRule)`, `(PolicyRule)-[:APPLIES_TO]->(Concept)`
 - `(Source)-[:DEFINES]->(DbTable|DbColumn|DbView|DbIndex)`
 - `(DbTable)-[:HAS_COLUMN]->(DbColumn)`, `(DbTable)-[:HAS_INDEX]->(DbIndex)`
@@ -97,7 +101,7 @@ flowchart TD
 
 - Uniqueness constraints on every node key above.
 - Vector indexes (cosine, 384-d) on `Chunk`, `CodeEntity`, `PolicyRule`, `AgentMemory`, `DbTable`, `DbView` `.embedding`.
-- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text), `Annotation` (name/fqn).
+- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text), `Annotation` (name/fqn), `ConfigProperty` (key/value).
 - Range indexes on `AgentMemory.last_accessed_at` and `CodeEntity.pagerank`.
 
 ## Ingestion
@@ -233,6 +237,25 @@ selector paths (`.card .title`, `.card:hover`); custom properties (`--x`),
 remote URLs skipped). `.sass` indented syntax and constructs the grammar
 version doesn't cover (`@extend`, some `@include` forms) degrade to a partial
 result with a logged warning.
+
+`ConfigFileParser` (stdlib + PyYAML, no extra) handles Spring / Java
+application config — `application*` / `bootstrap*` (`.yml` / `.yaml` /
+`.properties`) and any `*.properties` / `*.yml` under a `resources` directory.
+It is registered **ahead of** `YamlParser`; a name-matched `.yml` that is
+actually a Checkov custom policy (`metadata.id` + `definition`) is handed back
+to `YamlParser`, and generic YAML elsewhere (k8s manifests, CI workflows) is
+untouched. Each file becomes one `ConfigFile` plus a flattened `ConfigProperty`
+list: YAML nesting → dotted keys (list items `[i]`), `.properties` read
+line-wise (comment markers `#`/`!`, `\` line continuations, `#---`
+multi-document separators). The active Spring profile comes from an
+`application-<profile>` filename or a `spring.config.activate.on-profile` (or
+legacy `spring.profiles`) key in the document; `${a.b:default}` placeholders
+resolve, best-effort, to `(:ConfigProperty)-[:REFERENCES]->(:ConfigProperty)`
+within the same file. Real line numbers survive (`yaml.compose_all`). A
+`Section` + one `Chunk` per profile group make the content searchable via the
+plain `search` tool; values under secret-looking keys (`password`, `secret`,
+`token`, `credential`, a `key` segment) are redacted to `***` in that chunk
+text only — the real value stays on the `ConfigProperty` node.
 
 ## Retrieval
 

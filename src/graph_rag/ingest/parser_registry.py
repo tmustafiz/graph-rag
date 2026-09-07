@@ -2,6 +2,7 @@ from pathlib import Path
 
 from .parser import Parser
 from .parsers import (
+    ConfigFileParser,
     JavaParser,
     JavaScriptParser,
     MarkdownParser,
@@ -29,6 +30,9 @@ class ParserRegistry:
             JavaScriptParser(),
             SqlParser(),
             StylesheetParser(),
+            # Ahead of YamlParser: claims Spring/Java `application*` / `bootstrap*`
+            # and `resources/`-dir config; defers Checkov policies back to YamlParser.
+            ConfigFileParser(),
             YamlParser(),
         ]
 

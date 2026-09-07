@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Spring / Java application-config parser (`ConfigFileParser`, stdlib + PyYAML,
+  no extra). Handles `application*` / `bootstrap*` (`.yml` / `.yaml` /
+  `.properties`) and any `*.properties` / `*.yml` under a `resources`
+  directory; registered ahead of `YamlParser`, which still gets Checkov custom
+  policies (name-matched `.yml` with `metadata.id` + `definition` is handed
+  back) and all other generic YAML. Each file becomes a `ConfigFile` plus a
+  flattened `ConfigProperty` list — YAML nesting collapsed to dotted keys
+  (list items `[i]`), `.properties` read line-wise (comment markers, `\` line
+  continuations, `#---` multi-document separators), real line numbers kept.
+  Spring profile resolved from an `application-<profile>` filename or a
+  `spring.config.activate.on-profile` key; `${a.b:default}` placeholders become
+  `(:ConfigProperty)-[:REFERENCES]->(:ConfigProperty)` edges within the file.
+  A `Section` + one `Chunk` per profile makes config searchable via `search`,
+  with secret-looking keys (`password` / `secret` / `token` / `credential` /
+  `key`) redacted in the chunk text (real value stays on the node). New
+  `config_file_path` / `config_property_id` constraints and
+  `config_property_fulltext` index. Feeds `@Value` / `@ConfigurationProperties`
+  resolution in the Spring bean model.
+  ([#72](https://github.com/tmustafiz/graph-rag/issues/72))
 - Structured Java annotation model. `JavaParser` now captures annotations on
   types, methods, constructors, fields, and parameters as `Annotation` nodes
   (`(CodeEntity)-[:ANNOTATED_WITH]->(:Annotation {fqn, name, target, attributes,
