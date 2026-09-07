@@ -27,6 +27,9 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT config_file_path IF NOT EXISTS FOR (n:ConfigFile) REQUIRE n.path IS UNIQUE",
     "CREATE CONSTRAINT config_property_id IF NOT EXISTS "
     "FOR (n:ConfigProperty) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT module_path IF NOT EXISTS FOR (n:Module) REQUIRE n.path IS UNIQUE",
+    "CREATE CONSTRAINT external_artifact_gav IF NOT EXISTS "
+    "FOR (n:ExternalArtifact) REQUIRE n.gav IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.
@@ -45,6 +48,8 @@ FULLTEXT_INDEXES: list[str] = [
     "FOR (n:Annotation) ON EACH [n.name, n.fqn]",
     "CREATE FULLTEXT INDEX config_property_fulltext IF NOT EXISTS "
     "FOR (n:ConfigProperty) ON EACH [n.key, n.value]",
+    "CREATE FULLTEXT INDEX module_fulltext IF NOT EXISTS "
+    "FOR (n:Module) ON EACH [n.artifact, n.group]",
 ]
 
 # Range indexes for cheap ordering scans (pruner's recency sweep, centrality ranking).

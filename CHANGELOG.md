@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Maven / Gradle project model. New `MavenParser` (`pom.xml`, stdlib
+  `xml.etree`) and `GradleParser` (`build.gradle` / `build.gradle.kts` /
+  `settings.gradle(.kts)`, tree-sitter `groovy` / `kotlin`) turn build files
+  into `(:Module {group, artifact, version, path, build_tool, packages,
+  source_roots})` nodes with `(:Module)-[:DEPENDS_ON {scope}]->(:Module)` and
+  `-[:DEPENDS_ON_EXTERNAL {gav, scope}]->(:ExternalArtifact)` edges. Maven reads
+  `<parent>` inheritance, `<properties>` `${...}` interpolation, the reactor
+  `<modules>` list, `<dependencies>` GAV + `<scope>`, and
+  `<build><sourceDirectory>`; Gradle does a shallow tree-sitter pass for
+  `group` / `version` / `rootProject.name`, `include`, `dependencies { }`
+  coordinates (configuration → `scope`), `project(':x')` deps, and `srcDirs`.
+  Source-root discovery adds `src/test/java` and `target/generated-sources` /
+  `build/generated` when present. On a directory ingest, build files parse
+  first and a new `ProjectModelResolver` then wires
+  `(:Source)-[:IN_MODULE]->(:Module)` (nearest module dir), promotes sibling
+  dependencies (`project(':x')` / matching GAV → `DEPENDS_ON`), and sets
+  `external` (bool) on every `(:CodeEntity)-[:IMPORTS]->(:CodeEntity)` edge —
+  `false` for first-party / in-project targets, `true` for third-party. New
+  `module_path` / `external_artifact_gav` constraints and a `module_fulltext`
+  index. ([#70](https://github.com/tmustafiz/graph-rag/issues/70))
 - Spring / Java application-config parser (`ConfigFileParser`, stdlib + PyYAML,
   no extra). Handles `application*` / `bootstrap*` (`.yml` / `.yaml` /
   `.properties`) and any `*.properties` / `*.yml` under a `resources`
