@@ -9,6 +9,7 @@ from .db_reference import DbReference
 from .db_table import DbTable
 from .db_view import DbView
 from .external_artifact import ExternalArtifact
+from .http_endpoint import HttpEndpoint
 from .module import Module
 from .module_dependency import ModuleDependency
 from .parsed_document import ParsedDocument
@@ -28,6 +29,7 @@ __all__ = [
     "DbTable",
     "DbView",
     "ExternalArtifact",
+    "HttpEndpoint",
     "Module",
     "ModuleDependency",
     "ParsedDocument",

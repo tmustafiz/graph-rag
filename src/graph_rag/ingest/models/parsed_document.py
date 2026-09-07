@@ -11,6 +11,7 @@ from .db_reference import DbReference
 from .db_table import DbTable
 from .db_view import DbView
 from .external_artifact import ExternalArtifact
+from .http_endpoint import HttpEndpoint
 from .module import Module
 from .module_dependency import ModuleDependency
 from .policy_rule import PolicyRule
@@ -45,6 +46,9 @@ class ParsedDocument(BaseModel):
     modules: list[Module] = Field(default_factory=list)
     external_artifacts: list[ExternalArtifact] = Field(default_factory=list)
     module_dependencies: list[ModuleDependency] = Field(default_factory=list)
+    # Spring MVC / JAX-RS routes, one per (http_method, path); feeds
+    # `(:HttpEndpoint)-[:HANDLED_BY]->(:CodeEntity)`.
+    http_endpoints: list[HttpEndpoint] = Field(default_factory=list)
     db_tables: list[DbTable] = Field(default_factory=list)
     db_columns: list[DbColumn] = Field(default_factory=list)
     db_views: list[DbView] = Field(default_factory=list)

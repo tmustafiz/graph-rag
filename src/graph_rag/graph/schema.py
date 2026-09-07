@@ -31,6 +31,7 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT external_artifact_gav IF NOT EXISTS "
     "FOR (n:ExternalArtifact) REQUIRE n.gav IS UNIQUE",
     "CREATE CONSTRAINT bean_id IF NOT EXISTS FOR (n:Bean) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT http_endpoint_id IF NOT EXISTS FOR (n:HttpEndpoint) REQUIRE n.id IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.
@@ -53,6 +54,8 @@ FULLTEXT_INDEXES: list[str] = [
     "FOR (n:Module) ON EACH [n.artifact, n.group]",
     "CREATE FULLTEXT INDEX bean_fulltext IF NOT EXISTS "
     "FOR (n:Bean) ON EACH [n.name, n.stereotype, n.bean_type]",
+    "CREATE FULLTEXT INDEX http_endpoint_fulltext IF NOT EXISTS "
+    "FOR (n:HttpEndpoint) ON EACH [n.path, n.embed_text]",
 ]
 
 # Range indexes for cheap ordering scans (pruner's recency sweep, centrality ranking).
@@ -153,6 +156,20 @@ def db_view_vector_index_statement(
     )
 
 
+def http_endpoint_vector_index_statement(
+    dimensions: int = settings.embedding_dimensions,
+    similarity_function: str = settings.embedding_similarity_function,
+) -> str:
+    return (
+        "CREATE VECTOR INDEX http_endpoint_embedding IF NOT EXISTS "
+        "FOR (n:HttpEndpoint) ON (n.embedding) "
+        "OPTIONS {indexConfig: {"
+        f"`vector.dimensions`: {dimensions}, "
+        f"`vector.similarity_function`: '{similarity_function}'"
+        "}}"
+    )
+
+
 def apply_schema(driver: Driver) -> list[str]:
     """Create (or verify) all constraints and indexes. Idempotent."""
     statements = [
@@ -165,6 +182,7 @@ def apply_schema(driver: Driver) -> list[str]:
         agent_memory_vector_index_statement(),
         db_table_vector_index_statement(),
         db_view_vector_index_statement(),
+        http_endpoint_vector_index_statement(),
     ]
     with driver.session() as session:
         for statement in statements:

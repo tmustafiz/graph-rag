@@ -1,5 +1,6 @@
 from .config_file_parser import ConfigFileParser
 from .gradle_parser import GradleParser
+from .http_endpoint_extractor import HttpEndpointExtractor
 from .java_parser import JavaParser
 from .javascript_parser import JavaScriptParser
 from .lombok_synthesizer import LombokSynthesizer
@@ -16,6 +17,7 @@ from .yaml_parser import YamlParser
 __all__ = [
     "ConfigFileParser",
     "GradleParser",
+    "HttpEndpointExtractor",
     "JavaParser",
     "JavaScriptParser",
     "LombokSynthesizer",

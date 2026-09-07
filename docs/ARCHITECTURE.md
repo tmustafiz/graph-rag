@@ -46,7 +46,7 @@ flowchart TD
 | `graph_rag.ingest.parser_registry` | Maps file extension → parser. New type = new module + one registration line. |
 | `graph_rag.ingest.chunker` | Splits section body text into token-bounded, overlapping chunks that never cross a heading; keeps code/table blocks intact. |
 | `graph_rag.ingest.embedders` | `Embedder` interface; `SentenceTransformerEmbedder` (local `all-MiniLM-L6-v2`, 384-dim) is the default — no API key, works offline. `build_embedder()` reads `GRAG_EMBEDDING_PROVIDER` and can instead return a hosted `RestEmbedder` (OpenAI / Ollama / Voyage / Cohere / Gemini — plain `httpx`, no SDKs), probing vector width against `EMBEDDING_DIMENSIONS` at startup. |
-| `graph_rag.ingest.enricher` | Attaches embeddings to chunks / code entities / policy rules. |
+| `graph_rag.ingest.enricher` | Attaches embeddings to chunks / code entities / policy rules / DB tables / DB views / HTTP endpoints. |
 | `graph_rag.ingestion_pipeline` | Orchestrates parse → hash-check → enrich → write. Skips unchanged files; deletes stale children of changed files. |
 | `graph_rag.graph.schema` | Constraint + index DDL (`apply-schema`). Idempotent. |
 | `graph_rag.graph.graph_writer` | Cypher `MERGE` upserts for every node/edge type. |
@@ -82,6 +82,7 @@ flowchart TD
 | `Module` | `path` (module directory, absolute) | `artifact`, `group`, `version`, `build_tool` (`maven` / `gradle`), `packages` (owned package prefixes), `source_roots` |
 | `ExternalArtifact` | `gav` (`group:artifact`) | `group`, `artifact`, `version` |
 | `Bean` | `id` (= the owning `CodeEntity.qualified_name`) | `name` (Spring bean name), `stereotype`, `scope`, `primary`, `bean_type`, `unresolved_injections` (JSON) |
+| `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs`), `produces`, `consumes`, `params`, `bindings` (JSON), `embed_text`, `embedding` (384-d) |
 
 **Relationships**
 
@@ -105,12 +106,13 @@ flowchart TD
 - `(Source)-[:DEFINES]->(Module)`, `(Source)-[:IN_MODULE]->(Module)` (every file → its nearest module directory)
 - `(Module)-[:DEPENDS_ON {scope}]->(Module)` (Maven reactor / sibling GAV / Gradle `project(':x')`), `(Module)-[:DEPENDS_ON_EXTERNAL {gav, scope}]->(ExternalArtifact)`
 - `(CodeEntity)-[:IS_BEAN]->(Bean)`, `(Bean)-[:INJECTS {via, qualifier, multiplicity}]->(Bean)`, `(Bean)-[:PRODUCES]->(Bean)` (`@Bean` method), `(Bean)-[:BINDS]->(ConfigProperty)` (`@Value` / `@ConfigurationProperties`)
+- `(HttpEndpoint)-[:HANDLED_BY]->(CodeEntity)` (the Spring MVC / JAX-RS handler method), `(HttpEndpoint)-[:IN_MODULE]->(Module)`
 
 **Indexes** (`grag-mcp apply-schema`)
 
 - Uniqueness constraints on every node key above.
-- Vector indexes (cosine, 384-d) on `Chunk`, `CodeEntity`, `PolicyRule`, `AgentMemory`, `DbTable`, `DbView` `.embedding`.
-- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text), `Annotation` (name/fqn), `ConfigProperty` (key/value), `Module` (artifact/group), `Bean` (name/stereotype/bean_type).
+- Vector indexes (cosine, 384-d) on `Chunk`, `CodeEntity`, `PolicyRule`, `AgentMemory`, `DbTable`, `DbView`, `HttpEndpoint` `.embedding`.
+- Full-text indexes on `Chunk.text`, `Section.title`, `CodeEntity` (name/qualified_name/docstring), `PolicyRule` (id/name/category/guideline), `AgentMemory.content`, `DbTable`/`DbView` (name/qualified_name/embed_text), `Annotation` (name/fqn), `ConfigProperty` (key/value), `Module` (artifact/group), `Bean` (name/stereotype/bean_type), `HttpEndpoint` (path/embed_text).
 - Range indexes on `AgentMemory.last_accessed_at` and `CodeEntity.pagerank`.
 
 ## Ingestion
@@ -194,6 +196,21 @@ is left alone. Separately, annotation-processor **output** under
 `target/generated-sources` / `build/generated` is ingested as normal `.java` on
 a directory run (run the build first); `GRAG_INGEST_GENERATED_SOURCES=false`
 skips it.
+
+`HttpEndpointExtractor` also runs inside `JavaParser` (single-file — a
+controller and its handlers share a file). Spring MVC (`@RequestMapping` +
+`@GetMapping` / `@PostMapping` / …, class + method path composition,
+`produces` / `consumes` / `params` / `headers`) and JAX-RS (`@Path` + `@GET` /
+`@POST` / …, `@Produces` / `@Consumes`) handler methods become
+`HttpEndpoint`s — one per `(http_method, path)` pair. Parameter bindings
+(`@PathVariable` / `@RequestParam` / `@RequestBody` / `@RequestHeader` /
+`@ModelAttribute`, and `@PathParam` / `@QueryParam` / `@HeaderParam` /
+`@FormParam`) are matched to the handler's parameters by name with their types
+read from the method signature. `@ExceptionHandler` methods are recorded
+best-effort with `http_method="EXCEPTION"`. `embed_text` reads
+`"GET /orders/{id} -> OrderController.getOrder (returns Order) [spring-mvc]"`
+so `search` / `search_code` surface routes from a natural-language query;
+`(HttpEndpoint)-[:IN_MODULE]->(Module)` is wired by `ProjectModelResolver`.
 
 `JavaScriptParser` (`grag-mcp[js]`, same backend) handles JavaScript,
 TypeScript, and their JSX variants in one parser
