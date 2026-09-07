@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Java type-hierarchy edges. `JavaParser` now records a type's direct
+  supertypes on `CodeEntity` (`extends_types` / `implements_types`,
+  import-resolved to FQNs where possible, else the simple name) and
+  `GraphWriter` writes `(:CodeEntity)-[:EXTENDS]->(:CodeEntity)` (superclass, or
+  an interface's super-interface) and `-[:IMPLEMENTS]->` edges. Foundation for
+  injection-target-by-type resolution in the Spring bean model.
+  ([#73](https://github.com/tmustafiz/graph-rag/issues/73))
 - Lombok member synthesis + generated-sources ingestion. `LombokSynthesizer`
   (inside `JavaParser`) materialises the `CodeEntity`s a compile-time
   annotation processor would generate: `@Getter` / `@Setter` / `@Data` /

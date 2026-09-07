@@ -34,6 +34,11 @@ class CodeEntity(BaseModel):
     origin: str | None = None
     calls: list[str] = Field(default_factory=list)
     imports: list[str] = Field(default_factory=list)
+    # Direct supertypes of a type entity — resolved to an FQN against the
+    # file's imports where possible, else the simple name; feed `EXTENDS`
+    # (superclass / super-interface of an interface) and `IMPLEMENTS` edges.
+    extends_types: list[str] = Field(default_factory=list)
+    implements_types: list[str] = Field(default_factory=list)
     # Other `CodeEntity` qualified names this one renders — set only by the
     # React enrichment pass for `component` entities; feeds `RENDERS` edges.
     renders: list[str] = Field(default_factory=list)

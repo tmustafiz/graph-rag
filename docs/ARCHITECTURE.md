@@ -88,6 +88,7 @@ flowchart TD
 - `(Source)-[:DEFINES]->(CodeEntity)`, `(CodeEntity)-[:CONTAINS]->(CodeEntity)` (class → method)
 - `(CodeEntity)-[:CALLS]->(CodeEntity)`, `(CodeEntity)-[:IMPORTS]->(CodeEntity)` (`IMPORTS.external` — set by the project-model resolver: `false` for first-party / in-project targets, `true` for third-party)
 - `(CodeEntity)-[:RENDERS]->(CodeEntity)` (React `component` → child component, from the JSX it mounts)
+- `(CodeEntity)-[:EXTENDS]->(CodeEntity)` (superclass, or an interface's super-interface), `(CodeEntity)-[:IMPLEMENTS]->(CodeEntity)` (Java, best-effort import-resolved)
 - `(CodeEntity)-[:ANNOTATED_WITH]->(Annotation)` (Java annotations on a type / method / constructor / annotated field / parameter)
 - `(Source)-[:DEFINES]->(ConfigFile)`, `(ConfigFile)-[:HAS_PROPERTY]->(ConfigProperty)`
 - `(ConfigProperty)-[:REFERENCES]->(ConfigProperty)` (`${a.b}` placeholder, resolved within the file)
@@ -170,9 +171,11 @@ as a `field` entity keyed `<type>#<field>` so framework wiring (`@Autowired`,
 `@Value`, `@Column`) is visible; annotations on types, methods, constructors,
 annotated fields, and parameters become `Annotation` nodes via
 `ANNOTATED_WITH` (attribute values parsed to a JSON string; FQN resolved
-against the file's imports, else the simple name); and there is no file-level
-`module` entity (Java has no unit below the package), so a file's `imports`
-attach to its first top-level type.
+against the file's imports, else the simple name); a type's direct supertypes
+become `(CodeEntity)-[:EXTENDS]->` (superclass / an interface's
+super-interface) and `-[:IMPLEMENTS]->` edges, names import-resolved the same
+way; and there is no file-level `module` entity (Java has no unit below the
+package), so a file's `imports` attach to its first top-level type.
 
 `LombokSynthesizer` runs inside `JavaParser`: a type carrying `@Data` /
 `@Getter` / `@Setter` / `@Value` / `@*ArgsConstructor` / `@Builder` /

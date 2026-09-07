@@ -237,6 +237,9 @@ class JavaParser:
             )
 
         signature = cls._type_signature(node, content, name_node, body)
+        extends_types, implements_types = cls._supertypes(
+            node, content, imported_types, same_file_types
+        )
         field_names = cls._field_names(body, content) if body else []
         enum_constants = cls._enum_constant_names(body, content) if body else []
         docstring = cls._javadoc(node, content)
@@ -258,6 +261,8 @@ class JavaParser:
                 docstring=docstring,
                 parent_qualified_name=parent_qualified_name,
                 imports=file_imports,
+                extends_types=extends_types,
+                implements_types=implements_types,
             )
         ]
         cls._collect_annotations(
@@ -672,6 +677,62 @@ class JavaParser:
                     if name_node is not None:
                         names.append(cls._text(name_node, content))
         return names
+
+    # -- supertypes ---------------------------------------------------
+
+    @classmethod
+    def _supertypes(
+        cls,
+        node: "Node",
+        content: bytes,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> tuple[list[str], list[str]]:
+        """`(extends, implements)` for a type node — a class's `extends`
+        superclass and an interface's `extends` super-interfaces both count as
+        `extends`; `implements` (and an enum/record's) as `implements`. Names
+        are FQN-resolved against the file's imports, else kept simple.
+        """
+        extends_types: list[str] = []
+        implements_types: list[str] = []
+        for child in node.children:
+            if child.type in ("superclass", "extends_interfaces"):
+                bucket = extends_types
+            elif child.type == "super_interfaces":
+                bucket = implements_types
+            else:
+                continue
+            for type_node in cls._type_list_members(child):
+                bucket.append(
+                    cls._resolve_type_name(
+                        cls._type_name_text(type_node, content), imported_types, same_file_types
+                    )
+                )
+        return extends_types, implements_types
+
+    @staticmethod
+    def _type_list_members(container: "Node") -> list["Node"]:
+        members: list[Node] = []
+        for child in container.children:
+            if child.type == "type_list":
+                members.extend(grandchild for grandchild in child.children if grandchild.is_named)
+            elif child.is_named and child.type not in ("extends", "implements"):
+                members.append(child)
+        return members
+
+    @classmethod
+    def _type_name_text(cls, node: "Node", content: bytes) -> str:
+        if node.type == "generic_type" and node.children:
+            return cls._type_name_text(node.children[0], content)
+        return cls._collapse(cls._text(node, content))
+
+    @staticmethod
+    def _resolve_type_name(
+        raw_name: str, imported_types: dict[str, str], same_file_types: dict[str, str]
+    ) -> str:
+        if "." in raw_name:
+            return raw_name
+        return imported_types.get(raw_name) or same_file_types.get(raw_name) or raw_name
 
     @classmethod
     def _enum_constant_names(cls, body: "Node", content: bytes) -> list[str]:
