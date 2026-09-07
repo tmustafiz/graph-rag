@@ -23,6 +23,7 @@ CONSTRAINTS: list[str] = [
     "FOR (n:DbView) REQUIRE n.qualified_name IS UNIQUE",
     "CREATE CONSTRAINT db_index_qualified_name IF NOT EXISTS "
     "FOR (n:DbIndex) REQUIRE n.qualified_name IS UNIQUE",
+    "CREATE CONSTRAINT annotation_id IF NOT EXISTS FOR (n:Annotation) REQUIRE n.id IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.
@@ -37,6 +38,8 @@ FULLTEXT_INDEXES: list[str] = [
     "FOR (n:AgentMemory) ON EACH [n.content]",
     "CREATE FULLTEXT INDEX db_object_text_fulltext IF NOT EXISTS "
     "FOR (n:DbTable|DbView) ON EACH [n.name, n.qualified_name, n.embed_text]",
+    "CREATE FULLTEXT INDEX annotation_name_fulltext IF NOT EXISTS "
+    "FOR (n:Annotation) ON EACH [n.name, n.fqn]",
 ]
 
 # Range indexes for cheap ordering scans (pruner's recency sweep, centrality ranking).

@@ -1,9 +1,17 @@
 import builtins
+import json
 from pathlib import Path
 
 import pytest
 
 from graph_rag.ingest.parsers.java_parser import JavaParser
+
+
+def _annotations_by_owner(document: object) -> dict[str, list]:
+    grouped: dict[str, list] = {}
+    for annotation in document.annotations:
+        grouped.setdefault(annotation.owner_qualified_name, []).append(annotation)
+    return grouped
 
 
 def _write(tmp_path: Path, package: str, name: str, body: str) -> Path:
@@ -278,6 +286,146 @@ def test_can_handle_only_matches_java_files() -> None:
     assert JavaParser.can_handle(Path("Foo.java")) is True
     assert JavaParser.can_handle(Path("Foo.JAVA")) is True
     assert JavaParser.can_handle(Path("Foo.py")) is False
+
+
+def test_type_level_annotations_are_captured_with_resolved_fqn(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme.web",
+        "OrderController",
+        "import org.springframework.web.bind.annotation.RestController;\n"
+        "import org.springframework.web.bind.annotation.RequestMapping;\n\n"
+        "@RestController\n"
+        '@RequestMapping(path = "/orders", produces = {"application/json", "text/plain"})\n'
+        "public class OrderController {}",
+    )
+
+    document = JavaParser().parse(path)
+
+    annotations = _annotations_by_owner(document)["com.acme.web.OrderController"]
+    by_name = {annotation.name: annotation for annotation in annotations}
+    assert all(annotation.target == "type" for annotation in annotations)
+    assert by_name["RestController"].fqn == (
+        "org.springframework.web.bind.annotation.RestController"
+    )
+    assert by_name["RestController"].attributes == {}
+    request_mapping = by_name["RequestMapping"]
+    assert request_mapping.attributes == {
+        "path": "/orders",
+        "produces": ["application/json", "text/plain"],
+    }
+    # `attributes_json` is what the graph writer persists (Neo4j has no nested maps).
+    assert json.loads(request_mapping.attributes_json)["path"] == "/orders"
+
+
+def test_unresolved_annotation_falls_back_to_simple_name(tmp_path: Path) -> None:
+    path = _write(tmp_path, "com.acme", "Legacy", "@Deprecated\npublic class Legacy {}")
+
+    annotation = _annotations_by_owner(JavaParser().parse(path))["com.acme.Legacy"][0]
+    assert annotation.name == "Deprecated"
+    assert annotation.fqn == "Deprecated"
+
+
+def test_annotated_fields_become_field_entities_plain_fields_do_not(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "OrderService",
+        "import org.springframework.beans.factory.annotation.Autowired;\n"
+        "import org.springframework.beans.factory.annotation.Value;\n\n"
+        "public class OrderService {\n"
+        "    @Autowired private OrderRepo repo;\n"
+        '    @Value("${app.timeout:30}") private int timeout;\n'
+        "    private int callCount;\n"
+        "}",
+    )
+
+    document = JavaParser().parse(path)
+
+    by_qn = {entity.qualified_name: entity for entity in document.code_entities}
+    assert by_qn["com.acme.OrderService#repo"].kind == "field"
+    assert by_qn["com.acme.OrderService#repo"].parent_qualified_name == "com.acme.OrderService"
+    assert "com.acme.OrderService#timeout" in by_qn
+    assert "com.acme.OrderService#callCount" not in by_qn  # plain field: no entity
+    # plain field still folded into the owning type's embed_text
+    assert "callCount" in by_qn["com.acme.OrderService"].embed_text
+
+    value = _annotations_by_owner(document)["com.acme.OrderService#timeout"][0]
+    assert value.target == "field"
+    assert value.name == "Value"
+    assert value.attributes == {"value": "${app.timeout:30}"}
+
+
+def test_method_and_parameter_annotations(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme.web",
+        "OrderApi",
+        "import org.springframework.web.bind.annotation.GetMapping;\n"
+        "import org.springframework.web.bind.annotation.PathVariable;\n\n"
+        "public class OrderApi {\n"
+        '    @GetMapping("/{id}")\n'
+        "    Order get(@PathVariable Long id, int page) { return null; }\n"
+        "}",
+    )
+
+    document = JavaParser().parse(path)
+
+    annotations = _annotations_by_owner(document)["com.acme.web.OrderApi.get(Long,int)"]
+    by_name = {annotation.name: annotation for annotation in annotations}
+    assert by_name["GetMapping"].target == "method"
+    assert by_name["GetMapping"].attributes == {"value": "/{id}"}
+    assert by_name["PathVariable"].target == "param:id"
+    assert by_name["PathVariable"].fqn == "org.springframework.web.bind.annotation.PathVariable"
+
+
+def test_annotation_attribute_value_types(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Widget",
+        "public class Widget {\n"
+        '    @Column(name = "id", nullable = false, length = 36, ratio = 1.5)\n'
+        "    private String id;\n"
+        "    @WithClass(value = Widget.class)\n"
+        "    void a() {}\n"
+        "    @Outer(inner = @Inner(x = 1))\n"
+        "    void b() {}\n"
+        "}",
+    )
+
+    document = JavaParser().parse(path)
+    by_owner = _annotations_by_owner(document)
+
+    column = by_owner["com.acme.Widget#id"][0]
+    assert column.attributes == {"name": "id", "nullable": False, "length": 36, "ratio": 1.5}
+    assert by_owner["com.acme.Widget.a()"][0].attributes == {"value": "Widget.class"}
+    assert by_owner["com.acme.Widget.b()"][0].attributes == {"inner": {"@Inner": {"x": 1}}}
+
+
+def test_graph_writer_annotation_rows_shape(tmp_path: Path) -> None:
+    from graph_rag.graph.graph_writer import GraphWriter
+
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Thing",
+        "@Deprecated\npublic class Thing {}",
+    )
+    document = JavaParser().parse(path)
+
+    rows = GraphWriter._annotation_rows(document)
+    assert rows == [
+        {
+            "id": document.annotations[0].id,
+            "owner_qualified_name": "com.acme.Thing",
+            "target": "type",
+            "fqn": "Deprecated",
+            "name": "Deprecated",
+            "attributes_json": "{}",
+            "line": document.annotations[0].line,
+        }
+    ]
 
 
 def test_parse_without_tree_sitter_raises_actionable_error(

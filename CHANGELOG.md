@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Structured Java annotation model. `JavaParser` now captures annotations on
+  types, methods, constructors, fields, and parameters as `Annotation` nodes
+  (`(CodeEntity)-[:ANNOTATED_WITH]->(:Annotation {fqn, name, target, attributes,
+  line})`), keyed by `(owner, target, fqn, line)`. Attribute values (string /
+  number / boolean / class-literal / enum-constant / array / nested annotation)
+  are parsed into a map and persisted as a JSON string (`attributes` property);
+  the annotation FQN is resolved against the file's imports, falling back to the
+  simple name. Type-level annotations (`@RestController` on a class, …), which
+  were previously dropped entirely, are now captured. Fields carrying at least
+  one annotation are emitted as `field` `CodeEntity`s (`kind` `field`,
+  `qualified_name` `<type>#<field>`); plain fields stay folded into the owning
+  type's `embed_text` as before. New `Annotation` uniqueness constraint and
+  `annotation_name_fulltext` index. Foundation for the Spring bean / MVC /
+  Spring-Data models. ([#69](https://github.com/tmustafiz/graph-rag/issues/69))
+
 ## [0.5.0] - 2026-09-06
 
 ### Added

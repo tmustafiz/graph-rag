@@ -2,14 +2,23 @@ import hashlib
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from ..models import CodeEntity, ParsedDocument, Source
+from ..models import Annotation, CodeEntity, ParsedDocument, Source
 
 if TYPE_CHECKING:
     from tree_sitter import Node
 
 _WHITESPACE_RE = re.compile(r"\s+")
+
+_ANNOTATION_NODE_TYPES = ("marker_annotation", "annotation")
+_INTEGER_LITERALS = (
+    "decimal_integer_literal",
+    "hex_integer_literal",
+    "octal_integer_literal",
+    "binary_integer_literal",
+)
+_FLOAT_LITERALS = ("decimal_floating_point_literal", "hex_floating_point_literal")
 
 # Java type-declaration node types → the `CodeEntity.kind` we emit for each.
 _TYPE_KINDS: dict[str, str] = {
@@ -29,11 +38,19 @@ class JavaParser:
     """Parses a `.java` file into a `Source` + `CodeEntity` list via tree-sitter.
 
     Types (class / interface / enum / record / `@interface`) and their
-    methods / constructors become `CodeEntity` nodes; fields are folded into
-    the owning type's `embed_text` rather than emitted as entities (they are
-    never `CALLS`/`IMPORTS` endpoints). There is no file-level `module` entity
-    — Java has no first-class unit below the package — so the file's imports
-    are attached to its first top-level type.
+    methods / constructors become `CodeEntity` nodes. Plain fields are folded
+    into the owning type's `embed_text` rather than emitted as entities (they
+    are never `CALLS`/`IMPORTS` endpoints), but a field carrying at least one
+    annotation *is* emitted as a `field` entity (`qualified_name` =
+    ``<type>#<field>``) so framework wiring like `@Autowired` / `@Value` /
+    `@Column` is visible. There is no file-level `module` entity — Java has no
+    first-class unit below the package — so the file's imports are attached to
+    its first top-level type.
+
+    Annotations on types, methods, constructors, fields, and parameters are
+    captured as `Annotation` records on `ParsedDocument.annotations`, each
+    keyed to its owner entity's `qualified_name`; parameter annotations use a
+    ``param:<name>`` target since parameters are not their own entities.
 
     `qualified_name` is the fully-qualified, overload-safe name
     (`com.acme.orders.OrderService.submit(Order,boolean)`); parameter types are
@@ -74,6 +91,7 @@ class JavaParser:
         same_file_types = self._same_file_type_names(type_nodes, package, content)
 
         entities: list[CodeEntity] = []
+        annotations: list[Annotation] = []
         for index, type_node in enumerate(type_nodes):
             entities.extend(
                 self._build_type_entities(
@@ -86,10 +104,11 @@ class JavaParser:
                     static_aliases=static_aliases,
                     imported_types=imported_types,
                     same_file_types=same_file_types,
+                    annotations=annotations,
                 )
             )
 
-        return ParsedDocument(source=source, code_entities=entities)
+        return ParsedDocument(source=source, code_entities=entities, annotations=annotations)
 
     # -- naming -------------------------------------------------------------
 
@@ -196,6 +215,7 @@ class JavaParser:
         static_aliases: dict[str, str],
         imported_types: dict[str, str],
         same_file_types: dict[str, str],
+        annotations: list[Annotation],
     ) -> list[CodeEntity]:
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -239,6 +259,9 @@ class JavaParser:
                 imports=file_imports,
             )
         ]
+        cls._collect_annotations(
+            node, content, qualified_name, "type", imported_types, same_file_types, annotations
+        )
 
         if body is None:
             return entities
@@ -256,6 +279,20 @@ class JavaParser:
                         static_aliases=static_aliases,
                         imported_types=imported_types,
                         same_file_types=same_file_types,
+                        annotations=annotations,
+                    )
+                )
+            elif child.type == "field_declaration":
+                entities.extend(
+                    cls._build_field_entities(
+                        child,
+                        content,
+                        path=path,
+                        type_qualified_name=qualified_name,
+                        type_simple_name=simple_name,
+                        imported_types=imported_types,
+                        same_file_types=same_file_types,
+                        annotations=annotations,
                     )
                 )
             elif child.type in _TYPE_KINDS:
@@ -270,6 +307,7 @@ class JavaParser:
                         static_aliases=static_aliases,
                         imported_types=imported_types,
                         same_file_types=same_file_types,
+                        annotations=annotations,
                     )
                 )
         return entities
@@ -287,6 +325,7 @@ class JavaParser:
         static_aliases: dict[str, str],
         imported_types: dict[str, str],
         same_file_types: dict[str, str],
+        annotations: list[Annotation],
     ) -> CodeEntity:
         simple_name = cls._member_simple_name(node, content, type_simple_name)
         qualified_name = cls._member_qualified_name(
@@ -306,6 +345,18 @@ class JavaParser:
             imported_types=imported_types,
             same_file_types=same_file_types,
         )
+        target = "constructor" if kind == "constructor" else "method"
+        cls._collect_annotations(
+            node, content, qualified_name, target, imported_types, same_file_types, annotations
+        )
+        cls._collect_parameter_annotations(
+            node.child_by_field_name("parameters"),
+            content,
+            qualified_name,
+            imported_types,
+            same_file_types,
+            annotations,
+        )
         return CodeEntity(
             qualified_name=qualified_name,
             name=simple_name,
@@ -320,6 +371,235 @@ class JavaParser:
             parent_qualified_name=type_qualified_name,
             calls=calls,
         )
+
+    @classmethod
+    def _build_field_entities(
+        cls,
+        node: "Node",
+        content: bytes,
+        *,
+        path: Path,
+        type_qualified_name: str,
+        type_simple_name: str,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+        annotations: list[Annotation],
+    ) -> list[CodeEntity]:
+        """A `field` entity per declarator of an *annotated* field declaration.
+
+        Unannotated fields stay folded into the owning type's `embed_text` via
+        `_field_names` — they are never `CALLS`/`IMPORTS` endpoints, so a node
+        would only inflate the graph.
+        """
+        annotation_nodes = cls._annotation_nodes(node)
+        if not annotation_nodes:
+            return []
+
+        type_node = node.child_by_field_name("type")
+        field_type = cls._collapse(cls._text(type_node, content)) if type_node is not None else "?"
+        entities: list[CodeEntity] = []
+        for declarator in node.children:
+            if declarator.type != "variable_declarator":
+                continue
+            name_node = declarator.child_by_field_name("name")
+            if name_node is None:
+                continue
+            field_name = cls._text(name_node, content)
+            qualified_name = f"{type_qualified_name}#{field_name}"
+            entities.append(
+                CodeEntity(
+                    qualified_name=qualified_name,
+                    name=field_name,
+                    kind="field",
+                    language="java",
+                    embed_text=f"field {field_type} {field_name} in {type_simple_name}",
+                    file_path=str(path),
+                    start_line=node.start_point[0] + 1,
+                    end_line=node.end_point[0] + 1,
+                    signature=cls._collapse(f"{field_type} {field_name}"),
+                    parent_qualified_name=type_qualified_name,
+                )
+            )
+            cls._add_annotations(
+                annotation_nodes,
+                content,
+                qualified_name,
+                "field",
+                imported_types,
+                same_file_types,
+                annotations,
+            )
+        return entities
+
+    # -- annotations ----------------------------------------------------
+
+    @classmethod
+    def _collect_annotations(
+        cls,
+        node: "Node",
+        content: bytes,
+        owner_qualified_name: str,
+        target: str,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+        annotations: list[Annotation],
+    ) -> None:
+        cls._add_annotations(
+            cls._annotation_nodes(node),
+            content,
+            owner_qualified_name,
+            target,
+            imported_types,
+            same_file_types,
+            annotations,
+        )
+
+    @classmethod
+    def _collect_parameter_annotations(
+        cls,
+        parameters: "Node | None",
+        content: bytes,
+        method_qualified_name: str,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+        annotations: list[Annotation],
+    ) -> None:
+        if parameters is None:
+            return
+        for child in parameters.children:
+            if child.type not in ("formal_parameter", "spread_parameter"):
+                continue
+            annotation_nodes = cls._annotation_nodes(child)
+            if not annotation_nodes:
+                continue
+            name_node = child.child_by_field_name("name")
+            param_name = cls._text(name_node, content) if name_node is not None else "?"
+            cls._add_annotations(
+                annotation_nodes,
+                content,
+                method_qualified_name,
+                f"param:{param_name}",
+                imported_types,
+                same_file_types,
+                annotations,
+            )
+
+    @staticmethod
+    def _annotation_nodes(node: "Node") -> list["Node"]:
+        modifiers = next((child for child in node.children if child.type == "modifiers"), None)
+        if modifiers is None:
+            return []
+        return [child for child in modifiers.children if child.type in _ANNOTATION_NODE_TYPES]
+
+    @classmethod
+    def _add_annotations(
+        cls,
+        annotation_nodes: list["Node"],
+        content: bytes,
+        owner_qualified_name: str,
+        target: str,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+        annotations: list[Annotation],
+    ) -> None:
+        for annotation_node in annotation_nodes:
+            name, fqn, attributes, line = cls._parse_annotation(
+                annotation_node, content, imported_types, same_file_types
+            )
+            annotations.append(
+                Annotation(
+                    owner_qualified_name=owner_qualified_name,
+                    target=target,
+                    name=name,
+                    fqn=fqn,
+                    line=line,
+                    attributes=attributes,
+                )
+            )
+
+    @classmethod
+    def _parse_annotation(
+        cls,
+        node: "Node",
+        content: bytes,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> tuple[str, str, dict[str, Any], int]:
+        name_node = node.child_by_field_name("name")
+        raw_name = cls._text(name_node, content) if name_node is not None else ""
+        simple_name = raw_name.rsplit(".", 1)[-1]
+        if "." in raw_name:
+            fqn = raw_name
+        else:
+            fqn = imported_types.get(simple_name) or same_file_types.get(simple_name) or simple_name
+
+        attributes: dict[str, Any] = {}
+        arguments = node.child_by_field_name("arguments")
+        if arguments is not None:
+            pairs = [child for child in arguments.children if child.type == "element_value_pair"]
+            if pairs:
+                for pair in pairs:
+                    key_node = pair.child_by_field_name("key")
+                    key = cls._text(key_node, content) if key_node is not None else "value"
+                    attributes[key] = cls._parse_element_value(
+                        pair.child_by_field_name("value"), content, imported_types, same_file_types
+                    )
+            else:
+                value_node = next((child for child in arguments.children if child.is_named), None)
+                if value_node is not None:
+                    attributes["value"] = cls._parse_element_value(
+                        value_node, content, imported_types, same_file_types
+                    )
+        return simple_name, fqn, attributes, node.start_point[0] + 1
+
+    @classmethod
+    def _parse_element_value(
+        cls,
+        node: "Node | None",
+        content: bytes,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> Any:
+        if node is None:
+            return None
+        node_type = node.type
+        if node_type == "string_literal":
+            text = cls._text(node, content)
+            if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+                return text[1:-1]
+            return text
+        if node_type in _INTEGER_LITERALS:
+            raw = cls._text(node, content).rstrip("lL").replace("_", "")
+            try:
+                return int(raw, 0)
+            except ValueError:
+                return cls._text(node, content)
+        if node_type in _FLOAT_LITERALS:
+            raw = cls._text(node, content).rstrip("fFdD").replace("_", "")
+            try:
+                return float(raw)
+            except ValueError:
+                return cls._text(node, content)
+        if node_type == "true":
+            return True
+        if node_type == "false":
+            return False
+        if node_type == "element_value_array_initializer":
+            return [
+                cls._parse_element_value(child, content, imported_types, same_file_types)
+                for child in node.children
+                if child.is_named
+            ]
+        if node_type in _ANNOTATION_NODE_TYPES:
+            nested_name, _fqn, nested_attributes, _line = cls._parse_annotation(
+                node, content, imported_types, same_file_types
+            )
+            if nested_attributes:
+                return {f"@{nested_name}": nested_attributes}
+            return f"@{nested_name}"
+        # class literal (`Foo.class`), enum constant (`RetentionPolicy.RUNTIME`),
+        # a constant reference, or an expression we don't evaluate — keep the text.
+        return cls._collapse(cls._text(node, content))
 
     @classmethod
     def _member_simple_name(cls, node: "Node", content: bytes, type_simple_name: str) -> str:

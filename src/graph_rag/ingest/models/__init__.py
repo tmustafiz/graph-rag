@@ -1,3 +1,4 @@
+from .annotation import Annotation
 from .chunk import Chunk
 from .code_entity import CodeEntity
 from .db_column import DbColumn
@@ -11,6 +12,7 @@ from .section import Section
 from .source import Source
 
 __all__ = [
+    "Annotation",
     "Chunk",
     "CodeEntity",
     "DbColumn",

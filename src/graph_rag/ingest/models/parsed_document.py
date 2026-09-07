@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+from .annotation import Annotation
 from .chunk import Chunk
 from .code_entity import CodeEntity
 from .db_column import DbColumn
@@ -23,6 +24,9 @@ class ParsedDocument(BaseModel):
     sections: list[Section] = Field(default_factory=list)
     chunks: list[Chunk] = Field(default_factory=list)
     code_entities: list[CodeEntity] = Field(default_factory=list)
+    # Structured annotations on the code entities above, each carrying its
+    # `owner_qualified_name`; feeds `(CodeEntity)-[:ANNOTATED_WITH]->(:Annotation)`.
+    annotations: list[Annotation] = Field(default_factory=list)
     policy_rules: list[PolicyRule] = Field(default_factory=list)
     db_tables: list[DbTable] = Field(default_factory=list)
     db_columns: list[DbColumn] = Field(default_factory=list)
