@@ -38,6 +38,11 @@ _STRING_NODE_TYPES = ("string", "string_literal", "line_string_literal")
 # Groovy tags a nested call `end_command`; Kotlin uses `call_expression`.
 _CALL_NODE_TYPES = ("command", "end_command", "func", "call_expression")
 _ASSIGN_NODE_TYPES = ("assignment", "command", "end_command")
+# Blocks that configure *other* modules, not this file's. The parse is
+# per-file and flat, so a root `build.gradle`'s `subprojects { dependencies
+# { ... } }` would otherwise be attributed to the root module; skip the
+# subtree and let each subproject's own build file contribute its deps.
+_FOREIGN_SCOPE_BLOCKS = ("subprojects", "allprojects")
 
 
 class GradleParser:
@@ -49,8 +54,10 @@ class GradleParser:
     assignment in the file, block nesting ignored: `group` / `version`,
     `rootProject.name`, `include ':a', ':b'`, `dependencies { implementation
     'g:a:v' }` (configuration → `scope`), `project(':x')` dependencies, and
-    `srcDir(s)` entries. Dynamic configuration is skipped. A grammar gap or a
-    missing language pack logs a warning and yields whatever was found.
+    `srcDir(s)` entries. `subprojects` / `allprojects` blocks are skipped
+    (their contents configure other modules). Dynamic configuration is
+    skipped. A grammar gap or a missing language pack logs a warning and
+    yields whatever was found.
     """
 
     @staticmethod
@@ -193,6 +200,8 @@ class GradleParser:
         assignments: dict[str, str],
     ) -> None:
         if node.type in _CALL_NODE_TYPES:
+            if cls._call_name(node, content) in _FOREIGN_SCOPE_BLOCKS:
+                return  # don't descend — these deps belong to other modules (#126)
             parsed = cls._as_call(node, content)
             if parsed is not None:
                 calls.append(parsed)
@@ -248,7 +257,9 @@ class GradleParser:
         for child in node.children:
             if child.type in ("identifier", "simple_identifier"):
                 return cls._text(child, content)
-            if child.type == "unit":
+            # Groovy wraps a `name { ... }` block call as `command > block >
+            # unit > identifier`; descend so block-form calls are named too.
+            if child.type in ("unit", "block"):
                 inner = cls._call_name(child, content)
                 if inner:
                     return inner
