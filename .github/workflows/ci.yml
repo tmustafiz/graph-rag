@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `main` plus the active per-milestone integration branch, so each feature
+    # merge into `release/vX.Y.0` gets post-merge CI (cross-feature interaction
+    # bugs). PRs into those branches are already covered by `pull_request`.
+    branches: [main, "release/**"]
   pull_request:
   workflow_dispatch:
   schedule:

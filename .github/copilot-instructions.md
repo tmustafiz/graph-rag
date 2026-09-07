@@ -72,10 +72,13 @@ retrieval eval and a Trivy scan of the Docker image.
 ## Planning & PRs
 
 Planning lives on **GitHub**, not in the repo — Project board, milestones,
-issues. Branch from `main`, open a PR that says `Closes #<n>`, and let the repo
-owner merge and delete the branch. For a non-trivial task, post a `[CHECKPOINT]`
-comment on the issue/PR before starting (objective / done & verified / critical
-context / discarded paths / next step).
+issues. Feature work for an in-progress milestone branches from that milestone's
+`release/vX.Y.0` integration branch (not `main`) and PRs back into it; the repo
+owner squash-merges and deletes the branch. `main` only moves by a release merge
+or a hotfix. For a non-trivial task, post a `[CHECKPOINT]` comment on the
+issue/PR before starting (objective / done & verified / critical context /
+discarded paths / next step). Full branching + release flow: `AGENTS.md` →
+"Milestone branches" and `docs/RELEASING.md`.
 
 ## Don't break these
 

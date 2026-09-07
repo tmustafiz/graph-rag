@@ -207,10 +207,35 @@ milestones, and issues. Workflow for an agent:
    ```
    Convert relative dates to absolute. Keep the "why" (decisions, tradeoffs) in
    the issue/PR so it survives a context reset.
-3. Branch from `main`. Never commit or push to `main` directly.
-4. Open a PR whose body has `Closes #<n>`. Keep the diff scoped to the issue.
-5. The **repo owner merges** PRs and deletes branches — don't self-merge.
+3. **Branch from the active milestone's integration branch**, not `main` (see
+   "Milestone branches" below). Name it `feat/<slug>` / `fix/<slug>`. Never
+   commit or push to `main` or a `release/*` branch directly.
+4. Open a PR **into that same `release/vX.Y.0` branch** whose body has
+   `Closes #<n>`. Keep the diff scoped to the issue.
+5. The **repo owner merges** PRs (squash) and deletes branches — don't
+   self-merge.
 6. Update `CHANGELOG.md` (`[Unreleased]`) for anything user-visible.
+
+### Milestone branches (git-flow-lite)
+
+Feature work for an in-progress milestone never lands on `main` directly. `main`
+stays frozen at the last released tag; each release is one merge commit.
+
+- **One long-lived integration branch per milestone**, `release/vX.Y.0`, cut from
+  `main` when the milestone starts. Exactly one is active at a time.
+- Feature branches start from it and PR back into it (steps 3–4). Feature PRs are
+  **squash-merged**; CHANGELOG entries accumulate under `[Unreleased]`;
+  `pyproject.toml` version stays at the last released value until release prep.
+- CI runs on PRs into `release/**` and on every push to it.
+- **Releasing** (repo owner): (a) release-prep PR into `release/vX.Y.0` — bump
+  `pyproject.toml`, move `[Unreleased]` → `[X.Y.0] - <date>`; (b) PR
+  `release/vX.Y.0` → `main`, **merge commit, not squash**; (c) tag `vX.Y.0` on
+  the merge commit and push it — `release.yml` publishes; (d) delete
+  `release/vX.Y.0`. The next milestone cuts a fresh branch from `main`.
+- **Hotfix** to a released version: `hotfix/*` from `main`, PR to `main`, tag
+  `vX.Y.Z`, then merge `main` into the active `release/*` branch.
+
+Full checklist: [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ---
 
