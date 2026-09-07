@@ -70,6 +70,29 @@ def test_nested_types_and_members_form_contains_hierarchy(tmp_path: Path) -> Non
     assert by_qualified_name["com.acme.Outer.Inner.Deep.go()"].kind == "method"
 
 
+def test_enum_body_declarations_members_are_emitted(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "OrderStatus",
+        "public enum OrderStatus {\n"
+        "    NEW, PAID;\n"
+        "    private final int code = 0;\n"
+        "    public static OrderStatus fromCode(String c) { return NEW; }\n"
+        "    public boolean isTerminal() { return this == PAID; }\n"
+        "    interface Listener { void onChange(); }\n"
+        "}",
+    )
+
+    document = JavaParser().parse(path)
+    by_qualified_name = {entity.qualified_name: entity for entity in document.code_entities}
+
+    assert by_qualified_name["com.acme.OrderStatus.fromCode(String)"].kind == "method"
+    assert by_qualified_name["com.acme.OrderStatus.isTerminal()"].kind == "method"
+    assert by_qualified_name["com.acme.OrderStatus.Listener"].kind == "interface"
+    assert by_qualified_name["com.acme.OrderStatus.Listener.onChange()"].kind == "method"
+
+
 def test_every_type_flavor_maps_to_its_kind(tmp_path: Path) -> None:
     path = _write(
         tmp_path,
