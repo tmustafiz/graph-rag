@@ -24,6 +24,9 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT db_index_qualified_name IF NOT EXISTS "
     "FOR (n:DbIndex) REQUIRE n.qualified_name IS UNIQUE",
     "CREATE CONSTRAINT annotation_id IF NOT EXISTS FOR (n:Annotation) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT config_file_path IF NOT EXISTS FOR (n:ConfigFile) REQUIRE n.path IS UNIQUE",
+    "CREATE CONSTRAINT config_property_id IF NOT EXISTS "
+    "FOR (n:ConfigProperty) REQUIRE n.id IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.
@@ -40,6 +43,8 @@ FULLTEXT_INDEXES: list[str] = [
     "FOR (n:DbTable|DbView) ON EACH [n.name, n.qualified_name, n.embed_text]",
     "CREATE FULLTEXT INDEX annotation_name_fulltext IF NOT EXISTS "
     "FOR (n:Annotation) ON EACH [n.name, n.fqn]",
+    "CREATE FULLTEXT INDEX config_property_fulltext IF NOT EXISTS "
+    "FOR (n:ConfigProperty) ON EACH [n.key, n.value]",
 ]
 
 # Range indexes for cheap ordering scans (pruner's recency sweep, centrality ranking).

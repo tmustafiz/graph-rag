@@ -205,6 +205,32 @@ SET c.type = "resource_type"
 MERGE (p)-[:APPLIES_TO]->(c)
 """
 
+_MERGE_CONFIG_FILES = """
+UNWIND $rows AS row
+MERGE (cf:ConfigFile {path: row.path})
+SET cf.format = row.format
+WITH cf
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(cf)
+"""
+
+_MERGE_CONFIG_PROPERTIES = """
+UNWIND $rows AS row
+MERGE (cp:ConfigProperty {id: row.id})
+SET cp.file_path = row.file_path, cp.key = row.key, cp.value = row.value,
+    cp.profile = row.profile, cp.origin_line = row.origin_line
+WITH cp, row
+MATCH (cf:ConfigFile {path: row.file_path})
+MERGE (cf)-[:HAS_PROPERTY]->(cp)
+"""
+
+_MERGE_CONFIG_PROPERTY_REFERENCES = """
+UNWIND $pairs AS pair
+MATCH (cp:ConfigProperty {id: pair.from})
+MATCH (target:ConfigProperty {id: pair.to})
+MERGE (cp)-[:REFERENCES]->(target)
+"""
+
 _GET_SOURCE_CONTENT_HASH = """
 MATCH (s:Source {path: $path})
 RETURN s.content_hash AS content_hash
@@ -247,6 +273,20 @@ _RECONCILE_POLICY_RULES = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(p:PolicyRule)
 WHERE NOT p.id IN $keep_ids
 DETACH DELETE p
+"""
+
+# Config properties then their file — a re-parsed `application.yml` that drops a
+# key (or a whole profile document) leaves no orphan `ConfigProperty` behind.
+_RECONCILE_CONFIG_PROPERTIES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(:ConfigFile)-[:HAS_PROPERTY]->(cp:ConfigProperty)
+WHERE NOT cp.id IN $keep_ids
+DETACH DELETE cp
+"""
+
+_RECONCILE_CONFIG_FILES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(cf:ConfigFile)
+WHERE NOT cf.path IN $keep_ids
+DETACH DELETE cf
 """
 
 # One reconcile per `:Db*` label — a re-parsed migration file that no longer
@@ -327,6 +367,12 @@ class GraphWriter:
                 session.execute_write(self._write_policy_rules, document.source.path, batch)
             for batch in self._batched(self._applies_to_pairs(document)):
                 session.execute_write(self._write_applies_to, batch)
+            for batch in self._batched([f.model_dump(mode="json") for f in document.config_files]):
+                session.execute_write(self._write_config_files, document.source.path, batch)
+            for batch in self._batched(self._config_property_rows(document)):
+                session.execute_write(self._write_config_properties, batch)
+            for batch in self._batched(self._config_property_reference_pairs(document)):
+                session.execute_write(self._write_config_property_references, batch)
             session.execute_write(
                 self._reconcile_chunks,
                 document.source.path,
@@ -351,6 +397,16 @@ class GraphWriter:
                 self._reconcile_policy_rules,
                 document.source.path,
                 [r.id for r in document.policy_rules],
+            )
+            session.execute_write(
+                self._reconcile_config_properties,
+                document.source.path,
+                [p.id for p in document.config_properties],
+            )
+            session.execute_write(
+                self._reconcile_config_files,
+                document.source.path,
+                [f.path for f in document.config_files],
             )
             session.execute_write(
                 self._reconcile_db_tables,
@@ -479,6 +535,18 @@ class GraphWriter:
         tx.run(cast(LiteralString, _MERGE_APPLIES_TO), pairs=pairs)
 
     @staticmethod
+    def _write_config_files(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CONFIG_FILES), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_config_properties(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CONFIG_PROPERTIES), rows=rows)
+
+    @staticmethod
+    def _write_config_property_references(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CONFIG_PROPERTY_REFERENCES), pairs=pairs)
+
+    @staticmethod
     def _reconcile_chunks(tx: ManagedTransaction, source_path: str, keep_ids: list[str]) -> None:
         tx.run(cast(LiteralString, _RECONCILE_CHUNKS), source_path=source_path, keep_ids=keep_ids)
 
@@ -512,6 +580,26 @@ class GraphWriter:
     ) -> None:
         tx.run(
             cast(LiteralString, _RECONCILE_POLICY_RULES),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _reconcile_config_properties(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_CONFIG_PROPERTIES),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _reconcile_config_files(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_CONFIG_FILES),
             source_path=source_path,
             keep_ids=keep_ids,
         )
@@ -659,6 +747,28 @@ class GraphWriter:
             {"from": rule.id, "to": resource_type}
             for rule in document.policy_rules
             for resource_type in rule.resource_types
+        ]
+
+    @staticmethod
+    def _config_property_rows(document: ParsedDocument) -> list[dict]:
+        return [
+            {
+                "id": prop.id,
+                "file_path": prop.file_path,
+                "key": prop.key,
+                "value": prop.value,
+                "profile": prop.profile,
+                "origin_line": prop.origin_line,
+            }
+            for prop in document.config_properties
+        ]
+
+    @staticmethod
+    def _config_property_reference_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"from": prop.id, "to": target_id}
+            for prop in document.config_properties
+            for target_id in prop.references
         ]
 
     @staticmethod

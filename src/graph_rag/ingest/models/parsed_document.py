@@ -3,6 +3,8 @@ from pydantic import BaseModel, Field
 from .annotation import Annotation
 from .chunk import Chunk
 from .code_entity import CodeEntity
+from .config_file import ConfigFile
+from .config_property import ConfigProperty
 from .db_column import DbColumn
 from .db_index import DbIndex
 from .db_reference import DbReference
@@ -28,6 +30,11 @@ class ParsedDocument(BaseModel):
     # `owner_qualified_name`; feeds `(CodeEntity)-[:ANNOTATED_WITH]->(:Annotation)`.
     annotations: list[Annotation] = Field(default_factory=list)
     policy_rules: list[PolicyRule] = Field(default_factory=list)
+    # Spring / Java application config: one `ConfigFile` per parsed file plus its
+    # flattened `ConfigProperty` list; feeds
+    # `(:ConfigFile)-[:HAS_PROPERTY]->(:ConfigProperty)-[:REFERENCES]->(:ConfigProperty)`.
+    config_files: list[ConfigFile] = Field(default_factory=list)
+    config_properties: list[ConfigProperty] = Field(default_factory=list)
     db_tables: list[DbTable] = Field(default_factory=list)
     db_columns: list[DbColumn] = Field(default_factory=list)
     db_views: list[DbView] = Field(default_factory=list)

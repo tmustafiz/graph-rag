@@ -1,6 +1,8 @@
 from .annotation import Annotation
 from .chunk import Chunk
 from .code_entity import CodeEntity
+from .config_file import ConfigFile
+from .config_property import ConfigProperty
 from .db_column import DbColumn
 from .db_index import DbIndex
 from .db_reference import DbReference
@@ -15,6 +17,8 @@ __all__ = [
     "Annotation",
     "Chunk",
     "CodeEntity",
+    "ConfigFile",
+    "ConfigProperty",
     "DbColumn",
     "DbIndex",
     "DbReference",
