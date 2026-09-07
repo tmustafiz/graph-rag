@@ -38,6 +38,12 @@ _MODIFIERS = {
     "default",
 }
 
+# A Java single- or double-quoted literal (with `\`-escapes). Blanked out before
+# the signature is scanned for brackets, so a `)` / `,` / `<` inside an
+# annotation attribute value (`@Pattern(regexp = ")")`) can't unbalance the
+# depth counters.
+_STRING_LITERAL = re.compile(r'"(?:\\.|[^"\\])*"' + r"|'(?:\\.|[^'\\])*'")
+
 
 class HttpEndpointExtractor:
     """Derives `HttpEndpoint`s from a parsed `.java` file's `CodeEntity` +
@@ -72,7 +78,7 @@ class HttpEndpointExtractor:
         endpoints: list[HttpEndpoint] = []
         for type_qn, type_entity in types.items():
             type_annos = by_owner.get(type_qn, [])
-            class_path = cls._first_path(type_annos, ("RequestMapping", "Path"))
+            class_paths = cls._all_paths(type_annos, ("RequestMapping", "Path"))
             class_produces = cls._media(type_annos, "produces", "Produces")
             class_consumes = cls._media(type_annos, "consumes", "Consumes")
             for method in methods_by_type.get(type_qn, []):
@@ -85,7 +91,7 @@ class HttpEndpointExtractor:
                         method_only,
                         param_annos,
                         type_entity.name,
-                        class_path,
+                        class_paths,
                         class_produces,
                         class_consumes,
                     )
@@ -101,7 +107,7 @@ class HttpEndpointExtractor:
         method_annos: list[Annotation],
         param_annos: list[Annotation],
         controller_name: str,
-        class_path: str,
+        class_paths: list[str],
         class_produces: list[str],
         class_consumes: list[str],
     ) -> list[HttpEndpoint]:
@@ -142,10 +148,14 @@ class HttpEndpointExtractor:
             ]
 
         http_methods = cls._http_methods(method_annos, framework)
-        method_path = cls._first_path(
+        method_paths = cls._all_paths(
             method_annos, ("RequestMapping", *_SPRING_METHOD_MAPPINGS, "Path")
         )
-        path = cls._join(class_path, method_path)
+        paths = _dedupe(
+            cls._join(class_path, method_path)
+            for class_path in class_paths
+            for method_path in method_paths
+        )
         produces = cls._media(method_annos, "produces", "Produces") or class_produces
         consumes = cls._media(method_annos, "consumes", "Consumes") or class_consumes
         params = cls._string_list(cls._attr(method_annos, "RequestMapping", "params"))
@@ -165,6 +175,7 @@ class HttpEndpointExtractor:
                 return_type,
             )
             for http_method in http_methods
+            for path in paths
         ]
 
     @classmethod
@@ -212,15 +223,24 @@ class HttpEndpointExtractor:
         return verbs or ["*"]
 
     @classmethod
-    def _first_path(cls, annos: list[Annotation], anno_names: tuple[str, ...]) -> str:
+    def _all_paths(cls, annos: list[Annotation], anno_names: tuple[str, ...]) -> list[str]:
+        """Every path a `@RequestMapping` / `@GetMapping` / `@Path` declares —
+        `@GetMapping({"/a", "/b"})` maps to two routes, not one. `[""]` when the
+        annotation carries no path, so the class×method cartesian product still
+        runs once.
+        """
+        paths: list[str] = []
         for annotation in annos:
             if annotation.name not in anno_names:
                 continue
             for key in ("value", "path"):
-                values = cls._string_list(annotation.attributes.get(key))
-                if values:
-                    return values[0]
-        return ""
+                raw = annotation.attributes.get(key)
+                if raw is None:
+                    continue
+                # keep "" — `@GetMapping({"", "/list"})` maps the base path too
+                items = raw if isinstance(raw, (list, tuple)) else [raw]
+                paths.extend(str(item) for item in items)
+        return _dedupe(paths) or [""]
 
     @classmethod
     def _media(cls, annos: list[Annotation], spring_attr: str, jaxrs_anno: str) -> list[str]:
@@ -278,6 +298,7 @@ class HttpEndpointExtractor:
     def _signature_params(signature: str | None, method_name: str) -> dict[str, str]:
         if not signature:
             return {}
+        signature = _STRING_LITERAL.sub('""', signature)
         match = re.search(rf"\b{re.escape(method_name)}\s*\(", signature)
         if match is None:
             return {}
@@ -315,6 +336,18 @@ class HttpEndpointExtractor:
     def _join(prefix: str, suffix: str) -> str:
         parts = [segment.strip("/") for segment in (prefix, suffix) if segment.strip("/")]
         return "/" + "/".join(parts) if parts else "/"
+
+
+def _dedupe(items: Any) -> list[str]:
+    """Order-preserving de-dup — a class- and method-level path that compose to
+    the same route, or a repeated array entry, collapse to one endpoint."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
 
 
 def _split_top_level(text: str) -> list[str]:

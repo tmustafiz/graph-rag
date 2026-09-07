@@ -137,6 +137,56 @@ def test_exception_handler_recorded_best_effort(tmp_path: Path) -> None:
     assert ("EXCEPTION", "OrderNotFound") in endpoints
 
 
+_MULTI_PATH_CONTROLLER = """\
+package com.acme.web;
+
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping({"/api/v1/orders", "/api/v2/orders"})
+public class OrderController {
+
+    @GetMapping({"", "/list"})
+    public java.util.List<Order> list() { return null; }
+}
+"""
+
+_ANNOTATION_LITERAL_CONTROLLER = """\
+package com.acme.web;
+
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+public class CodeController {
+
+    @GetMapping("/codes/{code}")
+    public Code find(
+        @Pattern(regexp = "[A-Z)]+") @PathVariable String code,
+        @RequestParam int page
+    ) { return null; }
+}
+"""
+
+
+def test_multi_path_mappings_expand_to_every_route(tmp_path: Path) -> None:
+    endpoints = _endpoints(tmp_path, "OrderController.java", _MULTI_PATH_CONTROLLER)
+
+    assert set(endpoints) == {
+        ("GET", "/api/v1/orders"),
+        ("GET", "/api/v1/orders/list"),
+        ("GET", "/api/v2/orders"),
+        ("GET", "/api/v2/orders/list"),
+    }
+
+
+def test_paren_inside_annotation_string_does_not_drop_param_types(tmp_path: Path) -> None:
+    endpoints = _endpoints(tmp_path, "CodeController.java", _ANNOTATION_LITERAL_CONTROLLER)
+
+    find = endpoints[("GET", "/codes/{code}")]
+    kinds = {(b["kind"], b["name"], b["param_type"]) for b in find.bindings}
+    assert kinds == {("path", "code", "String"), ("query", "page", "int")}
+
+
 def test_graph_writer_serialises_endpoint_rows_with_bindings_json(tmp_path: Path) -> None:
     path = tmp_path / "OrderController.java"
     path.write_text(_SPRING_CONTROLLER)
