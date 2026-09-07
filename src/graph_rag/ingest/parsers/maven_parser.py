@@ -55,6 +55,9 @@ class MavenParser:
         version = self._text(root, "version") or self._text(parent, "version")
 
         properties = self._properties(root, group, artifact, version)
+        group = self._interpolate(group, properties)
+        artifact = self._interpolate(artifact, properties)
+        version = self._interpolate(version, properties)
         module = Module(
             path=str(module_dir),
             artifact=artifact,
@@ -143,9 +146,22 @@ class MavenParser:
 
     @classmethod
     def _interpolate(cls, value: str | None, properties: dict[str, str]) -> str | None:
+        """Resolve `${...}` placeholders to a fixed point, so the CI-friendly
+        `${revision}` / `${sha1}` setup and property-to-property chains
+        (`${spring.version}` -> `${spring-boot.version}` -> `1.2.3`) come out
+        fully substituted. Stops when nothing more resolves (a cycle or an
+        undefined property leaves the literal `${...}` in place).
+        """
         if not value:
             return value
-        return _PLACEHOLDER.sub(lambda match: properties.get(match.group(1), match.group(0)), value)
+        for _ in range(10):
+            substituted = _PLACEHOLDER.sub(
+                lambda match: properties.get(match.group(1), match.group(0)), value
+            )
+            if substituted == value:
+                return substituted
+            value = substituted
+        return value
 
     # -- source roots --
 
