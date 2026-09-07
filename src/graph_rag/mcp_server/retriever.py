@@ -605,9 +605,7 @@ class Retriever:
         )
         if allowed is not None:
             vector_rows = [row for row in vector_rows if row["qualified_name"] in allowed]
-            fulltext_scores = {
-                qn: score for qn, score in fulltext_scores.items() if qn in allowed
-            }
+            fulltext_scores = {qn: score for qn, score in fulltext_scores.items() if qn in allowed}
         by_id = {row["qualified_name"]: row for row in vector_rows}
         combined = combine_scores({qn: row["score"] for qn, row in by_id.items()}, fulltext_scores)
         return by_id, combined

@@ -331,7 +331,7 @@ class SpringBeanResolver:
             else "ambiguous: " + ", ".join(sorted(beans[b]["name"] for b in candidates))
         )
         unresolved.setdefault(source_bean_id, []).append(
-            {"type": element, "via": via, "reason": reason}
+            {"type": element, "via": via, "qualifier": qualifier or "", "reason": reason}
         )
 
     # -- pure helpers --
