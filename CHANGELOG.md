@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Lombok member synthesis + generated-sources ingestion. `LombokSynthesizer`
+  (inside `JavaParser`) materialises the `CodeEntity`s a compile-time
+  annotation processor would generate: `@Getter` / `@Setter` / `@Data` /
+  `@Value` → `getX()` / `isX()` / `setX()` per field; `@NoArgsConstructor` /
+  `@AllArgsConstructor` / `@RequiredArgsConstructor` (and the `@Data` /
+  `@Value` implied ones) → a constructor entity with the right parameter types
+  (the `@RequiredArgsConstructor` one is what Spring DI resolves through);
+  `@Builder` → `builder()` + a `<Type>Builder` stub; `@Slf4j` and friends → a
+  `log` field. Each is flagged `synthetic=true`, `origin="lombok"`; an explicit
+  accessor of the same name suppresses its synthetic twin. `CodeEntity` gains
+  `synthetic` / `origin`. A directory ingest also parses annotation-processor
+  output under `target/generated-sources` / `build/generated` as normal
+  `.java`; `GRAG_INGEST_GENERATED_SOURCES=false` skips it.
+  ([#71](https://github.com/tmustafiz/graph-rag/issues/71))
 - Maven / Gradle project model. New `MavenParser` (`pom.xml`, stdlib
   `xml.etree`) and `GradleParser` (`build.gradle` / `build.gradle.kts` /
   `settings.gradle(.kts)`, tree-sitter `groovy` / `kotlin`) turn build files

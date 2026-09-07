@@ -9,6 +9,7 @@ from .ingest.enricher import Enricher
 from .ingest.parser import Parser
 from .ingest.parser_registry import ParserRegistry
 from .ingestion_result import IngestionResult
+from .settings import settings
 from .unsupported_file_type_error import UnsupportedFileTypeError
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,20 @@ def _ingest_rank(path: Path) -> int:
     if path.name in _BUILD_FILE_NAMES or path.name.endswith((".gradle", ".gradle.kts")):
         return 0
     return 1
+
+
+_GENERATED_SOURCE_PARTS = {"generated-sources", "generated-test-sources", "generated"}
+
+
+def _is_generated_source(path: Path) -> bool:
+    """A `.java` file living under an annotation-processor output directory
+    (`target/generated-sources`, `build/generated`, …) — only meaningful after
+    a build, so `GRAG_INGEST_GENERATED_SOURCES=false` skips it.
+    """
+    if path.suffix.lower() != ".java":
+        return False
+    parts = set(path.parts)
+    return bool(parts & _GENERATED_SOURCE_PARTS) and bool(parts & {"target", "build"})
 
 
 class IngestionPipeline:
@@ -56,11 +71,12 @@ class IngestionPipeline:
                 raise UnsupportedFileTypeError(path)
             results = [self._ingest_one(path, parser, dry_run)]
         else:
+            skip_generated = not settings.ingest_generated_sources
             pairs = sorted(
                 (
                     (file, self._registry.for_path(file))
                     for file in path.rglob("*")
-                    if file.is_file()
+                    if file.is_file() and not (skip_generated and _is_generated_source(file))
                 ),
                 key=lambda pair: (_ingest_rank(pair[0]), pair[0]),
             )

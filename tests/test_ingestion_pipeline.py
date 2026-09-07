@@ -112,6 +112,31 @@ def test_run_on_directory_recurses_and_skips_unsupported_files(tmp_path: Path) -
     assert len(writer.written) == 2
 
 
+def test_generated_sources_are_skipped_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from graph_rag.settings import settings
+
+    hand_written = tmp_path / "src" / "main" / "java"
+    hand_written.mkdir(parents=True)
+    (hand_written / "Order.java").write_text("package a;\npublic class Order {}\n")
+    generated = tmp_path / "target" / "generated-sources" / "a"
+    generated.mkdir(parents=True)
+    (generated / "OrderMapperImpl.java").write_text("package a;\npublic class OrderMapperImpl {}\n")
+
+    monkeypatch.setattr(settings, "ingest_generated_sources", False)
+    writer = _FakeGraphWriter()
+    results = _pipeline(writer).run(tmp_path)
+
+    ingested = {result.path.name for result in results}
+    assert ingested == {"Order.java"}
+
+    monkeypatch.setattr(settings, "ingest_generated_sources", True)
+    writer = _FakeGraphWriter()
+    results = _pipeline(writer).run(tmp_path)
+    assert {result.path.name for result in results} == {"Order.java", "OrderMapperImpl.java"}
+
+
 def test_run_on_sql_file_counts_db_objects_and_embeds_tables_and_views(tmp_path: Path) -> None:
     path = tmp_path / "schema.sql"
     path.write_text(
