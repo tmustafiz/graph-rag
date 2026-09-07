@@ -238,10 +238,29 @@ MERGE (p)-[:APPLIES_TO]->(c)
 _MERGE_CONFIG_FILES = """
 UNWIND $rows AS row
 MERGE (cf:ConfigFile {path: row.path})
-SET cf.format = row.format
+SET cf.format = row.format, cf.scan_packages = row.scan_packages,
+    cf.placeholder_locations = row.placeholder_locations,
+    cf.import_resources = row.import_resources,
+    cf.namespace_elements = row.namespace_elements
 WITH cf
 MATCH (src:Source {path: $source_path})
 MERGE (src)-[:DEFINES]->(cf)
+"""
+
+_MERGE_SPRING_XML_BEANS = """
+UNWIND $rows AS row
+MERGE (b:SpringXmlBean {id: row.id})
+SET b.source_path = row.source_path, b.bean_id = row.bean_id, b.bean_name = row.bean_name,
+    b.class_name = row.class_name, b.scope = row.scope, b.parent = row.parent,
+    b.factory_bean = row.factory_bean, b.factory_method = row.factory_method,
+    b.primary = row.primary, b.abstract = row.abstract, b.lazy_init = row.lazy_init,
+    b.aliases = row.aliases, b.depends_on = row.depends_on,
+    b.constructor_arg_refs = row.constructor_arg_refs,
+    b.property_names = row.property_names, b.property_refs = row.property_refs,
+    b.value_placeholder_keys = row.value_placeholder_keys
+WITH b, row
+MATCH (cf:ConfigFile {path: row.source_path})
+MERGE (cf)-[:DECLARES_BEAN]->(b)
 """
 
 _MERGE_CONFIG_PROPERTIES = """
@@ -366,6 +385,14 @@ WHERE NOT cf.path IN $keep_ids
 DETACH DELETE cf
 """
 
+# A re-parsed Spring XML context that drops a `<bean>` leaves no orphan
+# `SpringXmlBean` behind; run before the config-file reconcile.
+_RECONCILE_SPRING_XML_BEANS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(:ConfigFile)-[:DECLARES_BEAN]->(b:SpringXmlBean)
+WHERE NOT b.id IN $keep_ids
+DETACH DELETE b
+"""
+
 # One reconcile per `:Db*` label — a re-parsed migration file that no longer
 # produces a table / column / view / index leaves no orphan behind.
 _RECONCILE_DB_TABLES = """
@@ -458,6 +485,10 @@ class GraphWriter:
                 session.execute_write(self._write_config_properties, batch)
             for batch in self._batched(self._config_property_reference_pairs(document)):
                 session.execute_write(self._write_config_property_references, batch)
+            for batch in self._batched(
+                [b.model_dump(mode="json") for b in document.spring_xml_beans]
+            ):
+                session.execute_write(self._write_spring_xml_beans, document.source.path, batch)
             for batch in self._batched([m.model_dump(mode="json") for m in document.modules]):
                 session.execute_write(self._write_modules, document.source.path, batch)
             for batch in self._batched(
@@ -502,6 +533,11 @@ class GraphWriter:
                 self._reconcile_config_properties,
                 document.source.path,
                 [p.id for p in document.config_properties],
+            )
+            session.execute_write(
+                self._reconcile_spring_xml_beans,
+                document.source.path,
+                [b.id for b in document.spring_xml_beans],
             )
             session.execute_write(
                 self._reconcile_config_files,
@@ -664,6 +700,10 @@ class GraphWriter:
         tx.run(cast(LiteralString, _MERGE_CONFIG_PROPERTY_REFERENCES), pairs=pairs)
 
     @staticmethod
+    def _write_spring_xml_beans(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_SPRING_XML_BEANS), rows=rows, source_path=source_path)
+
+    @staticmethod
     def _write_modules(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_MODULES), rows=rows, source_path=source_path)
 
@@ -733,6 +773,16 @@ class GraphWriter:
     ) -> None:
         tx.run(
             cast(LiteralString, _RECONCILE_CONFIG_PROPERTIES),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _reconcile_spring_xml_beans(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_SPRING_XML_BEANS),
             source_path=source_path,
             keep_ids=keep_ids,
         )

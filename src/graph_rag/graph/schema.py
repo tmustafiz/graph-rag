@@ -32,6 +32,8 @@ CONSTRAINTS: list[str] = [
     "FOR (n:ExternalArtifact) REQUIRE n.gav IS UNIQUE",
     "CREATE CONSTRAINT bean_id IF NOT EXISTS FOR (n:Bean) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT http_endpoint_id IF NOT EXISTS FOR (n:HttpEndpoint) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT spring_xml_bean_id IF NOT EXISTS "
+    "FOR (n:SpringXmlBean) REQUIRE n.id IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.

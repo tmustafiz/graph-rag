@@ -16,6 +16,7 @@ from .parsed_document import ParsedDocument
 from .policy_rule import PolicyRule
 from .section import Section
 from .source import Source
+from .spring_xml_bean import SpringXmlBean
 
 __all__ = [
     "Annotation",
@@ -36,4 +37,5 @@ __all__ = [
     "PolicyRule",
     "Section",
     "Source",
+    "SpringXmlBean",
 ]
