@@ -93,10 +93,31 @@ Adding a parser: implement the `Parser` protocol in
 
 ## Commit / PR
 
-- Branch off `main`; keep PRs focused.
+- **Branch off the active milestone's integration branch** (`release/vX.Y.0`),
+  not `main`, and target your PR at that same branch. Feature work for an
+  in-progress milestone never lands on `main` directly — see
+  [Branching model](#branching-model) below. Keep PRs focused.
 - Reference the issue it closes (`Closes #123`).
 - Update `CHANGELOG.md` under `[Unreleased]` and add/adjust tests.
 - The PR template checklist should be green before requesting review.
+
+## Branching model
+
+This project uses a git-flow-lite model so an in-progress milestone can stabilise
+without destabilising `main`:
+
+- `main` only ever moves by a release merge or a hotfix; it always points at the
+  latest released tag.
+- Each milestone has **one long-lived integration branch**, `release/vX.Y.0`,
+  cut from `main`. It is the base for every feature branch in that milestone, and
+  the target for their (squash-merged) PRs.
+- `pyproject.toml`'s version is bumped only in the release-prep PR near the end
+  of the milestone; until then it reads the last released version.
+- When the milestone is done: release-prep PR into `release/vX.Y.0`, then a
+  **merge-commit** PR from `release/vX.Y.0` into `main`, then the `vX.Y.0` tag on
+  the merge commit. Full checklist in [`docs/RELEASING.md`](docs/RELEASING.md).
+
+`main` and `release/**` are protected: PR + green CI required, no direct pushes.
 
 ## Planning
 
@@ -129,17 +150,23 @@ One-time setup (maintainer, on PyPI):
    Optionally restrict it to tag pushes and add required reviewers.
 3. Optional dry-run path: repeat for `test.pypi.org` with environment `testpypi`.
 
-Cutting a release:
+Cutting a release (see [`docs/RELEASING.md`](docs/RELEASING.md) for the full
+checklist):
 
-1. Bump `version` in `pyproject.toml`, move the `CHANGELOG.md` `[Unreleased]`
-   items under a new `[x.y.z]` heading, and open/merge that PR.
-2. Tag the merge commit and push:
+1. On the milestone's `release/vX.Y.0` branch, open a **release-prep PR**: bump
+   `version` in `pyproject.toml`, move the `CHANGELOG.md` `[Unreleased]` items
+   under a new `[x.y.z]` heading, add a fresh empty `[Unreleased]`, update the
+   link definitions. Merge it into `release/vX.Y.0`.
+2. Open a PR from `release/vX.Y.0` into `main` and merge it with a **merge
+   commit** (not squash — that would flatten the whole milestone).
+3. Tag the merge commit on `main` and push:
    ```bash
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
    The workflow checks the tag matches `pyproject.toml`, builds the
    wheel + sdist, runs `twine check`, and publishes to PyPI.
-3. To rehearse against TestPyPI first, run the workflow manually
+4. Delete `release/vX.Y.0` once the tag build is green.
+5. To rehearse against TestPyPI first, run the workflow manually
    (Actions → Release → Run workflow → target `testpypi`).
 
 ## Reporting security issues
