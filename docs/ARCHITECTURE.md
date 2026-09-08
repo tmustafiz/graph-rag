@@ -478,6 +478,20 @@ resolver. `CamelResolver` (seventh post-ingest pass) resolves each `process` /
 `bean` / `to("bean:...")` step's reference (`Type.method`, bare `Type`, or
 `beanName`) to `(:CamelStep)-[:INVOKES]->(:CodeEntity)`.
 
+The **XML** and **YAML** DSLs feed the same model. `CamelXmlParser` claims a
+`.xml` with a `<camelContext>` / `<routes>` / `<route>` root (a `<beans>` file
+that embeds a `<camelContext>` stays with `SpringXmlParser`, which calls the
+shared `CamelXmlRouteExtractor` too); `CamelYamlParser` claims a `.yaml` whose
+entries carry a `route.from` / top-level `from`. Nested
+`<choice><when><simple/></when><otherwise/></choice>` (XML) and the equivalent
+YAML mapping are flattened to the same `choice / when / … / otherwise / … / end`
+step list. `@Consume(uri=)` on a method becomes a one-`bean`-step route into
+that method; `@Produce` / `@EndpointInject` on a field becomes
+`(:CodeEntity)-[:PRODUCES_TO]->(:CamelEndpoint)`. All four sources (Java DSL,
+XML, YAML, annotations) share the MERGE-keyed `CamelEndpoint`, so a
+`direct:` / `seda:` endpoint pairs producer and consumer no matter which DSL
+each side is written in.
+
 ## Retrieval
 
 `search` / `search_code` / `search_policies` run **hybrid retrieval**: a vector

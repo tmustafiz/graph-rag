@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Apache Camel routes — XML & YAML DSL + Camel annotations. New `CamelXmlParser`
+  (`<camelContext>` / `<routes>` / `<route>` root; a `<beans>` file embedding a
+  `<camelContext>` stays with `SpringXmlParser`, which now also runs the shared
+  `CamelXmlRouteExtractor`) and `CamelYamlParser` (`- route:` / `- from:`
+  shape) emit the same `CamelRoute` model as the Java DSL, flattening nested
+  `choice` / `when` / `otherwise`. `@Consume(uri=)` on a method becomes a
+  one-step route into it; `@Produce` / `@EndpointInject` on a field becomes
+  `(:CodeEntity)-[:PRODUCES_TO]->(:CamelEndpoint)`. All four sources share the
+  MERGE-keyed `CamelEndpoint`, so `direct:` / `seda:` producer↔consumer pairs
+  span DSLs.
+  ([#82](https://github.com/tmustafiz/graph-rag/issues/82))
 - Apache Camel route graph (Java DSL). `JavaParser` walks each `RouteBuilder`
   subclass's `configure()` body, unwinding the fluent
   `from(uri).routeId(id).<step>...` chain (which the generic `CALLS` resolver

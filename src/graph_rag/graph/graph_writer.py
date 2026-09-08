@@ -157,6 +157,21 @@ MERGE (r)-[s:STEP {index: row.index}]->(st)
 SET s.kind = row.kind, s.predicate = row.predicate
 """
 
+# `@Produce` / `@EndpointInject` producer field → the endpoint it writes to.
+_MERGE_CAMEL_PRODUCE = """
+UNWIND $pairs AS pair
+MATCH (m:CodeEntity {qualified_name: pair.producer})
+MERGE (ep:CamelEndpoint {uri: pair.uri})
+SET ep.scheme = pair.scheme
+MERGE (m)-[:PRODUCES_TO]->(ep)
+"""
+
+_RECONCILE_CAMEL_PRODUCE = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)-[r:PRODUCES_TO]->(ep:CamelEndpoint)
+WHERE NOT (m.qualified_name + '|' + ep.uri) IN $keep
+DELETE r
+"""
+
 _MERGE_CALLS = """
 UNWIND $pairs AS pair
 MATCH (caller:CodeEntity {qualified_name: pair.from})
@@ -617,6 +632,8 @@ class GraphWriter:
                 session.execute_write(self._write_camel_to, batch)
             for batch in self._batched(self._camel_step_rows(document)):
                 session.execute_write(self._write_camel_steps, batch)
+            for batch in self._batched(self._camel_produce_pairs(document)):
+                session.execute_write(self._write_camel_produce, batch)
             for batch in self._batched(self._call_pairs(document)):
                 session.execute_write(self._write_calls, batch)
             for batch in self._batched(self._import_pairs(document)):
@@ -720,6 +737,10 @@ class GraphWriter:
                 document.source.path,
                 [r.id for r in document.camel_routes],
                 [row["id"] for row in self._camel_step_rows(document)],
+                [
+                    f"{pair['producer']}|{pair['uri']}"
+                    for pair in self._camel_produce_pairs(document)
+                ],
             )
             session.execute_write(
                 self._reconcile_policy_rules,
@@ -845,6 +866,10 @@ class GraphWriter:
     @staticmethod
     def _write_camel_steps(tx: ManagedTransaction, rows: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_CAMEL_STEPS), rows=rows)
+
+    @staticmethod
+    def _write_camel_produce(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CAMEL_PRODUCE), pairs=pairs)
 
     @staticmethod
     def _write_calls(tx: ManagedTransaction, pairs: list[dict]) -> None:
@@ -1027,6 +1052,7 @@ class GraphWriter:
         source_path: str,
         route_ids: list[str],
         step_ids: list[str],
+        produce_keep: list[str],
     ) -> None:
         tx.run(
             cast(LiteralString, _RECONCILE_CAMEL_STEPS),
@@ -1037,6 +1063,11 @@ class GraphWriter:
             cast(LiteralString, _RECONCILE_CAMEL_ROUTES),
             source_path=source_path,
             keep_ids=route_ids,
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_CAMEL_PRODUCE),
+            source_path=source_path,
+            keep=produce_keep,
         )
         tx.run(cast(LiteralString, _SWEEP_ORPHAN_CAMEL_ENDPOINTS))
 
@@ -1215,6 +1246,17 @@ class GraphWriter:
             }
             for route in document.camel_routes
             for step in route.steps
+        ]
+
+    @classmethod
+    def _camel_produce_pairs(cls, document: ParsedDocument) -> list[dict]:
+        return [
+            {
+                "producer": endpoint["producer_qn"],
+                "uri": endpoint["uri"],
+                "scheme": cls._scheme_of(endpoint["uri"]),
+            }
+            for endpoint in document.camel_produce_endpoints
         ]
 
     @staticmethod

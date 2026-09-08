@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..models import Annotation, CamelRoute, CodeEntity, ParsedDocument, Source
 from .aop_extractor import AopExtractor
+from .camel_annotation_extractor import CamelAnnotationExtractor
 from .http_endpoint_extractor import HttpEndpointExtractor
 from .lombok_synthesizer import LombokSynthesizer
 from .spring_data_extractor import REACTIVE_BASES, SPRING_DATA_BASES, SpringDataExtractor
@@ -137,6 +138,9 @@ class JavaParser:
         camel_routes = self._collect_camel_routes(
             type_nodes, content, imported_types, same_file_types, package, str(path)
         )
+        consume_routes, camel_produce_endpoints = CamelAnnotationExtractor.extract(
+            entities, annotations, len(camel_routes), str(path)
+        )
 
         return ParsedDocument(
             source=source,
@@ -144,7 +148,8 @@ class JavaParser:
             annotations=annotations,
             behavior_markers=behavior_markers,
             aop_advice=aop_advice,
-            camel_routes=camel_routes,
+            camel_routes=camel_routes + consume_routes,
+            camel_produce_endpoints=camel_produce_endpoints,
             http_endpoints=HttpEndpointExtractor.extract(entities, annotations),
             jpa_entities=jpa_entities,
             spring_data_repositories=spring_data_repositories,

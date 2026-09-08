@@ -2,6 +2,8 @@ from pathlib import Path
 
 from .parser import Parser
 from .parsers import (
+    CamelXmlParser,
+    CamelYamlParser,
     ConfigFileParser,
     GradleParser,
     JavaParser,
@@ -35,11 +37,17 @@ class ParserRegistry:
             StylesheetParser(),
             MavenParser(),
             GradleParser(),
-            # Ahead of ConfigFileParser: claims only `.xml` files whose root
-            # element is `<beans>` (a Spring XML application context).
+            # `.xml` with a `<camelContext>` / `<routes>` / `<route>` root (not
+            # `<beans>` — SpringXmlParser handles those and extracts routes too).
+            # Ahead of ConfigFileParser.
+            CamelXmlParser(),
+            # `.xml` whose root is `<beans>` (a Spring XML application context).
             SpringXmlParser(),
-            # Ahead of YamlParser: claims Spring/Java `application*` / `bootstrap*`
-            # and `resources/`-dir config; defers Checkov policies back to YamlParser.
+            # Camel YAML DSL (`- route:` / `- from:`) — ahead of ConfigFileParser
+            # so a Camel routes file under `resources/` isn't taken as app config.
+            CamelYamlParser(),
+            # Spring/Java `application*` / `bootstrap*` and `resources/`-dir
+            # config; defers Checkov policies back to YamlParser.
             ConfigFileParser(),
             YamlParser(),
         ]
