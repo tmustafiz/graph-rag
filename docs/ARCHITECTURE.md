@@ -45,6 +45,7 @@ flowchart TD
 | `graph_rag.ingest.parsers` | One `Parser` per file type. `parse(path) -> ParsedDocument` (Sections/Chunks/CodeEntities/PolicyRules). |
 | `graph_rag.ingest.scip` | Reader for a SCIP (Sourcegraph Code Intelligence Protocol) index — a hand-rolled protobuf decoder (`ScipReader`, no `protobuf` runtime) + `ScipSymbolParser` (symbol string → `qualified_name`). |
 | `graph_rag.scip_ingestor` | `grag-mcp ingest --scip`: maps a SCIP `Index` to `ParsedDocument`s (`CodeEntity.resolution="scip"`), replacing the static entities for every file the index covers. |
+| `graph_rag.scip_java_runner` | `grag-mcp scip-java <repo>`: thin wrapper that shells out to the external `scip-java` binary (not vendored) and feeds its index to the ingestor. |
 | `graph_rag.ingest.parser_registry` | Maps file extension → parser. New type = new module + one registration line. |
 | `graph_rag.ingest.chunker` | Splits section body text into token-bounded, overlapping chunks that never cross a heading; keeps code/table blocks intact. |
 | `graph_rag.ingest.embedders` | `Embedder` interface; `SentenceTransformerEmbedder` (local `all-MiniLM-L6-v2`, 384-dim) is the default — no API key, works offline. `build_embedder()` reads `GRAG_EMBEDDING_PROVIDER` and can instead return a hosted `RestEmbedder` (OpenAI / Ollama / Voyage / Cohere / Gemini — plain `httpx`, no SDKs), probing vector width against `EMBEDDING_DIMENSIONS` at startup. |
@@ -64,7 +65,7 @@ flowchart TD
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
 | `graph_rag.memory` | `AgentMemory` write / recall / decay-pruning. |
-| `graph_rag.cli` | `typer` CLI: `status`, `apply-schema`, `ingest`, `serve-mcp`, `compute-centrality`, `prune-memory`, `eval-retrieval`. |
+| `graph_rag.cli` | `typer` CLI: `status`, `apply-schema`, `ingest` (`--scip` for a SCIP index), `scip-java`, `serve-mcp`, `compute-centrality`, `prune-memory`, `eval-retrieval`. |
 | `graph_rag.http_app` | FastAPI app mounted alongside the MCP server; exposes `POST /ingest`. |
 
 ## Graph data model
