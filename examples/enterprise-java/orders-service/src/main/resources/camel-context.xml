@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<camelContext xmlns="http://camel.apache.org/schema/spring">
+    <onException>
+        <exception>java.io.IOException</exception>
+        <handled><constant>true</constant></handled>
+    </onException>
+    <route id="orders-xml-intake">
+        <from uri="jms:queue:orders"/>
+        <choice>
+            <when>
+                <simple>${header.priority} == 'high'</simple>
+                <to uri="direct:enrich"/>
+            </when>
+            <otherwise>
+                <to uri="direct:standard"/>
+            </otherwise>
+        </choice>
+    </route>
+</camelContext>

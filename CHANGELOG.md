@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Framework-aware retrieval & MCP tools. New MCP tools `get_routes(uri_glob?,
+  module?)`, `get_message_flows(event_or_topic)`,
+  `get_service_calls(qualified_name)` (in/out HTTP, cross-service),
+  `get_architecture_outline(module?)` (beans / endpoints / routes / listeners /
+  scheduled jobs by module). `get_beans_for` gains `publishes` / `listens_to` /
+  `calls_services` / `invoked_by_routes` / `behaviors` context. `search_code`
+  gains `route=` / `endpoint=` / `listens_to=` / `behavior=` filters.
+  `get_central_code_entities` now runs PageRank over `CALLS` / `IMPORTS` **plus**
+  the framework-mediated edges (`IS_BEAN` / `INJECTS`, `PUBLISHES` /
+  `CONSUMED_BY`, Camel `INVOKES`, `CALLS_SERVICE`, `EXECUTES`). MCP server
+  instructions rewritten for the full enterprise-Java graph. New runnable
+  `examples/enterprise-java/` (three modules — Camel Java + XML routes, a Kafka
+  listener, a `@FeignClient` to a second service, an `@Aspect`, `@Transactional`,
+  a MyBatis mapper) with a query walkthrough; `docs/enterprise-java.md` and
+  `docs/ARCHITECTURE.md` "Java frameworks" completed with a precision-tier
+  table. ([#87](https://github.com/tmustafiz/graph-rag/issues/87))
 - AOP & behavioral-annotation model. `@Transactional` / `@Async` / `@Scheduled`
   / `@Retryable` / `@Cacheable` / `@CacheEvict` / `@PreAuthorize` / `@Secured` /
   `@RolesAllowed` on a type or method become `(:CodeEntity)-[:HAS_BEHAVIOR
