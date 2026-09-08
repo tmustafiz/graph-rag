@@ -615,32 +615,60 @@ Graph-native tools sit alongside search: `get_section` / `get_outline`
 
 ### Java frameworks
 
-For a Spring / Spring Boot / Jakarta codebase the graph carries beans +
-dependency injection (`SpringBeanResolver` / `SpringXmlResolver`), Spring MVC /
-JAX-RS HTTP endpoints (`HttpEndpointExtractor`), Spring Data repositories + JPA
-entities (`SpringDataExtractor` / `SpringDataResolver`), and application config
-(`ConfigFileParser` / `SpringXmlParser`) — each detailed in **Adding a
-language** above. It is reachable over MCP through:
+For an enterprise Java (Spring / Jakarta / Apache Camel) codebase the graph
+carries beans + dependency injection (`SpringBeanResolver` / `SpringXmlResolver`
+/ `SpringInjectionResolver`), Spring MVC / JAX-RS HTTP endpoints
+(`HttpEndpointExtractor`), Spring Data repositories + JPA entities
+(`SpringDataExtractor` / `SpringDataResolver`), application config
+(`ConfigFileParser` / `SpringXmlParser`), Apache Camel routes
+(`JavaParser._collect_camel_routes` / `CamelXmlParser` / `CamelYamlParser` +
+`CamelResolver`), in-process events + broker messaging (`MessageFlowExtractor`),
+AOP advice + behavioral markers (`AopExtractor` / `AopResolver`), MyBatis mapper
+SQL (`MyBatisMapperParser` / `MyBatisExtractor` / `MyBatisResolver`), and
+declarative HTTP clients (`HttpEndpointExtractor` + `ServiceCallResolver`) —
+each detailed in **Adding a language** above. It is reachable over MCP through:
 
-- **`search_code`** with `stereotype=` (`Service` / `RestController` /
-  `Repository` / `Configuration` / … — a bean stereotype or a bare type-level
-  annotation), `annotation=` (any annotation, simple name or FQN), `module=`
-  (owning `Module.artifact` or a path suffix) — guards baked into the hybrid
-  query so an unfiltered call is unchanged.
-- **`get_beans_for(qualified_name)`** — the bean for a `CodeEntity` /
-  `Bean.id`, its `INJECTS` / `PRODUCES` wiring both ways, and the
-  `ConfigProperty` keys it `BINDS` (annotation- and XML-wired beans alike).
-- **`get_endpoints(path_glob?, http_method?, module?)`** — `HttpEndpoint`s with
-  their handler and module; `path_glob` uses `*` / `?` and whole-path match.
-- **`get_neighbors`** — already relationship-type-generic, so `INJECTS` /
-  `HANDLED_BY` / `MANAGES` / `PERSISTS_AS` / `RELATES_TO` / `BINDS` /
-  `IMPORTS_CONTEXT` traverse like any other edge.
+- **`search_code`** filters — `stereotype=` / `annotation=` / `module=`, plus
+  `route=` (a Camel `Route.route_id` whose steps invoke the entity),
+  `endpoint=` (a path glob a handler on the entity serves), `listens_to=` (an
+  `EventType` fqn/simple or `Destination` name the entity or a method it
+  contains consumes), `behavior=` (`transactional` / `scheduled` / `async` /
+  `retryable` / `cacheable` / `pre_authorize` / …). Guards baked into the
+  hybrid query so an unfiltered call is unchanged.
+- **`get_beans_for(qualified_name)`** — the bean's `INJECTS` / `PRODUCES` /
+  `BINDS` wiring, plus v0.7.0 context on its backing `CodeEntity` and methods:
+  `publishes`, `listens_to`, `calls_services` (outbound HTTP), `invoked_by_routes`,
+  `behaviors`.
+- **`get_endpoints(path_glob?, http_method?, module?)`** — inbound `HttpEndpoint`s.
+- **`get_routes(uri_glob?, module?)`** — Camel `Route`s: `from` / `to` endpoints,
+  ordered step list, and the `CodeEntity`s their `process` / `bean` steps invoke.
+- **`get_message_flows(event_or_topic)`** — publisher ↔ consumer `CodeEntity`s
+  for an `EventType` (fqn or simple) or a `Destination` name.
+- **`get_service_calls(qualified_name)`** — the inbound (routes it handles) and
+  outbound (`@FeignClient` / `@HttpExchange` calls, with the controller route
+  each `RESOLVES_TO`) HTTP edges for one entity — a slice of the cross-service
+  call graph.
+- **`get_architecture_outline(module?)`** — beans / endpoints / routes /
+  listeners / scheduled jobs grouped by module.
+- **`get_central_code_entities`** — PageRank now runs over `CALLS` / `IMPORTS`
+  **plus** the framework-mediated edges (`IS_BEAN` / `INJECTS`, `PUBLISHES` /
+  `CONSUMED_BY`, Camel `INVOKES`, `CALLS_SERVICE`, `EXECUTES`), so ranking
+  reflects framework coupling, not just source calls.
+- **`get_neighbors`** — relationship-type-generic, so every edge above
+  traverses like any other.
 
-`examples/spring-boot/` is a runnable two-module sample exercising all of the
-above, with a query walkthrough in its `README.md`. Precise cross-file and
-library-level symbol resolution is the v0.7.0 `--scip` path; today's Java graph
-is best-effort static (no type inference), matching the `CALLS` / `IMPORTS`
-caveat above.
+**Precision tiers.**
+
+| Tier | Resolves | `CodeEntity.resolution` |
+| --- | --- | --- |
+| **static** (default, build-free) | in-file calls, explicit imports, `this`/`super` members, and the full framework graph (beans, MVC, Camel, events, AOP, MyBatis, Feign) | `static` |
+| **SCIP** (`grag-mcp ingest --scip`, needs a build) | compiler-grade cross-file / cross-module `CALLS` / `IMPORTS` / `IMPLEMENTS`, overload-correct targets, library symbols | `scip` (wins on overlap) |
+
+`examples/spring-boot/` covers the v0.6.0 beans / MVC / Spring Data slice;
+`examples/enterprise-java/` is a three-module sample exercising the v0.7.0
+additions (Camel Java + XML, a Kafka listener, a `@FeignClient` to a second
+service, an `@Aspect`, `@Transactional`, a MyBatis mapper) with a query
+walkthrough in its `README.md` and in `docs/enterprise-java.md`.
 
 ## MCP server
 

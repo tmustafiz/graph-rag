@@ -99,6 +99,43 @@ jobs:
           NEO4J_URI: ${{ secrets.NEO4J_URI }}
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
 ```
+
+## Framework-aware MCP tools
+
+Once ingested, the enterprise-Java graph is queried over MCP:
+
+| Tool | Answers |
+| --- | --- |
+| `get_architecture_outline(module?)` | beans / endpoints / routes / listeners / scheduled jobs, grouped by module — the fastest overview |
+| `get_routes(uri_glob?, module?)` | Camel routes: `from` / `to` endpoints, ordered steps, and the `CodeEntity`s `process` / `bean` steps invoke |
+| `get_message_flows(event_or_topic)` | publisher ↔ consumer for an event type (`fqn` or simple name) or a broker destination (topic / queue) |
+| `get_service_calls(qualified_name)` | in/out HTTP edges for one entity — inbound routes it handles, outbound `@FeignClient` / `@HttpExchange` calls and the controller route each resolves to |
+| `get_beans_for(qualified_name)` | bean wiring **plus** `publishes` / `listens_to` / `calls_services` / `invoked_by_routes` / `behaviors` |
+| `get_endpoints(path_glob?, http_method?, module?)` | inbound MVC / JAX-RS routes |
+| `get_central_code_entities()` | PageRank over `CALLS` / `IMPORTS` **and** framework edges (`INJECTS`, `PUBLISHES`, Camel `INVOKES`, `CALLS_SERVICE`, `EXECUTES`) |
+
+`search_code` gains framework filters: `route=` (route id whose steps invoke the
+hit), `endpoint=` (path glob a handler on the hit serves), `listens_to=` (event
+fqn/simple or destination the hit — or a method it contains — consumes),
+`behavior=` (`transactional` / `scheduled` / `async` / …), alongside the v0.6.0
+`stereotype=` / `annotation=` / `module=`.
+
+## Walkthrough — `examples/enterprise-java/`
+
+A runnable three-module sample (`orders-service` + `camel-routes` +
+`inventory-service`) exercising Camel Java **and** XML routes, a Kafka listener,
+a `@FeignClient` to a second service, an `@Aspect`, `@Transactional`, and a
+MyBatis mapper. See
+[`examples/enterprise-java/README.md`](../examples/enterprise-java/README.md)
+for the ingest commands and a tool-by-tool query table with expected output.
+
+```bash
+grag-mcp apply-schema
+grag-mcp ingest examples/enterprise-java
+grag-mcp compute-centrality
+# optional, on top:
+grag-mcp scip-java examples/enterprise-java
+```
 > The `scip-java` binary is an external tool — graph-rag does not vendor or
 > invoke it. A CI recipe and a `grag-mcp scip-java` wrapper are tracked in
 > [#80](https://github.com/tmustafiz/graph-rag/issues/80).
