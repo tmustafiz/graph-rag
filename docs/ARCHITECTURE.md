@@ -56,6 +56,7 @@ flowchart TD
 | `graph_rag.graph.spring_data_resolver` | Post-ingest pass (after `spring_xml_resolver`): tags repository / entity `CodeEntity`s `:Repository` / `:JpaEntity`, tags repo methods with `query_kind` / `query_text`, and wires `MANAGES` / `PERSISTS_AS` / `RELATES_TO` from the `SpringDataRepoDef` / `JpaEntityDef` defs. |
 | `graph_rag.graph.spring_injection_resolver` | Final Spring post-ingest pass: MERGEs a `:Bean` + `IS_BEAN` for every Spring Data repository interface (`bean_type` = interface FQN), then re-resolves any bean's `unresolved_injections` against the complete (annotation + XML + repository) bean set, promoting a now-unique match to an `INJECTS` edge. |
 | `graph_rag.graph.aop_resolver` | Post-ingest pass (after the Spring passes): best-effort AspectJ pointcut matching — resolves each `@Aspect` advice's `execution(…)` / `within(…)` / `@annotation(…)` pointcut (with `&&` / `\|\|` and one level of named-`@Pointcut` substitution) to the `CodeEntity`s it advises, rebuilding `(:Advice)-[:ADVISES]->(:CodeEntity)` and recording `Advice.unresolved_reason` for what it can't match. |
+| `graph_rag.graph.mybatis_resolver` | Post-ingest pass (last): binds each XML-derived `SqlStatement` to the `@Mapper` interface method it implements — `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)` — by matching the mapper `namespace` + statement `id` to a method. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
@@ -90,6 +91,7 @@ flowchart TD
 | `ExternalArtifact` | `gav` (`group:artifact`) | `group`, `artifact`, `version` |
 | `Bean` | `id` (owning `CodeEntity.qualified_name`; XML beans use a `source_path`+`bean_id` hash, stubs `xml-stub::<ref>`) | `name` (Spring bean name), `stereotype` (`XmlBean` / `XmlBeanStub` for XML-wired), `scope`, `primary`, `bean_type`, `defined_in` (`xml` when from a `<beans>` context), `unresolved_injections` (JSON) |
 | `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs`), `produces`, `consumes`, `params`, `bindings` (JSON), `embed_text`, `embedding` (384-d) |
+| `SqlStatement` | `id` (hash of mapper_qn + statement_id + kind + origin) | `mapper_qn` (namespace / interface FQN), `statement_id`, `kind` (`select`/`insert`/`update`/`delete`), `text` (flattened SQL), `origin` (`mybatis-xml` / `mybatis-annotation`), `method_qn` (set for the annotation form) |
 | `SpringDataRepoDef` / `JpaEntityDef` | `qualified_name` | Per-`.java` raw extract of a Spring Data repository (`base`, `entity_type`, `id_type`, `reactive`, parallel `method_*` arrays) / JPA type (`kind`, `table`, `id_fields`, parallel `association_*` arrays); projected onto the `CodeEntity` by `SpringDataResolver` |
 
 A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `repository_entity_type` / `repository_id_type` / `repository_reactive`), a **`:JpaEntity`** label (`jpa_kind` / `jpa_table`), or, on a repository method, `query_kind` (`derived` / `jpql` / `native` / `modifying` / `procedure` / `inherited`) + `query_text` + `query_properties` — all set by `SpringDataResolver`.
@@ -121,6 +123,7 @@ A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `re
 - `(Module)-[:DEPENDS_ON {scope}]->(Module)` (Maven reactor / sibling GAV / Gradle `project(':x')`), `(Module)-[:DEPENDS_ON_EXTERNAL {gav, scope}]->(ExternalArtifact)`
 - `(CodeEntity)-[:IS_BEAN]->(Bean)`, `(Bean)-[:INJECTS {via, qualifier, multiplicity, property}]->(Bean)` (`via` also `xml-constructor` / `xml-property` for XML-wired), `(Bean)-[:PRODUCES]->(Bean)` (`@Bean` method), `(Bean)-[:BINDS]->(ConfigProperty)` (`@Value` / `@ConfigurationProperties` / XML `<property value="${…}">`)
 - `(HttpEndpoint)-[:HANDLED_BY]->(CodeEntity)` (the Spring MVC / JAX-RS handler method), `(HttpEndpoint)-[:IN_MODULE]->(Module)`
+- `(CodeEntity)-[:EXECUTES]->(SqlStatement)` (a `@Mapper` method → the MyBatis SQL it runs — XML statements bound by `MyBatisResolver`, annotation ones at write time), `(SqlStatement)-[:ACCESSES {mode}]->(DbTable)` (`mode` = `read` / `write`; a stub `DbTable {name, stub:true}` when the schema was not separately ingested)
 - `(Source)-[:DEFINES]->(SpringDataRepoDef|JpaEntityDef)` (per-`.java` raw extract)
 - `(CodeEntity:Repository)-[:MANAGES]->(CodeEntity:JpaEntity)` (repo's managed domain type), `(CodeEntity:JpaEntity)-[:PERSISTS_AS]->(DbTable)` (only when a `DbTable` with that name was ingested), `(CodeEntity:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(CodeEntity:JpaEntity)` (`@OneToMany` / `@ManyToOne` / `@ManyToMany` / `@OneToOne`)
 
@@ -144,7 +147,7 @@ no longer produces. A file that fails to parse/embed/write is recorded and
 skipped without aborting the batch.
 
 Build files (`pom.xml`, `*.gradle*`) parse first so the `Module` layer exists
-before the `.java` files, and once the batch is done six graph passes run in
+before the `.java` files, and once the batch is done seven graph passes run in
 order: `ProjectModelResolver` wires `IN_MODULE`, promotes sibling dependencies
 and classifies `IMPORTS.external`; `SpringBeanResolver` derives the annotation
 `Bean` layer; `SpringXmlResolver` folds the `SpringXmlBean` defs from any
@@ -154,8 +157,9 @@ repository / JPA-entity `CodeEntity`s and wires `MANAGES` / `PERSISTS_AS` /
 repository interface a `:Bean` and re-runs injection resolution over the now
 complete bean set, so an annotation bean wiring an XML-only bean or a
 repository (unresolvable when the first pass ran) gets its `INJECTS` edge;
-finally `AopResolver` matches every `@Aspect` advice's pointcut to the
-`CodeEntity`s it advises. The
+`AopResolver` matches every `@Aspect` advice's pointcut to the
+`CodeEntity`s it advises; finally `MyBatisResolver` binds each XML mapper
+statement to its `@Mapper` interface method. The
 same passes also run after a **single-file** ingest — each is a full-graph
 rebuild — so `ingest_path` / `grag ingest <file>` / `--watch` keep the
 projections in sync with an edit.
@@ -455,6 +459,18 @@ against carried annotations, combined with `&&` / `||` and one level of named
 `@Pointcut` substitution — writing `(:Advice)-[:ADVISES]->(:CodeEntity)` and
 leaving `Advice.unresolved_reason` on anything it can't match (`!`, unsupported
 designators, no hit). There is no full pointcut engine.
+
+**MyBatis mappers.** `MyBatisMapperParser` claims a `.xml` with a
+`<mapper namespace="...">` root and emits a `SqlStatement` per
+`<select|insert|update|delete id=...>` — SQL flattened (`<include refid>`
+expanded against `<sql>` fragments, dynamic `<if>` / `<where>` / `<foreach>`
+tags unwrapped) and scanned for table names + access mode. `MyBatisExtractor`
+(inside `JavaParser`) does the same for `@Select` / `@Insert` / `@Update` /
+`@Delete` annotations, keeping the method (`method_qn`) directly.
+`MyBatisResolver` binds each XML statement to its method by
+`namespace` + `id`. Both feed `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)-[:ACCESSES {mode}]->(:DbTable)`,
+reusing a real `DbTable` when one with that name was ingested, else a
+`stub:true` node.
 
 ## Retrieval
 

@@ -11,6 +11,7 @@ from .graph.aop_resolver import AopResolver
 from .graph.centrality_analyzer import CentralityAnalyzer
 from .graph.client import check_connectivity, driver_session
 from .graph.graph_writer import GraphWriter
+from .graph.mybatis_resolver import MyBatisResolver
 from .graph.project_model_resolver import ProjectModelResolver
 from .graph.schema import apply_schema
 from .graph.spring_bean_resolver import SpringBeanResolver
@@ -96,6 +97,7 @@ def ingest(
                 SpringDataResolver(driver),
                 SpringInjectionResolver(driver),
                 AopResolver(driver),
+                MyBatisResolver(driver),
             ],
         )
         try:
@@ -241,6 +243,7 @@ def eval_retrieval(
                 SpringDataResolver(driver),
                 SpringInjectionResolver(driver),
                 AopResolver(driver),
+                MyBatisResolver(driver),
             ],
         )
         pipeline.run(EVAL_CORPUS_DIR)
@@ -335,6 +338,7 @@ def serve_mcp(
                     SpringDataResolver(driver),
                     SpringInjectionResolver(driver),
                     AopResolver(driver),
+                    MyBatisResolver(driver),
                 ],
             )
         if role in (McpRole.MEMORY, McpRole.ALL):

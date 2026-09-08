@@ -123,6 +123,33 @@ MATCH (handler:CodeEntity {qualified_name: row.handler_qualified_name})
 MERGE (h)-[:HANDLED_BY]->(handler)
 """
 
+_MERGE_SQL_STATEMENTS = """
+UNWIND $rows AS row
+MERGE (s:SqlStatement {id: row.id})
+SET s.mapper_qn = row.mapper_qn, s.statement_id = row.statement_id, s.kind = row.kind,
+    s.text = row.text, s.origin = row.origin, s.method_qn = row.method_qn,
+    s.file_path = row.file_path
+WITH s, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(s)
+WITH s, row
+FOREACH (_ IN CASE WHEN row.method_qn IS NULL THEN [] ELSE [1] END |
+    MERGE (m:CodeEntity {qualified_name: row.method_qn})
+    MERGE (m)-[:EXECUTES]->(s))
+"""
+
+# A stub `DbTable` (only `name`, `stub=true`) is created when the schema was not
+# separately ingested; MERGE on `name` alone reuses a real `DbTable` if one
+# exists with that name.
+_MERGE_SQL_ACCESSES = """
+UNWIND $pairs AS pair
+MATCH (s:SqlStatement {id: pair.stmt})
+MERGE (t:DbTable {name: pair.table})
+ON CREATE SET t.stub = true
+MERGE (s)-[a:ACCESSES]->(t)
+SET a.mode = pair.mode
+"""
+
 _MERGE_CALLS = """
 UNWIND $pairs AS pair
 MATCH (caller:CodeEntity {qualified_name: pair.from})
@@ -449,6 +476,21 @@ WHERE NOT h.id IN $keep_ids
 DETACH DELETE h
 """
 
+# A re-parsed mapper XML / `.java` that drops a statement leaves no orphan
+# `SqlStatement` behind; then any stub `DbTable` no `SqlStatement` still
+# accesses is swept.
+_RECONCILE_SQL_STATEMENTS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(s:SqlStatement)
+WHERE NOT s.id IN $keep_ids
+DETACH DELETE s
+"""
+
+_SWEEP_ORPHAN_STUB_TABLES = """
+MATCH (t:DbTable {stub: true})
+WHERE NOT (t)<-[:ACCESSES]-()
+DETACH DELETE t
+"""
+
 _RECONCILE_POLICY_RULES = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(p:PolicyRule)
 WHERE NOT p.id IN $keep_ids
@@ -557,6 +599,12 @@ class GraphWriter:
                 [e.model_dump(mode="json") for e in document.http_endpoints]
             ):
                 session.execute_write(self._write_http_endpoints, document.source.path, batch)
+            for batch in self._batched(
+                [s.model_dump(mode="json") for s in document.sql_statements]
+            ):
+                session.execute_write(self._write_sql_statements, document.source.path, batch)
+            for batch in self._batched(self._sql_access_pairs(document)):
+                session.execute_write(self._write_sql_accesses, batch)
             for batch in self._batched(self._call_pairs(document)):
                 session.execute_write(self._write_calls, batch)
             for batch in self._batched(self._import_pairs(document)):
@@ -654,6 +702,11 @@ class GraphWriter:
                 self._reconcile_http_endpoints,
                 document.source.path,
                 [e.id for e in document.http_endpoints],
+            )
+            session.execute_write(
+                self._reconcile_sql_statements,
+                document.source.path,
+                [s.id for s in document.sql_statements],
             )
             session.execute_write(
                 self._reconcile_policy_rules,
@@ -767,6 +820,14 @@ class GraphWriter:
     @staticmethod
     def _write_http_endpoints(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_HTTP_ENDPOINTS), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_sql_statements(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_SQL_STATEMENTS), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_sql_accesses(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_SQL_ACCESSES), pairs=pairs)
 
     @staticmethod
     def _write_calls(tx: ManagedTransaction, pairs: list[dict]) -> None:
@@ -944,6 +1005,17 @@ class GraphWriter:
         )
 
     @staticmethod
+    def _reconcile_sql_statements(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_SQL_STATEMENTS),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_STUB_TABLES))
+
+    @staticmethod
     def _reconcile_policy_rules(
         tx: ManagedTransaction, source_path: str, keep_ids: list[str]
     ) -> None:
@@ -1076,6 +1148,14 @@ class GraphWriter:
                 "line": marker.line,
             }
             for marker in document.behavior_markers
+        ]
+
+    @staticmethod
+    def _sql_access_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"stmt": statement.id, "table": table["name"], "mode": table["mode"]}
+            for statement in document.sql_statements
+            for table in statement.tables
         ]
 
     @staticmethod
