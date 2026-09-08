@@ -83,6 +83,8 @@ flowchart TD
 | `Annotation` | `id` (hash of owner + target + fqn + line) | `name`, `fqn` (import-resolved), `target` (`type`/`method`/`constructor`/`field`/`param:<name>`), `attributes` (JSON string), `line` |
 | `BehaviorMarker` | `id` (hash of owner + target + marker + line) | `marker` (`transactional` / `async` / `scheduled` / `retryable` / `cacheable` / `cache_put` / `cache_evict` / `pre_authorize` / `post_authorize` / `secured` / `roles_allowed`), `target` (`type`/`method`), `attributes` (JSON string), `line` |
 | `Advice` | `id` (hash of advice method qn + kind) | `kind` (`before`/`after`/`after_returning`/`after_throwing`/`around`/`pointcut`), `pointcut_expr`, `pointcut_ref`, `aspect`, `unresolved_reason` (set by `AopResolver` when a pointcut matched nothing / is unsupported) |
+| `EventType` | `fqn` (import-resolved where possible, else simple name — one canonical node per simple name) | `simple_name` — an in-process application event, bridging publisher and `@EventListener` |
+| `Destination` | `id` (`<broker>:<name>`) | `name` (literal topic/queue/exchange), `broker` (`kafka`/`rabbit`/`jms`/`sqs`/`stream`/`unknown`) |
 | `ConfigFile` | `path` (= owning `Source.path`) | `format` (`properties` / `yaml` / `spring-xml`); for `spring-xml` also `scan_packages`, `placeholder_locations`, `import_resources`, `namespace_elements` |
 | `ConfigProperty` | `id` (hash of file + profile + key + line) | `key` (dotted, list items `[i]`), `value` (string), `profile` (`None` = default), `origin_line` |
 | `SpringXmlBean` | `id` (hash of `source_path` + `bean_id`) | `bean_id` / `bean_name`, `class_name`, `scope`, `parent`, `factory_bean` / `factory_method`, `primary`, `abstract`, `aliases`, `constructor_arg_refs`, `property_names` / `property_refs`, `value_placeholder_keys` — raw `<bean>` def, projected into `Bean` by the XML resolver |
@@ -105,6 +107,8 @@ A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `re
 - `(CodeEntity)-[:ANNOTATED_WITH]->(Annotation)` (Java annotations on a type / method / constructor / annotated field / parameter)
 - `(CodeEntity)-[:HAS_BEHAVIOR {marker}]->(BehaviorMarker)` (`@Transactional` / `@Scheduled` / `@Async` / `@Cacheable` / `@PreAuthorize` / … — the marker slug is also mirrored onto `CodeEntity.behaviors` for cheap scans)
 - `(CodeEntity)-[:ADVICE_OF]->(Advice)` (an `@Aspect` advice / `@Pointcut` method → its `Advice` node), `(Advice)-[:ADVISES]->(CodeEntity)` (best-effort pointcut match, wired by `AopResolver`)
+- `(CodeEntity)-[:PUBLISHES]->(EventType)-[:CONSUMED_BY]->(CodeEntity)` (`publishEvent(...)` call site → event class → `@EventListener` method — links across files via the MERGE-shared `EventType`)
+- `(CodeEntity)-[:PRODUCES_TO]->(Destination)-[:CONSUMED_BY]->(CodeEntity)` (`KafkaTemplate`/`RabbitTemplate`/`JmsTemplate` `.send(...)` → literal topic/queue → `@KafkaListener` / `@RabbitListener` / `@JmsListener` / `@SqsListener` method)
 - `(Source)-[:DEFINES]->(ConfigFile)`, `(ConfigFile)-[:HAS_PROPERTY]->(ConfigProperty)`
 - `(ConfigProperty)-[:REFERENCES]->(ConfigProperty)` (`${a.b}` placeholder, resolved within the file)
 - `(ConfigFile)-[:DECLARES_BEAN]->(SpringXmlBean)` (one per `<bean>` in a Spring XML context)
@@ -455,6 +459,21 @@ against carried annotations, combined with `&&` / `||` and one level of named
 `@Pointcut` substitution — writing `(:Advice)-[:ADVISES]->(:CodeEntity)` and
 leaving `Advice.unresolved_reason` on anything it can't match (`!`, unsupported
 designators, no hit). There is no full pointcut engine.
+
+**Events & messaging.** `MessageFlowExtractor` (also inside `JavaParser`)
+recovers the call graph that publisher and consumer hide from each other.
+In-process: an `ApplicationEventPublisher.publishEvent(new OrderPlaced(...))`
+call site and an `@EventListener void on(OrderPlaced e)` method are bridged by a
+MERGE-shared `EventType` node (`(:CodeEntity)-[:PUBLISHES]->(:EventType)-[:CONSUMED_BY]->(:CodeEntity)`)
+— the event class is import-resolved from the `new X(...)` / the listener
+parameter / `classes=`, and publisher and listener are normalized to one
+canonical `fqn` per simple name so the two sides connect even across files.
+Broker: `@KafkaListener(topics=)` / `@RabbitListener(queues=)` /
+`@JmsListener(destination=)` / `@SqsListener` / `@StreamListener` and
+`KafkaTemplate`/`RabbitTemplate`/`JmsTemplate` `.send(...)` / `.convertAndSend(...)`
+call sites with a literal destination become
+`(:CodeEntity)-[:PRODUCES_TO]->(:Destination {broker})-[:CONSUMED_BY]->(:CodeEntity)`.
+No resolver pass — the shared-node MERGE does the cross-file join.
 
 ## Retrieval
 

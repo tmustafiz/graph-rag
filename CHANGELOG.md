@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Spring events & messaging model. `ApplicationEventPublisher.publishEvent(...)`
+  call sites and `@EventListener` / `@TransactionalEventListener` methods are
+  bridged by a MERGE-shared `EventType` node
+  (`(:CodeEntity)-[:PUBLISHES]->(:EventType)-[:CONSUMED_BY]->(:CodeEntity)`),
+  the event class import-resolved and normalized to one canonical `fqn` per
+  simple name so publisher and listener link across files. `@KafkaListener` /
+  `@RabbitListener` / `@JmsListener` / `@SqsListener` / `@StreamListener` and
+  `KafkaTemplate` / `RabbitTemplate` / `JmsTemplate` `.send(...)` /
+  `.convertAndSend(...)` with a literal destination become
+  `(:CodeEntity)-[:PRODUCES_TO]->(:Destination {broker})-[:CONSUMED_BY]->(:CodeEntity)`.
+  ([#84](https://github.com/tmustafiz/graph-rag/issues/84))
 - AOP & behavioral-annotation model. `@Transactional` / `@Async` / `@Scheduled`
   / `@Retryable` / `@Cacheable` / `@CacheEvict` / `@PreAuthorize` / `@Secured` /
   `@RolesAllowed` on a type or method become `(:CodeEntity)-[:HAS_BEHAVIOR
