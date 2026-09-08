@@ -57,6 +57,7 @@ flowchart TD
 | `graph_rag.graph.spring_injection_resolver` | Final Spring post-ingest pass: MERGEs a `:Bean` + `IS_BEAN` for every Spring Data repository interface (`bean_type` = interface FQN), then re-resolves any bean's `unresolved_injections` against the complete (annotation + XML + repository) bean set, promoting a now-unique match to an `INJECTS` edge. |
 | `graph_rag.graph.aop_resolver` | Post-ingest pass (after the Spring passes): best-effort AspectJ pointcut matching — resolves each `@Aspect` advice's `execution(…)` / `within(…)` / `@annotation(…)` pointcut (with `&&` / `\|\|` and one level of named-`@Pointcut` substitution) to the `CodeEntity`s it advises, rebuilding `(:Advice)-[:ADVISES]->(:CodeEntity)` and recording `Advice.unresolved_reason` for what it can't match. |
 | `graph_rag.graph.service_call_resolver` | Post-ingest pass (last): links each outbound `HttpEndpoint` (`@FeignClient` / `@HttpExchange` client method) to the ingested `@RestController` route it calls — `(:HttpEndpoint {outbound:true})-[:RESOLVES_TO]->(:HttpEndpoint inbound)` — matched on `(http_method, path)` with path variables normalized. |
+| `graph_rag.graph.mybatis_resolver` | Post-ingest pass (last): binds each XML-derived `SqlStatement` to the `@Mapper` interface method it implements — `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)` — by matching the mapper `namespace` + statement `id` to a method. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
@@ -91,6 +92,8 @@ flowchart TD
 | `ExternalArtifact` | `gav` (`group:artifact`) | `group`, `artifact`, `version` |
 | `Bean` | `id` (owning `CodeEntity.qualified_name`; XML beans use a `source_path`+`bean_id` hash, stubs `xml-stub::<ref>`) | `name` (Spring bean name), `stereotype` (`XmlBean` / `XmlBeanStub` for XML-wired), `scope`, `primary`, `bean_type`, `defined_in` (`xml` when from a `<beans>` context), `unresolved_injections` (JSON) |
 | `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs` / `feign` / `spring-http-interface`), `produces`, `consumes`, `params`, `bindings` (JSON), `outbound` (true for a `@FeignClient` / `@HttpExchange` client call), `target_service` (Feign `name` / `url`), `embed_text`, `embedding` (384-d) |
+| `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs`), `produces`, `consumes`, `params`, `bindings` (JSON), `embed_text`, `embedding` (384-d) |
+| `SqlStatement` | `id` (hash of mapper_qn + statement_id + kind + origin) | `mapper_qn` (namespace / interface FQN), `statement_id`, `kind` (`select`/`insert`/`update`/`delete`), `text` (flattened SQL), `origin` (`mybatis-xml` / `mybatis-annotation`), `method_qn` (set for the annotation form) |
 | `SpringDataRepoDef` / `JpaEntityDef` | `qualified_name` | Per-`.java` raw extract of a Spring Data repository (`base`, `entity_type`, `id_type`, `reactive`, parallel `method_*` arrays) / JPA type (`kind`, `table`, `id_fields`, parallel `association_*` arrays); projected onto the `CodeEntity` by `SpringDataResolver` |
 
 A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `repository_entity_type` / `repository_id_type` / `repository_reactive`), a **`:JpaEntity`** label (`jpa_kind` / `jpa_table`), or, on a repository method, `query_kind` (`derived` / `jpql` / `native` / `modifying` / `procedure` / `inherited`) + `query_text` + `query_properties` — all set by `SpringDataResolver`.
@@ -123,6 +126,7 @@ A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `re
 - `(CodeEntity)-[:IS_BEAN]->(Bean)`, `(Bean)-[:INJECTS {via, qualifier, multiplicity, property}]->(Bean)` (`via` also `xml-constructor` / `xml-property` for XML-wired), `(Bean)-[:PRODUCES]->(Bean)` (`@Bean` method), `(Bean)-[:BINDS]->(ConfigProperty)` (`@Value` / `@ConfigurationProperties` / XML `<property value="${…}">`)
 - `(HttpEndpoint)-[:HANDLED_BY]->(CodeEntity)` (the Spring MVC / JAX-RS handler method), `(HttpEndpoint)-[:IN_MODULE]->(Module)`
 - `(CodeEntity)-[:CALLS_SERVICE]->(HttpEndpoint {outbound:true})` (a `@FeignClient` / `@HttpExchange` client method → the outbound call it declares), `(HttpEndpoint outbound)-[:RESOLVES_TO]->(HttpEndpoint inbound)` (wired by `ServiceCallResolver` when a matching controller route is ingested — a cross-service call graph)
+- `(CodeEntity)-[:EXECUTES]->(SqlStatement)` (a `@Mapper` method → the MyBatis SQL it runs — XML statements bound by `MyBatisResolver`, annotation ones at write time), `(SqlStatement)-[:ACCESSES {mode}]->(DbTable)` (`mode` = `read` / `write`; a stub `DbTable {name, stub:true}` when the schema was not separately ingested)
 - `(Source)-[:DEFINES]->(SpringDataRepoDef|JpaEntityDef)` (per-`.java` raw extract)
 - `(CodeEntity:Repository)-[:MANAGES]->(CodeEntity:JpaEntity)` (repo's managed domain type), `(CodeEntity:JpaEntity)-[:PERSISTS_AS]->(DbTable)` (only when a `DbTable` with that name was ingested), `(CodeEntity:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(CodeEntity:JpaEntity)` (`@OneToMany` / `@ManyToOne` / `@ManyToMany` / `@OneToOne`)
 
@@ -159,6 +163,8 @@ repository (unresolvable when the first pass ran) gets its `INJECTS` edge;
 `AopResolver` matches every `@Aspect` advice's pointcut to the
 `CodeEntity`s it advises; finally `ServiceCallResolver` links each outbound
 `@FeignClient` / `@HttpExchange` endpoint to the controller route it calls. The
+`CodeEntity`s it advises; finally `MyBatisResolver` binds each XML mapper
+statement to its `@Mapper` interface method. The
 same passes also run after a **single-file** ingest — each is a full-graph
 rebuild — so `ingest_path` / `grag ingest <file>` / `--watch` keep the
 projections in sync with an edit.
@@ -470,6 +476,17 @@ endpoint to an ingested `@RestController` route by `(http_method, path)` — pat
 variables normalized to `{}`, a trailing slash trimmed, `*` matching any method
 — and adds `(:HttpEndpoint outbound)-[:RESOLVES_TO]->(:HttpEndpoint inbound)`
 when the match is unique. An unmatched outbound endpoint is left standalone.
+**MyBatis mappers.** `MyBatisMapperParser` claims a `.xml` with a
+`<mapper namespace="...">` root and emits a `SqlStatement` per
+`<select|insert|update|delete id=...>` — SQL flattened (`<include refid>`
+expanded against `<sql>` fragments, dynamic `<if>` / `<where>` / `<foreach>`
+tags unwrapped) and scanned for table names + access mode. `MyBatisExtractor`
+(inside `JavaParser`) does the same for `@Select` / `@Insert` / `@Update` /
+`@Delete` annotations, keeping the method (`method_qn`) directly.
+`MyBatisResolver` binds each XML statement to its method by
+`namespace` + `id`. Both feed `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)-[:ACCESSES {mode}]->(:DbTable)`,
+reusing a real `DbTable` when one with that name was ingested, else a
+`stub:true` node.
 
 ## Retrieval
 

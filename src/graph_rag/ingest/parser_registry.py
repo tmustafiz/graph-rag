@@ -8,6 +8,7 @@ from .parsers import (
     JavaScriptParser,
     MarkdownParser,
     MavenParser,
+    MyBatisMapperParser,
     PdfParser,
     PythonParser,
     SpringXmlParser,
@@ -37,6 +38,8 @@ class ParserRegistry:
             GradleParser(),
             # Ahead of ConfigFileParser: claims only `.xml` files whose root
             # element is `<beans>` (a Spring XML application context).
+            # Ahead of ConfigFileParser: `.xml` with a `<mapper namespace>` root.
+            MyBatisMapperParser(),
             SpringXmlParser(),
             # Ahead of YamlParser: claims Spring/Java `application*` / `bootstrap*`
             # and `resources/`-dir config; defers Checkov policies back to YamlParser.
