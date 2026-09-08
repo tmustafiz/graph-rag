@@ -13,6 +13,7 @@ from .graph.client import check_connectivity, driver_session
 from .graph.graph_writer import GraphWriter
 from .graph.project_model_resolver import ProjectModelResolver
 from .graph.schema import apply_schema
+from .graph.service_call_resolver import ServiceCallResolver
 from .graph.spring_bean_resolver import SpringBeanResolver
 from .graph.spring_data_resolver import SpringDataResolver
 from .graph.spring_injection_resolver import SpringInjectionResolver
@@ -96,6 +97,7 @@ def ingest(
                 SpringDataResolver(driver),
                 SpringInjectionResolver(driver),
                 AopResolver(driver),
+                ServiceCallResolver(driver),
             ],
         )
         try:
@@ -241,6 +243,7 @@ def eval_retrieval(
                 SpringDataResolver(driver),
                 SpringInjectionResolver(driver),
                 AopResolver(driver),
+                ServiceCallResolver(driver),
             ],
         )
         pipeline.run(EVAL_CORPUS_DIR)
@@ -335,6 +338,7 @@ def serve_mcp(
                     SpringDataResolver(driver),
                     SpringInjectionResolver(driver),
                     AopResolver(driver),
+                    ServiceCallResolver(driver),
                 ],
             )
         if role in (McpRole.MEMORY, McpRole.ALL):
