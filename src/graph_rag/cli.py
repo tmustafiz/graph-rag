@@ -34,6 +34,7 @@ from .mcp_server.retriever import Retriever
 from .mcp_server.server import build_server
 from .memory import MemoryPruner, MemoryRecaller, MemoryWriter
 from .memory.memory_pruner import DEFAULT_GRACE_DAYS, DEFAULT_THRESHOLD
+from .scip_ingestor import ScipIngestor
 from .settings import settings
 from .unsupported_file_type_error import UnsupportedFileTypeError
 
@@ -71,7 +72,9 @@ def apply_schema_command() -> None:
 
 @app.command()
 def ingest(
-    path: Path = typer.Argument(..., exists=True, help="File or directory to ingest."),  # noqa: B008
+    path: Path | None = typer.Argument(  # noqa: B008
+        None, exists=True, help="File or directory to ingest (omit with --scip)."
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview what would be ingested without writing to Neo4j."
     ),
@@ -81,11 +84,37 @@ def ingest(
         help="After the initial ingest, watch `path` for changes and re-ingest "
         "continuously (Ctrl+C to stop).",
     ),
+    scip: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--scip",
+        exists=True,
+        help="Ingest a SCIP index (e.g. from `scip-java index`) instead of parsing "
+        "source files — compiler-grade CALLS / IMPORTS / IMPLEMENTS. SCIP-derived "
+        "entities replace the static ones for any file the index covers.",
+    ),
+    root: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--root",
+        help="Repo root the SCIP index's relative paths are resolved against "
+        "(default: current directory). Only with --scip.",
+    ),
 ) -> None:
     """Parse, chunk, embed, and upsert a file or directory (recursive) into the graph.
 
     Skips any file whose content is unchanged since the last ingest.
     """
+    if scip is not None:
+        with driver_session() as driver:
+            count = ScipIngestor(build_embedder(), GraphWriter(driver)).ingest(
+                scip, root=root, dry_run=dry_run
+            )
+        verb = "Would ingest" if dry_run else "Ingested"
+        typer.secho(f"{verb} {count} SCIP documents.", fg=typer.colors.GREEN)
+        return
+    if path is None:
+        typer.secho("Provide a path to ingest, or --scip <index>.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
     with driver_session() as driver:
         pipeline = IngestionPipeline(
             ParserRegistry(),
