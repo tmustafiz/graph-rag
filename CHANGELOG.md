@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Apache Camel route graph (Java DSL). `JavaParser` walks each `RouteBuilder`
+  subclass's `configure()` body, unwinding the fluent
+  `from(uri).routeId(id).<step>...` chain (which the generic `CALLS` resolver
+  skips) into a `CamelRoute` with an ordered `steps` list (`to` / `process` /
+  `bean` / `choice` / `when` / `split` / `wireTap` / `enrich` / …) and the
+  builder's `onException(...)` exception FQNs. Endpoint URIs become
+  MERGE-shared `CamelEndpoint {uri, scheme}` nodes, so `.to("direct:x")` and
+  `from("direct:x")` pair via `(:Route)-[:TO]->(:CamelEndpoint)-[:CONSUMED_BY]->(:Route)`.
+  New `CamelResolver` pass wires `(:CamelStep)-[:INVOKES]->(:CodeEntity)` for
+  `process` / `bean` references (`Type.method` / bare `Type` / `beanName`).
+  ([#81](https://github.com/tmustafiz/graph-rag/issues/81))
 - AOP & behavioral-annotation model. `@Transactional` / `@Async` / `@Scheduled`
   / `@Retryable` / `@Cacheable` / `@CacheEvict` / `@PreAuthorize` / `@Secured` /
   `@RolesAllowed` on a type or method become `(:CodeEntity)-[:HAS_BEHAVIOR

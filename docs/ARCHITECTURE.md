@@ -56,6 +56,7 @@ flowchart TD
 | `graph_rag.graph.spring_data_resolver` | Post-ingest pass (after `spring_xml_resolver`): tags repository / entity `CodeEntity`s `:Repository` / `:JpaEntity`, tags repo methods with `query_kind` / `query_text`, and wires `MANAGES` / `PERSISTS_AS` / `RELATES_TO` from the `SpringDataRepoDef` / `JpaEntityDef` defs. |
 | `graph_rag.graph.spring_injection_resolver` | Final Spring post-ingest pass: MERGEs a `:Bean` + `IS_BEAN` for every Spring Data repository interface (`bean_type` = interface FQN), then re-resolves any bean's `unresolved_injections` against the complete (annotation + XML + repository) bean set, promoting a now-unique match to an `INJECTS` edge. |
 | `graph_rag.graph.aop_resolver` | Post-ingest pass (after the Spring passes): best-effort AspectJ pointcut matching — resolves each `@Aspect` advice's `execution(…)` / `within(…)` / `@annotation(…)` pointcut (with `&&` / `\|\|` and one level of named-`@Pointcut` substitution) to the `CodeEntity`s it advises, rebuilding `(:Advice)-[:ADVISES]->(:CodeEntity)` and recording `Advice.unresolved_reason` for what it can't match. |
+| `graph_rag.graph.camel_resolver` | Post-ingest pass (last): resolves each Camel `process(...)` / `bean(...)` / `to("bean:...")` step's reference to the `CodeEntity` it runs — `(:CamelStep)-[:INVOKES]->(:CodeEntity)` — by `Type.method` / bare `Type` / `beanName` best-effort match. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
@@ -90,6 +91,9 @@ flowchart TD
 | `ExternalArtifact` | `gav` (`group:artifact`) | `group`, `artifact`, `version` |
 | `Bean` | `id` (owning `CodeEntity.qualified_name`; XML beans use a `source_path`+`bean_id` hash, stubs `xml-stub::<ref>`) | `name` (Spring bean name), `stereotype` (`XmlBean` / `XmlBeanStub` for XML-wired), `scope`, `primary`, `bean_type`, `defined_in` (`xml` when from a `<beans>` context), `unresolved_injections` (JSON) |
 | `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs`), `produces`, `consumes`, `params`, `bindings` (JSON), `embed_text`, `embedding` (384-d) |
+| `Route` | `id` (hash of source path + ordinal) | `route_id` (explicit `.routeId(...)` or `<file>:<n>`), `from_uri`, `embed_text`, `on_exception` (exception FQNs from the builder's `onException(...)`) — one Camel route |
+| `CamelStep` | `id` (`<route id>#<index>`) | `index`, `kind` (`to` / `process` / `bean` / `choice` / `when` / `split` / …), `uri`, `ref` (process/bean target, resolved by `CamelResolver`), `predicate` (for `when` / `filter`) |
+| `CamelEndpoint` | `uri` | `scheme` (before the first `:`) — MERGE-shared, so `.to("direct:x")` and `from("direct:x")` pair |
 | `SpringDataRepoDef` / `JpaEntityDef` | `qualified_name` | Per-`.java` raw extract of a Spring Data repository (`base`, `entity_type`, `id_type`, `reactive`, parallel `method_*` arrays) / JPA type (`kind`, `table`, `id_fields`, parallel `association_*` arrays); projected onto the `CodeEntity` by `SpringDataResolver` |
 
 A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `repository_entity_type` / `repository_id_type` / `repository_reactive`), a **`:JpaEntity`** label (`jpa_kind` / `jpa_table`), or, on a repository method, `query_kind` (`derived` / `jpql` / `native` / `modifying` / `procedure` / `inherited`) + `query_text` + `query_properties` — all set by `SpringDataResolver`.
@@ -121,6 +125,8 @@ A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `re
 - `(Module)-[:DEPENDS_ON {scope}]->(Module)` (Maven reactor / sibling GAV / Gradle `project(':x')`), `(Module)-[:DEPENDS_ON_EXTERNAL {gav, scope}]->(ExternalArtifact)`
 - `(CodeEntity)-[:IS_BEAN]->(Bean)`, `(Bean)-[:INJECTS {via, qualifier, multiplicity, property}]->(Bean)` (`via` also `xml-constructor` / `xml-property` for XML-wired), `(Bean)-[:PRODUCES]->(Bean)` (`@Bean` method), `(Bean)-[:BINDS]->(ConfigProperty)` (`@Value` / `@ConfigurationProperties` / XML `<property value="${…}">`)
 - `(HttpEndpoint)-[:HANDLED_BY]->(CodeEntity)` (the Spring MVC / JAX-RS handler method), `(HttpEndpoint)-[:IN_MODULE]->(Module)`
+- `(Route)-[:FROM]->(CamelEndpoint)`, `(Route)-[:TO]->(CamelEndpoint)`, `(CamelEndpoint)-[:CONSUMED_BY]->(Route)` (the route this endpoint is the `from` of — an internal `direct:` / `seda:` / `vm:` endpoint thus links producer route → consumer route via the shared node)
+- `(Route)-[:STEP {index, kind, predicate?}]->(CamelStep)`, `(CamelStep)-[:INVOKES]->(CodeEntity)` (`process` / `bean` step target, wired by `CamelResolver`)
 - `(Source)-[:DEFINES]->(SpringDataRepoDef|JpaEntityDef)` (per-`.java` raw extract)
 - `(CodeEntity:Repository)-[:MANAGES]->(CodeEntity:JpaEntity)` (repo's managed domain type), `(CodeEntity:JpaEntity)-[:PERSISTS_AS]->(DbTable)` (only when a `DbTable` with that name was ingested), `(CodeEntity:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(CodeEntity:JpaEntity)` (`@OneToMany` / `@ManyToOne` / `@ManyToMany` / `@OneToOne`)
 
@@ -144,7 +150,7 @@ no longer produces. A file that fails to parse/embed/write is recorded and
 skipped without aborting the batch.
 
 Build files (`pom.xml`, `*.gradle*`) parse first so the `Module` layer exists
-before the `.java` files, and once the batch is done six graph passes run in
+before the `.java` files, and once the batch is done seven graph passes run in
 order: `ProjectModelResolver` wires `IN_MODULE`, promotes sibling dependencies
 and classifies `IMPORTS.external`; `SpringBeanResolver` derives the annotation
 `Bean` layer; `SpringXmlResolver` folds the `SpringXmlBean` defs from any
@@ -154,8 +160,9 @@ repository / JPA-entity `CodeEntity`s and wires `MANAGES` / `PERSISTS_AS` /
 repository interface a `:Bean` and re-runs injection resolution over the now
 complete bean set, so an annotation bean wiring an XML-only bean or a
 repository (unresolvable when the first pass ran) gets its `INJECTS` edge;
-finally `AopResolver` matches every `@Aspect` advice's pointcut to the
-`CodeEntity`s it advises. The
+`AopResolver` matches every `@Aspect` advice's pointcut to the
+`CodeEntity`s it advises; finally `CamelResolver` resolves each Camel `process` /
+`bean` step to the `CodeEntity` it invokes. The
 same passes also run after a **single-file** ingest — each is a full-graph
 rebuild — so `ingest_path` / `grag ingest <file>` / `--watch` keep the
 projections in sync with an edit.
@@ -455,6 +462,21 @@ against carried annotations, combined with `&&` / `||` and one level of named
 `@Pointcut` substitution — writing `(:Advice)-[:ADVISES]->(:CodeEntity)` and
 leaving `Advice.unresolved_reason` on anything it can't match (`!`, unsupported
 designators, no hit). There is no full pointcut engine.
+
+**Apache Camel (Java DSL).** `JavaParser._collect_camel_routes` walks each
+`RouteBuilder` subclass's `configure()` body. A fluent
+`from(uri).routeId(id).<step>.<step>...` chain — which the generic `CALLS`
+resolver deliberately skips — is unwound in source order into a `CamelRoute`:
+`from_uri`, `route_id` (explicit or `<file>:<ordinal>`), and an ordered `steps`
+list (`to` / `toD` / `process` / `bean` / `choice` / `when` / `otherwise` /
+`split` / `multicast` / `wireTap` / `enrich` / `setHeader` / …), with
+`onException(...)` / `errorHandler(...)` exception FQNs attached to every route
+in the builder. Endpoint URIs become MERGE-shared `CamelEndpoint {uri, scheme}`
+nodes, so a `.to("direct:x")` and a `from("direct:x")` in different routes pair
+through `(:Route)-[:TO]->(:CamelEndpoint)-[:CONSUMED_BY]->(:Route)` with no
+resolver. `CamelResolver` (seventh post-ingest pass) resolves each `process` /
+`bean` / `to("bean:...")` step's reference (`Type.method`, bare `Type`, or
+`beanName`) to `(:CamelStep)-[:INVOKES]->(:CodeEntity)`.
 
 ## Retrieval
 

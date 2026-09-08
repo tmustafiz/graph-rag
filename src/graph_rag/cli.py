@@ -8,6 +8,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from .eval.eval_case_result import EvalCaseResult
 from .eval.retrieval_evaluator import EVAL_CORPUS_DIR, RetrievalEvaluator
 from .graph.aop_resolver import AopResolver
+from .graph.camel_resolver import CamelResolver
 from .graph.centrality_analyzer import CentralityAnalyzer
 from .graph.client import check_connectivity, driver_session
 from .graph.graph_writer import GraphWriter
@@ -96,6 +97,7 @@ def ingest(
                 SpringDataResolver(driver),
                 SpringInjectionResolver(driver),
                 AopResolver(driver),
+                CamelResolver(driver),
             ],
         )
         try:
@@ -241,6 +243,7 @@ def eval_retrieval(
                 SpringDataResolver(driver),
                 SpringInjectionResolver(driver),
                 AopResolver(driver),
+                CamelResolver(driver),
             ],
         )
         pipeline.run(EVAL_CORPUS_DIR)
@@ -335,6 +338,7 @@ def serve_mcp(
                     SpringDataResolver(driver),
                     SpringInjectionResolver(driver),
                     AopResolver(driver),
+                    CamelResolver(driver),
                 ],
             )
         if role in (McpRole.MEMORY, McpRole.ALL):
