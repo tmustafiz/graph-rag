@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-07
+
 ### Added
 - Spring-aware retrieval surface + enterprise-Java example. `search_code` gains
   optional `stereotype=` / `annotation=` / `module=` filters (guards baked into
@@ -577,7 +579,8 @@ the code graph, agent working-memory with decay pruning, and an MCP server
 (Streamable HTTP) exposing lookup + memory tools. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
-[Unreleased]: https://github.com/tmustafiz/graph-rag/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/tmustafiz/graph-rag/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/tmustafiz/graph-rag/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/tmustafiz/graph-rag/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tmustafiz/graph-rag/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tmustafiz/graph-rag/compare/v0.2.0...v0.3.0
