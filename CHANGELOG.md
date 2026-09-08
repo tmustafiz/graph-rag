@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.convertAndSend(...)` with a literal destination become
   `(:CodeEntity)-[:PRODUCES_TO]->(:Destination {broker})-[:CONSUMED_BY]->(:CodeEntity)`.
   ([#84](https://github.com/tmustafiz/graph-rag/issues/84))
+- MyBatis mapper model. New `MyBatisMapperParser` claims a `.xml` with a
+  `<mapper namespace>` root and emits a `SqlStatement` per
+  `<select|insert|update|delete>` — SQL flattened (`<include>` fragments
+  expanded, dynamic `<if>` / `<where>` / `<foreach>` unwrapped) and scanned for
+  table names + `read` / `write` mode. `@Select` / `@Insert` / `@Update` /
+  `@Delete` annotations on `@Mapper` methods are handled in `JavaParser` via
+  `MyBatisExtractor`. `MyBatisResolver` binds XML statements to their interface
+  method by `namespace` + `id`. Feeds
+  `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)-[:ACCESSES {mode}]->(:DbTable)`
+  (reusing a real `DbTable` by name, else a `stub:true` node).
+  ([#85](https://github.com/tmustafiz/graph-rag/issues/85))
 - AOP & behavioral-annotation model. `@Transactional` / `@Async` / `@Scheduled`
   / `@Retryable` / `@Cacheable` / `@CacheEvict` / `@PreAuthorize` / `@Secured` /
   `@RolesAllowed` on a type or method become `(:CodeEntity)-[:HAS_BEHAVIOR

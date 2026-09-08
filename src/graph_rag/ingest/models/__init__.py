@@ -23,6 +23,7 @@ from .section import Section
 from .source import Source
 from .spring_data_repository import SpringDataRepository
 from .spring_xml_bean import SpringXmlBean
+from .sql_statement import SqlStatement
 
 __all__ = [
     "Annotation",
@@ -49,5 +50,6 @@ __all__ = [
     "Section",
     "Source",
     "SpringDataRepository",
+    "SqlStatement",
     "SpringXmlBean",
 ]

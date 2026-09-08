@@ -9,6 +9,7 @@ from .aop_extractor import AopExtractor
 from .http_endpoint_extractor import HttpEndpointExtractor
 from .lombok_synthesizer import LombokSynthesizer
 from .message_flow_extractor import MessageFlowExtractor
+from .mybatis_extractor import MyBatisExtractor
 from .spring_data_extractor import REACTIVE_BASES, SPRING_DATA_BASES, SpringDataExtractor
 
 if TYPE_CHECKING:
@@ -151,6 +152,7 @@ class JavaParser:
             event_types=event_types,
             destinations=destinations,
             http_endpoints=HttpEndpointExtractor.extract(entities, annotations),
+            sql_statements=MyBatisExtractor.extract(entities, annotations),
             jpa_entities=jpa_entities,
             spring_data_repositories=spring_data_repositories,
         )

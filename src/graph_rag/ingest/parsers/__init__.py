@@ -8,6 +8,8 @@ from .lombok_synthesizer import LombokSynthesizer
 from .markdown_parser import MarkdownParser
 from .maven_parser import MavenParser
 from .message_flow_extractor import MessageFlowExtractor
+from .mybatis_extractor import MyBatisExtractor
+from .mybatis_mapper_parser import MyBatisMapperParser
 from .pdf_parser import PdfParser
 from .procedural_sql_extractor import ProceduralSqlExtractor
 from .python_parser import PythonParser
@@ -15,6 +17,7 @@ from .react_enricher import ReactEnricher
 from .spring_data_extractor import SpringDataExtractor
 from .spring_xml_parser import SpringXmlParser
 from .sql_parser import SqlParser
+from .sql_table_scanner import SqlTableScanner
 from .stylesheet_parser import StylesheetParser
 from .yaml_parser import YamlParser
 
@@ -29,6 +32,8 @@ __all__ = [
     "MarkdownParser",
     "MessageFlowExtractor",
     "MavenParser",
+    "MyBatisExtractor",
+    "MyBatisMapperParser",
     "PdfParser",
     "ProceduralSqlExtractor",
     "PythonParser",
@@ -36,6 +41,7 @@ __all__ = [
     "SpringDataExtractor",
     "SpringXmlParser",
     "SqlParser",
+    "SqlTableScanner",
     "StylesheetParser",
     "YamlParser",
 ]

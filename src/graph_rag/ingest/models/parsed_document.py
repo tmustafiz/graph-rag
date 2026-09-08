@@ -24,6 +24,7 @@ from .section import Section
 from .source import Source
 from .spring_data_repository import SpringDataRepository
 from .spring_xml_bean import SpringXmlBean
+from .sql_statement import SqlStatement
 
 
 class ParsedDocument(BaseModel):
@@ -80,6 +81,9 @@ class ParsedDocument(BaseModel):
     # Spring MVC / JAX-RS routes, one per (http_method, path); feeds
     # `(:HttpEndpoint)-[:HANDLED_BY]->(:CodeEntity)`.
     http_endpoints: list[HttpEndpoint] = Field(default_factory=list)
+    # MyBatis mapper statements — from a mapper XML or an `@Select` / `@Insert`
+    # annotation; feed `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)-[:ACCESSES {mode}]->(:DbTable)`.
+    sql_statements: list[SqlStatement] = Field(default_factory=list)
     db_tables: list[DbTable] = Field(default_factory=list)
     db_columns: list[DbColumn] = Field(default_factory=list)
     db_views: list[DbView] = Field(default_factory=list)
