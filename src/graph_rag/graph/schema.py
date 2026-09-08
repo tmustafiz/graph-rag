@@ -24,6 +24,9 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT db_index_qualified_name IF NOT EXISTS "
     "FOR (n:DbIndex) REQUIRE n.qualified_name IS UNIQUE",
     "CREATE CONSTRAINT annotation_id IF NOT EXISTS FOR (n:Annotation) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT behavior_marker_id IF NOT EXISTS "
+    "FOR (n:BehaviorMarker) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT advice_id IF NOT EXISTS FOR (n:Advice) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT config_file_path IF NOT EXISTS FOR (n:ConfigFile) REQUIRE n.path IS UNIQUE",
     "CREATE CONSTRAINT config_property_id IF NOT EXISTS "
     "FOR (n:ConfigProperty) REQUIRE n.id IS UNIQUE",

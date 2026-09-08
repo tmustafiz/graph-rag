@@ -54,7 +54,8 @@ flowchart TD
 | `graph_rag.graph.spring_bean_resolver` | Post-directory-ingest pass: `Bean` nodes + `IS_BEAN` / `INJECTS` / `PRODUCES` / `BINDS` from the annotation + type-hierarchy + config layers. |
 | `graph_rag.graph.spring_xml_resolver` | Post-directory-ingest pass (after `spring_bean_resolver`): projects `SpringXmlBean` defs into the same `Bean` graph (`defined_in:'xml'`), resolves `<ref>` wiring across XML + annotation beans, and `IMPORTS_CONTEXT` for `<import resource>` / `<context:property-placeholder>`. |
 | `graph_rag.graph.spring_data_resolver` | Post-ingest pass (after `spring_xml_resolver`): tags repository / entity `CodeEntity`s `:Repository` / `:JpaEntity`, tags repo methods with `query_kind` / `query_text`, and wires `MANAGES` / `PERSISTS_AS` / `RELATES_TO` from the `SpringDataRepoDef` / `JpaEntityDef` defs. |
-| `graph_rag.graph.spring_injection_resolver` | Final post-ingest pass: MERGEs a `:Bean` + `IS_BEAN` for every Spring Data repository interface (`bean_type` = interface FQN), then re-resolves any bean's `unresolved_injections` against the complete (annotation + XML + repository) bean set, promoting a now-unique match to an `INJECTS` edge. |
+| `graph_rag.graph.spring_injection_resolver` | Final Spring post-ingest pass: MERGEs a `:Bean` + `IS_BEAN` for every Spring Data repository interface (`bean_type` = interface FQN), then re-resolves any bean's `unresolved_injections` against the complete (annotation + XML + repository) bean set, promoting a now-unique match to an `INJECTS` edge. |
+| `graph_rag.graph.aop_resolver` | Post-ingest pass (after the Spring passes): best-effort AspectJ pointcut matching — resolves each `@Aspect` advice's `execution(…)` / `within(…)` / `@annotation(…)` pointcut (with `&&` / `\|\|` and one level of named-`@Pointcut` substitution) to the `CodeEntity`s it advises, rebuilding `(:Advice)-[:ADVISES]->(:CodeEntity)` and recording `Advice.unresolved_reason` for what it can't match. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
@@ -80,6 +81,8 @@ flowchart TD
 | `DbView` | `qualified_name` (`schema.view`) | `name`, `schema_name`, `materialized`, `embed_text`, `embedding` |
 | `DbIndex` | `qualified_name` (`schema.table.index`) | `name`, `columns`, `unique` |
 | `Annotation` | `id` (hash of owner + target + fqn + line) | `name`, `fqn` (import-resolved), `target` (`type`/`method`/`constructor`/`field`/`param:<name>`), `attributes` (JSON string), `line` |
+| `BehaviorMarker` | `id` (hash of owner + target + marker + line) | `marker` (`transactional` / `async` / `scheduled` / `retryable` / `cacheable` / `cache_put` / `cache_evict` / `pre_authorize` / `post_authorize` / `secured` / `roles_allowed`), `target` (`type`/`method`), `attributes` (JSON string), `line` |
+| `Advice` | `id` (hash of advice method qn + kind) | `kind` (`before`/`after`/`after_returning`/`after_throwing`/`around`/`pointcut`), `pointcut_expr`, `pointcut_ref`, `aspect`, `unresolved_reason` (set by `AopResolver` when a pointcut matched nothing / is unsupported) |
 | `ConfigFile` | `path` (= owning `Source.path`) | `format` (`properties` / `yaml` / `spring-xml`); for `spring-xml` also `scan_packages`, `placeholder_locations`, `import_resources`, `namespace_elements` |
 | `ConfigProperty` | `id` (hash of file + profile + key + line) | `key` (dotted, list items `[i]`), `value` (string), `profile` (`None` = default), `origin_line` |
 | `SpringXmlBean` | `id` (hash of `source_path` + `bean_id`) | `bean_id` / `bean_name`, `class_name`, `scope`, `parent`, `factory_bean` / `factory_method`, `primary`, `abstract`, `aliases`, `constructor_arg_refs`, `property_names` / `property_refs`, `value_placeholder_keys` — raw `<bean>` def, projected into `Bean` by the XML resolver |
@@ -100,6 +103,8 @@ A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `re
 - `(CodeEntity)-[:RENDERS]->(CodeEntity)` (React `component` → child component, from the JSX it mounts)
 - `(CodeEntity)-[:EXTENDS]->(CodeEntity)` (superclass, or an interface's super-interface), `(CodeEntity)-[:IMPLEMENTS]->(CodeEntity)` (Java, best-effort import-resolved)
 - `(CodeEntity)-[:ANNOTATED_WITH]->(Annotation)` (Java annotations on a type / method / constructor / annotated field / parameter)
+- `(CodeEntity)-[:HAS_BEHAVIOR {marker}]->(BehaviorMarker)` (`@Transactional` / `@Scheduled` / `@Async` / `@Cacheable` / `@PreAuthorize` / … — the marker slug is also mirrored onto `CodeEntity.behaviors` for cheap scans)
+- `(CodeEntity)-[:ADVICE_OF]->(Advice)` (an `@Aspect` advice / `@Pointcut` method → its `Advice` node), `(Advice)-[:ADVISES]->(CodeEntity)` (best-effort pointcut match, wired by `AopResolver`)
 - `(Source)-[:DEFINES]->(ConfigFile)`, `(ConfigFile)-[:HAS_PROPERTY]->(ConfigProperty)`
 - `(ConfigProperty)-[:REFERENCES]->(ConfigProperty)` (`${a.b}` placeholder, resolved within the file)
 - `(ConfigFile)-[:DECLARES_BEAN]->(SpringXmlBean)` (one per `<bean>` in a Spring XML context)
@@ -139,7 +144,7 @@ no longer produces. A file that fails to parse/embed/write is recorded and
 skipped without aborting the batch.
 
 Build files (`pom.xml`, `*.gradle*`) parse first so the `Module` layer exists
-before the `.java` files, and once the batch is done five graph passes run in
+before the `.java` files, and once the batch is done six graph passes run in
 order: `ProjectModelResolver` wires `IN_MODULE`, promotes sibling dependencies
 and classifies `IMPORTS.external`; `SpringBeanResolver` derives the annotation
 `Bean` layer; `SpringXmlResolver` folds the `SpringXmlBean` defs from any
@@ -148,7 +153,9 @@ repository / JPA-entity `CodeEntity`s and wires `MANAGES` / `PERSISTS_AS` /
 `RELATES_TO`; finally `SpringInjectionResolver` makes every Spring Data
 repository interface a `:Bean` and re-runs injection resolution over the now
 complete bean set, so an annotation bean wiring an XML-only bean or a
-repository (unresolvable when the first pass ran) gets its `INJECTS` edge. The
+repository (unresolvable when the first pass ran) gets its `INJECTS` edge;
+finally `AopResolver` matches every `@Aspect` advice's pointcut to the
+`CodeEntity`s it advises. The
 same passes also run after a **single-file** ingest — each is a full-graph
 rebuild — so `ingest_path` / `grag ingest <file>` / `--watch` keep the
 projections in sync with an edit.
@@ -432,6 +439,22 @@ candidate — matched by declared type or supertype simple name, narrowed by
 `@Qualifier` — to an `(:Bean)-[:INJECTS]->(:Bean)` edge, pruning it from
 `unresolved_injections`. This is what lets an `@Service` wire a bean defined
 only in `applicationContext.xml`.
+
+**AOP & behavioral annotations.** `AopExtractor` runs inside `JavaParser`
+(single-file — an aspect and its advice live in one file). Any
+`@Transactional` / `@Async` / `@Scheduled` / `@Retryable` / `@Cacheable` /
+`@CacheEvict` / `@PreAuthorize` / `@Secured` / `@RolesAllowed` on a type or
+method becomes a `BehaviorMarker` carrying the annotation's full attribute map
+(`propagation`, `readOnly`, `cron`, `fixedRate`, `maxAttempts`, …); the marker
+slugs are also mirrored onto `CodeEntity.behaviors` so "every scheduled job" is
+one scan. Every advice / `@Pointcut` method of an `@Aspect` class becomes an
+`Advice` node with its raw pointcut string. `AopResolver` (sixth post-ingest
+pass) then does best-effort AspectJ matching — `execution(…)` against method
+`qualified_name`, `within(…)` against the declaring type, `@annotation(…)`
+against carried annotations, combined with `&&` / `||` and one level of named
+`@Pointcut` substitution — writing `(:Advice)-[:ADVISES]->(:CodeEntity)` and
+leaving `Advice.unresolved_reason` on anything it can't match (`!`, unsupported
+designators, no hit). There is no full pointcut engine.
 
 ## Retrieval
 

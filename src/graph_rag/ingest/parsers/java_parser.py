@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..models import Annotation, CodeEntity, ParsedDocument, Source
+from .aop_extractor import AopExtractor
 from .http_endpoint_extractor import HttpEndpointExtractor
 from .lombok_synthesizer import LombokSynthesizer
 from .spring_data_extractor import REACTIVE_BASES, SPRING_DATA_BASES, SpringDataExtractor
@@ -117,11 +118,14 @@ class JavaParser:
         jpa_entities, spring_data_repositories = SpringDataExtractor.extract(
             entities, annotations, repo_bindings
         )
+        behavior_markers, aop_advice = AopExtractor.extract(entities, annotations)
 
         return ParsedDocument(
             source=source,
             code_entities=entities,
             annotations=annotations,
+            behavior_markers=behavior_markers,
+            aop_advice=aop_advice,
             http_endpoints=HttpEndpointExtractor.extract(entities, annotations),
             jpa_entities=jpa_entities,
             spring_data_repositories=spring_data_repositories,

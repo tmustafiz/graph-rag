@@ -77,6 +77,37 @@ SET a.owner_qualified_name = row.owner_qualified_name, a.target = row.target,
 MERGE (owner)-[:ANNOTATED_WITH]->(a)
 """
 
+_MERGE_BEHAVIOR_MARKERS = """
+UNWIND $rows AS row
+MATCH (e:CodeEntity {qualified_name: row.owner_qualified_name})
+MERGE (bm:BehaviorMarker {id: row.id})
+SET bm.owner_qualified_name = row.owner_qualified_name, bm.target = row.target,
+    bm.marker = row.marker, bm.attributes = row.attributes_json, bm.line = row.line
+MERGE (e)-[hb:HAS_BEHAVIOR]->(bm)
+SET hb.marker = row.marker
+"""
+
+_MERGE_AOP_ADVICE = """
+UNWIND $rows AS row
+MATCH (m:CodeEntity {qualified_name: row.advice_qualified_name})
+MERGE (ad:Advice {id: row.id})
+SET ad.aspect = row.aspect_qualified_name,
+    ad.advice_qualified_name = row.advice_qualified_name,
+    ad.kind = row.advice_kind, ad.pointcut_expr = row.pointcut_expr,
+    ad.pointcut_ref = row.pointcut_ref
+MERGE (m)-[:ADVICE_OF]->(ad)
+"""
+
+# `CodeEntity.behaviors` mirrors the `HAS_BEHAVIOR` marker slugs as a plain list
+# property so "all scheduled jobs" / "everything transactional" is a cheap scan.
+# Recomputed after the marker reconcile so a removed annotation drops its slug.
+_REFRESH_ENTITY_BEHAVIORS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(e:CodeEntity)
+OPTIONAL MATCH (e)-[:HAS_BEHAVIOR]->(bm:BehaviorMarker)
+WITH e, collect(DISTINCT bm.marker) AS markers
+SET e.behaviors = markers
+"""
+
 _MERGE_HTTP_ENDPOINTS = """
 UNWIND $rows AS row
 MERGE (h:HttpEndpoint {id: row.id})
@@ -397,6 +428,21 @@ WHERE NOT ()-[:ANNOTATED_WITH]->(a)
 DELETE a
 """
 
+# A re-parsed `.java` file that drops a behavioral annotation / an advice method
+# leaves no orphan `BehaviorMarker` / `Advice` behind; the `AopResolver` pass
+# then re-derives the `ADVISES` edges.
+_RECONCILE_BEHAVIOR_MARKERS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(:CodeEntity)-[:HAS_BEHAVIOR]->(bm:BehaviorMarker)
+WHERE NOT bm.id IN $keep_ids
+DETACH DELETE bm
+"""
+
+_RECONCILE_AOP_ADVICE = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(:CodeEntity)-[:ADVICE_OF]->(ad:Advice)
+WHERE NOT ad.id IN $keep_ids
+DETACH DELETE ad
+"""
+
 _RECONCILE_HTTP_ENDPOINTS = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(h:HttpEndpoint)
 WHERE NOT h.id IN $keep_ids
@@ -503,6 +549,10 @@ class GraphWriter:
                 session.execute_write(self._write_code_entities, document.source.path, batch)
             for batch in self._batched(self._annotation_rows(document)):
                 session.execute_write(self._write_annotations, batch)
+            for batch in self._batched(self._behavior_marker_rows(document)):
+                session.execute_write(self._write_behavior_markers, batch)
+            for batch in self._batched([a.model_dump(mode="json") for a in document.aop_advice]):
+                session.execute_write(self._write_aop_advice, batch)
             for batch in self._batched(
                 [e.model_dump(mode="json") for e in document.http_endpoints]
             ):
@@ -589,6 +639,17 @@ class GraphWriter:
                 document.source.path,
                 [a.id for a in document.annotations],
             )
+            session.execute_write(
+                self._reconcile_behavior_markers,
+                document.source.path,
+                [m.id for m in document.behavior_markers],
+            )
+            session.execute_write(
+                self._reconcile_aop_advice,
+                document.source.path,
+                [a.id for a in document.aop_advice],
+            )
+            session.execute_write(self._refresh_entity_behaviors, document.source.path)
             session.execute_write(
                 self._reconcile_http_endpoints,
                 document.source.path,
@@ -694,6 +755,14 @@ class GraphWriter:
     @staticmethod
     def _write_annotations(tx: ManagedTransaction, rows: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_ANNOTATIONS), rows=rows)
+
+    @staticmethod
+    def _write_behavior_markers(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_BEHAVIOR_MARKERS), rows=rows)
+
+    @staticmethod
+    def _write_aop_advice(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_AOP_ADVICE), rows=rows)
 
     @staticmethod
     def _write_http_endpoints(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
@@ -841,6 +910,30 @@ class GraphWriter:
         tx.run(cast(LiteralString, _SWEEP_ORPHAN_ANNOTATIONS))
 
     @staticmethod
+    def _reconcile_behavior_markers(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_BEHAVIOR_MARKERS),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _reconcile_aop_advice(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_AOP_ADVICE),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _refresh_entity_behaviors(tx: ManagedTransaction, source_path: str) -> None:
+        tx.run(cast(LiteralString, _REFRESH_ENTITY_BEHAVIORS), source_path=source_path)
+
+    @staticmethod
     def _reconcile_http_endpoints(
         tx: ManagedTransaction, source_path: str, keep_ids: list[str]
     ) -> None:
@@ -969,6 +1062,20 @@ class GraphWriter:
                 "line": annotation.line,
             }
             for annotation in document.annotations
+        ]
+
+    @staticmethod
+    def _behavior_marker_rows(document: ParsedDocument) -> list[dict]:
+        return [
+            {
+                "id": marker.id,
+                "owner_qualified_name": marker.owner_qualified_name,
+                "target": marker.target,
+                "marker": marker.marker,
+                "attributes_json": marker.attributes_json,
+                "line": marker.line,
+            }
+            for marker in document.behavior_markers
         ]
 
     @staticmethod

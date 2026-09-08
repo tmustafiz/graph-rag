@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- AOP & behavioral-annotation model. `@Transactional` / `@Async` / `@Scheduled`
+  / `@Retryable` / `@Cacheable` / `@CacheEvict` / `@PreAuthorize` / `@Secured` /
+  `@RolesAllowed` on a type or method become `(:CodeEntity)-[:HAS_BEHAVIOR
+  {marker}]->(:BehaviorMarker)` carrying the annotation's attributes (cron,
+  propagation, readOnly, maxAttempts, …); the marker slugs are mirrored onto
+  `CodeEntity.behaviors` for cheap "all scheduled jobs" scans. Every `@Aspect`
+  advice / `@Pointcut` method becomes an `(:Advice)` node, and the new
+  `AopResolver` post-ingest pass does best-effort AspectJ pointcut matching
+  (`execution(…)` / `within(…)` / `@annotation(…)`, `&&` / `||`, one level of
+  named-`@Pointcut` substitution) to wire `(:Advice)-[:ADVISES]->(:CodeEntity)`,
+  recording `Advice.unresolved_reason` for what it can't match.
+  ([#83](https://github.com/tmustafiz/graph-rag/issues/83))
+
 ## [0.6.0] - 2026-09-07
 
 ### Added
