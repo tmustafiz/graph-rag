@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)-[:ACCESSES {mode}]->(:DbTable)`
   (reusing a real `DbTable` by name, else a `stub:true` node).
   ([#85](https://github.com/tmustafiz/graph-rag/issues/85))
+- `grag-mcp scip-java <repo>` — one-command wrapper that shells out to the
+  external `scip-java` binary (`scip-java index --output … [--build-tool …]
+  [-- <build args>]`) and ingests the produced index. `docs/enterprise-java.md`
+  gains the `scip-java index` workflow (build-tool detection, `--` escape
+  hatch, output conventions) and a copy-pasteable GitHub Actions recipe
+  (build → index → upload → ingest).
+  ([#80](https://github.com/tmustafiz/graph-rag/issues/80))
 - SCIP index ingestion — `grag-mcp ingest --scip <index.scip> [--root <repo>]`.
   A hand-rolled protobuf reader (`ScipReader`, no `protobuf` runtime) decodes a
   SCIP `Index`; `ScipSymbolParser` maps a symbol string to a readable
