@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..models import Annotation, CodeEntity, ParsedDocument, Source
+from ..models import Annotation, CamelRoute, CodeEntity, ParsedDocument, Source
 from .aop_extractor import AopExtractor
 from .http_endpoint_extractor import HttpEndpointExtractor
 from .lombok_synthesizer import LombokSynthesizer
@@ -16,6 +16,15 @@ if TYPE_CHECKING:
     from tree_sitter import Node
 
 _WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _dedupe_str(items: list[str]) -> list[str]:
+    seen: dict[str, None] = {}
+    for item in items:
+        if item:
+            seen.setdefault(item, None)
+    return list(seen)
+
 
 _ANNOTATION_NODE_TYPES = ("marker_annotation", "annotation")
 _INTEGER_LITERALS = (
@@ -38,6 +47,12 @@ _MEMBER_KINDS: dict[str, str] = {
     "method_declaration": "method",
     "constructor_declaration": "constructor",
 }
+
+_CAMEL_ROUTE_BUILDERS = {"RouteBuilder", "EndpointRouteBuilder", "AdviceWithRouteBuilder"}
+# Camel Java-DSL step calls that just carry a predicate (recorded on the STEP edge).
+_CAMEL_PREDICATE_STEPS = {"when", "filter", "validate"}
+# Step calls whose first string argument is an endpoint URI (also a `to_uri`).
+_CAMEL_URI_STEPS = {"to", "toD", "wireTap", "enrich", "pollEnrich", "recipientList"}
 
 _EVENT_LISTENER_ANNOS = {"EventListener", "TransactionalEventListener"}
 _PUBLISH_METHODS = {"publishEvent"}
@@ -142,6 +157,9 @@ class JavaParser:
         event_types, destinations = MessageFlowExtractor.extract(
             entities, annotations, message_sites
         )
+        camel_routes = self._collect_camel_routes(
+            type_nodes, content, imported_types, same_file_types, package, str(path)
+        )
 
         return ParsedDocument(
             source=source,
@@ -151,6 +169,7 @@ class JavaParser:
             aop_advice=aop_advice,
             event_types=event_types,
             destinations=destinations,
+            camel_routes=camel_routes,
             http_endpoints=HttpEndpointExtractor.extract(entities, annotations),
             sql_statements=MyBatisExtractor.extract(entities, annotations),
             jpa_entities=jpa_entities,
@@ -1121,6 +1140,228 @@ class JavaParser:
                 if name_node is not None:
                     types[cls._text(name_node, content)] = field_type
         return types
+
+    # -- Apache Camel Java DSL routes ------------------------------
+
+    @classmethod
+    def _collect_camel_routes(
+        cls,
+        type_nodes: list["Node"],
+        content: bytes,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+        package: str,
+        source_path: str,
+    ) -> list[CamelRoute]:
+        """Every `from(uri)....` chain inside a `RouteBuilder` subclass's
+        `configure()` body, resolved step by step (the generic `CALLS` resolver
+        skips fluent chains). `onException(...)` / `errorHandler(...)` at the
+        `configure()` level contribute their exception FQNs to every route in
+        that builder.
+        """
+        routes: list[CamelRoute] = []
+        ordinal = 0
+
+        for type_node in type_nodes:
+            extends, _implements = cls._supertypes(
+                type_node, content, imported_types, same_file_types
+            )
+            if not any(
+                supertype.rsplit(".", 1)[-1] in _CAMEL_ROUTE_BUILDERS for supertype in extends
+            ):
+                continue
+            body = type_node.child_by_field_name("body")
+            if body is None:
+                continue
+            configure = next(
+                (
+                    member
+                    for member in cls._body_members(body)
+                    if member.type == "method_declaration"
+                    and cls._member_simple_name(member, content, "") == "configure"
+                ),
+                None,
+            )
+            configure_body = (
+                configure.child_by_field_name("body") if configure is not None else None
+            )
+            if configure_body is None:
+                continue
+
+            chains = [
+                cls._camel_chain(child.children[0], content)
+                for child in configure_body.children
+                if child.type == "expression_statement"
+                and child.children
+                and child.children[0].type == "method_invocation"
+            ]
+            on_exception: list[str] = []
+            for chain in chains:
+                if chain and chain[0][0] in ("onException", "errorHandler"):
+                    on_exception.extend(
+                        cls._resolve_type_name(name, imported_types, same_file_types)
+                        for name in cls._camel_class_args(chain[0][1], content)
+                    )
+            for chain in chains:
+                if not chain or chain[0][0] != "from":
+                    continue
+                route = cls._camel_route_from_chain(
+                    chain, content, source_path, ordinal, imported_types, same_file_types
+                )
+                route.on_exception = _dedupe_str(on_exception)
+                routes.append(route)
+                ordinal += 1
+        return routes
+
+    @classmethod
+    def _camel_chain(cls, invocation: "Node", content: bytes) -> list[tuple[str, "Node | None"]]:
+        """A fluent `a().b().c()` chain unwound into `[(a, args), (b, args), (c, args)]`
+        in source order.
+        """
+        calls: list[tuple[str, Node | None]] = []
+        node: Node | None = invocation
+        while node is not None and node.type == "method_invocation":
+            name_node = node.child_by_field_name("name")
+            name = cls._text(name_node, content) if name_node is not None else ""
+            calls.append((name, node.child_by_field_name("arguments")))
+            node = node.child_by_field_name("object")
+        calls.reverse()
+        return calls
+
+    @classmethod
+    def _camel_route_from_chain(
+        cls,
+        chain: list[tuple[str, "Node | None"]],
+        content: bytes,
+        source_path: str,
+        ordinal: int,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> CamelRoute:
+        from_uri = cls._camel_first_string(chain[0][1], content) or "unknown"
+        route_id = f"{Path(source_path).stem}:{ordinal}"
+        to_uris: list[str] = []
+        steps: list[dict[str, Any]] = []
+        step_index = 0
+        for name, args in chain[1:]:
+            if name in ("routeId", "id"):
+                explicit = cls._camel_first_string(args, content)
+                if explicit:
+                    route_id = explicit
+                continue
+            step: dict[str, Any] = {"index": step_index, "kind": name}
+            if name in _CAMEL_URI_STEPS:
+                uri = cls._camel_first_string(args, content)
+                if uri:
+                    step["uri"] = uri
+                    to_uris.append(uri)
+                    if uri.startswith("bean:"):
+                        step["ref"] = cls._camel_bean_uri_ref(uri)
+            elif name == "process":
+                step["ref"] = cls._camel_ref_arg(args, content)
+            elif name == "bean":
+                step["ref"] = cls._camel_bean_ref(args, content, imported_types, same_file_types)
+            elif name in _CAMEL_PREDICATE_STEPS:
+                step["predicate"] = cls._collapse(cls._text(args, content)) if args else ""
+            elif name in ("setHeader", "removeHeader", "setProperty"):
+                header = cls._camel_first_string(args, content)
+                if header:
+                    step["name"] = header
+            steps.append(step)
+            step_index += 1
+
+        summary = " -> ".join(
+            step["kind"] + (f"({step['uri']})" if step.get("uri") else "") for step in steps
+        )
+        embed_text = f"Camel route {route_id}: from({from_uri})" + (
+            f" -> {summary}" if summary else ""
+        )
+        return CamelRoute(
+            route_id=route_id,
+            from_uri=from_uri,
+            source_path=source_path,
+            ordinal=ordinal,
+            to_uris=_dedupe_str(to_uris),
+            steps=steps,
+            embed_text=embed_text,
+        )
+
+    @classmethod
+    def _camel_first_string(cls, args: "Node | None", content: bytes) -> str | None:
+        if args is None:
+            return None
+        for child in args.children:
+            if child.type == "string_literal":
+                text = cls._text(child, content)
+                return text[1:-1] if len(text) >= 2 else text
+        return None
+
+    @classmethod
+    def _camel_ref_arg(cls, args: "Node | None", content: bytes) -> str | None:
+        """`process(...)` / bean reference: a string bean name, a `Type::method`
+        reference, or `null` for a lambda / anonymous class.
+        """
+        if args is None:
+            return None
+        for child in args.children:
+            if child.type == "string_literal":
+                text = cls._text(child, content)
+                return text[1:-1] if len(text) >= 2 else text
+            if child.type == "method_reference":
+                return cls._collapse(cls._text(child, content)).replace("::", ".")
+        return None
+
+    @classmethod
+    def _camel_bean_ref(
+        cls,
+        args: "Node | None",
+        content: bytes,
+        imported_types: dict[str, str],
+        same_file_types: dict[str, str],
+    ) -> str | None:
+        """`bean(OrderService.class, "handle")` → `OrderService.handle`;
+        `bean("orderService")` → `orderService`.
+        """
+        if args is None:
+            return None
+        named = [child for child in args.children if child.is_named]
+        if not named:
+            return None
+        first = named[0]
+        if first.type == "string_literal":
+            name = cls._text(first, content)
+            head = name[1:-1] if len(name) >= 2 else name
+        elif first.type == "class_literal":
+            head = cls._collapse(cls._text(first, content)).removesuffix(".class")
+        elif first.type in ("identifier", "field_access"):
+            head = cls._collapse(cls._text(first, content)).removesuffix(".class")
+        else:
+            return None
+        method = None
+        if len(named) > 1 and named[1].type == "string_literal":
+            method_text = cls._text(named[1], content)
+            method = method_text[1:-1] if len(method_text) >= 2 else method_text
+        return f"{head}.{method}" if method else head
+
+    @staticmethod
+    def _camel_bean_uri_ref(uri: str) -> str:
+        """`bean:orderService?method=handle` → `orderService.handle`."""
+        body = uri[len("bean:") :]
+        name, _, query = body.partition("?")
+        for option in query.split("&"):
+            if option.startswith("method="):
+                return f"{name}.{option[len('method=') :]}"
+        return name
+
+    @classmethod
+    def _camel_class_args(cls, args: "Node | None", content: bytes) -> list[str]:
+        if args is None:
+            return []
+        names: list[str] = []
+        for child in args.children:
+            if child.type == "class_literal":
+                names.append(cls._collapse(cls._text(child, content)).removesuffix(".class"))
+        return names
 
     @classmethod
     def _enum_constant_names(cls, body: "Node", content: bytes) -> list[str]:
