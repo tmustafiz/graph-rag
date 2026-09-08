@@ -5,15 +5,19 @@ from mcp.server import MCPServer
 from ..ingestion_pipeline import IngestionPipeline
 from ..ingestion_result import IngestionResult
 from .models import (
+    ArchitectureOutline,
     BeanDetail,
     CodeCentralityResult,
     CodeSearchResult,
     EndpointResult,
+    MessageFlowResult,
     NeighborResult,
     OutlineNode,
     PolicyResult,
+    RouteResult,
     SearchResult,
     SectionDetail,
+    ServiceCallResult,
     SourceInfo,
 )
 from .retriever import Retriever
@@ -41,17 +45,30 @@ KNOWLEDGE_INSTRUCTIONS = (
     "depended-upon (and riskiest to change) in this codebase; empty until "
     "`grag-mcp compute-centrality` has been run at least once. `cite` returns "
     "a human-readable citation string for a chunk. `ingest_path` (re-)ingests "
-    "a file or directory after it changes. For a Spring / Spring Boot / Jakarta "
-    "codebase the graph also carries beans + dependency injection, Spring "
-    "MVC / JAX-RS HTTP endpoints, Spring Data repositories and JPA entities, "
-    "and application config: use `search_code` with `stereotype=` / "
-    "`annotation=` / `module=`, `get_beans_for(qualified_name)` for a bean's "
-    "wiring, `get_endpoints(path_glob?, http_method?, module?)` for routes, and "
-    "`get_neighbors` over `INJECTS` / `HANDLED_BY` / `MANAGES` / `BINDS` / "
-    "`PERSISTS_AS` / `RELATES_TO`. Precise cross-file and library-level symbol "
-    "resolution is the v0.7.0 `--scip` path; today's Java graph is best-effort "
-    "static. The source list is also browsable as a resource "
-    "(`graph-rag://sources`) without a tool call."
+    "a file or directory after it changes. For an enterprise Java (Spring / "
+    "Jakarta / Camel) codebase the graph also carries beans + dependency "
+    "injection, Spring MVC / JAX-RS HTTP endpoints, Spring Data repositories "
+    "and JPA entities, application config, Apache Camel routes, in-process "
+    "events + broker messaging, AOP advice + behavioral markers "
+    "(transactional / scheduled / async / …), MyBatis mapper SQL, and "
+    "declarative HTTP clients (`@FeignClient` / `@HttpExchange`). Framework "
+    "tools: `search_code` filters `stereotype=` / `annotation=` / `module=` / "
+    "`route=` / `endpoint=` / `listens_to=` / `behavior=`; "
+    "`get_beans_for(qualified_name)` (wiring + route/listener/behavior context); "
+    "`get_endpoints(path_glob?, http_method?, module?)`; "
+    "`get_routes(uri_glob?, module?)`; "
+    "`get_message_flows(event_or_topic)` (publisher↔consumer); "
+    "`get_service_calls(qualified_name)` (in/out HTTP, cross-service); "
+    "`get_architecture_outline(module?)` (beans / endpoints / routes / "
+    "listeners / scheduled jobs by module). `get_central_code_entities` folds "
+    "the framework edges into PageRank. `get_neighbors` also walks `INJECTS` / "
+    "`HANDLED_BY` / `PUBLISHES` / `CONSUMED_BY` / `PRODUCES_TO` / "
+    "`CALLS_SERVICE` / `RESOLVES_TO` / `EXECUTES` / `ACCESSES` / route "
+    "`FROM` / `TO` / `STEP` / `INVOKES` / `ADVISES` / `HAS_BEHAVIOR`. Today's "
+    "Java graph is best-effort static; compiler-grade cross-file / library "
+    "resolution is `grag-mcp ingest --scip` (`CodeEntity.resolution`). The "
+    "source list is also browsable as a resource (`graph-rag://sources`) "
+    "without a tool call."
 )
 
 
@@ -85,6 +102,10 @@ def register_knowledge_tools(
         stereotype: str | None = None,
         annotation: str | None = None,
         module: str | None = None,
+        route: str | None = None,
+        endpoint: str | None = None,
+        listens_to: str | None = None,
+        behavior: str | None = None,
     ) -> list[CodeSearchResult]:
         """Hybrid (vector + full-text) search over indexed source code —
         functions, classes, modules, and other per-language entities — the
@@ -93,11 +114,17 @@ def register_knowledge_tools(
         Optional filters narrow to the Spring / Java-framework graph:
         `stereotype` (`Service` / `RestController` / `Repository` /
         `Configuration` / … — a Spring bean stereotype or a bare type-level
-        annotation name), `annotation` (any annotation, simple name or FQN, on
-        the entity), `module` (owning Maven/Gradle `Module` artifact id or a
-        path suffix).
+        annotation name), `annotation` (any annotation, simple name or FQN),
+        `module` (owning `Module` artifact id or a path suffix), `route` (a
+        Camel `Route.route_id` whose steps invoke the entity), `endpoint` (a
+        path glob a handler on the entity serves), `listens_to` (an event type
+        fqn/simple name or broker destination the entity — or a method it
+        contains — consumes), `behavior` (`transactional` / `scheduled` /
+        `async` / `retryable` / `cacheable` / `pre_authorize` / …).
         """
-        return retriever.search_code(query, top_k, stereotype, annotation, module)
+        return retriever.search_code(
+            query, top_k, stereotype, annotation, module, route, endpoint, listens_to, behavior
+        )
 
     @server.tool()
     def get_section(section_id: str, max_chars: int = 8000) -> SectionDetail | None:
@@ -174,10 +201,49 @@ def register_knowledge_tools(
         return retriever.get_endpoints(path_glob, http_method, module)
 
     @server.tool()
+    def get_routes(uri_glob: str | None = None, module: str | None = None) -> list[RouteResult]:
+        """Apache Camel routes (`Route` nodes) — `from` endpoint, `to` endpoints,
+        ordered step list, and the `CodeEntity`s the `process` / `bean` steps
+        invoke. Optional `uri_glob` (`*` / `?`; substring unless `^` / `$`) is
+        matched against the route's `from` and any `to` endpoint URI; `module`
+        is the owning `Module` artifact id or path suffix.
+        """
+        return retriever.get_routes(uri_glob, module)
+
+    @server.tool()
+    def get_message_flows(event_or_topic: str) -> list[MessageFlowResult]:
+        """Publisher ↔ consumer flow for an in-process application event
+        (`EventType.fqn` or simple name) or a broker destination
+        (`Destination.name` — a Kafka topic / Rabbit queue / JMS destination /
+        SQS queue). Returns the `CodeEntity` qualified_names on each side.
+        """
+        return retriever.get_message_flows(event_or_topic)
+
+    @server.tool()
+    def get_service_calls(qualified_name: str) -> ServiceCallResult:
+        """Inbound (`@RestController` routes it handles) and outbound
+        (`@FeignClient` / `@HttpExchange` calls it declares, plus the ingested
+        controller route each resolves to) HTTP edges for one
+        `CodeEntity.qualified_name` — a slice of the cross-service call graph.
+        """
+        return retriever.get_service_calls(qualified_name)
+
+    @server.tool()
+    def get_architecture_outline(module: str | None = None) -> ArchitectureOutline:
+        """Beans, HTTP endpoints, Camel routes, message listeners, and scheduled
+        jobs, grouped by Maven/Gradle module (an `unassigned` bucket holds
+        nodes in no module). Optionally restricted to one `Module.artifact`.
+        The fastest way to see the shape of an enterprise Java service.
+        """
+        return retriever.get_architecture_outline(module)
+
+    @server.tool()
     def get_central_code_entities(top_k: int = 10) -> list[CodeCentralityResult]:
-        """Most central `CodeEntity` nodes by PageRank over the CALLS/IMPORTS
-        graph — what's most heavily depended-upon (and riskiest to change).
-        Empty until `grag-mcp compute-centrality` has been run at least once.
+        """Most central `CodeEntity` nodes by PageRank over the dependency graph
+        — direct `CALLS` / `IMPORTS` plus framework-mediated edges (`INJECTS`,
+        `PUBLISHES` / `CONSUMED_BY`, Camel `INVOKES`, `CALLS_SERVICE`,
+        `EXECUTES`) — i.e. what's most heavily depended-upon (and riskiest to
+        change). Empty until `grag-mcp compute-centrality` has been run.
         """
         return retriever.get_central_code_entities(top_k)
 
