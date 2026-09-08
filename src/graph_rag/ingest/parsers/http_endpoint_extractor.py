@@ -12,6 +12,14 @@ _SPRING_METHOD_MAPPINGS = {
     "PatchMapping": "PATCH",
 }
 _JAX_RS_METHODS = {"GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"}
+# Spring 6 HTTP-interface (`@HttpExchange`) shortcut → HTTP method.
+_EXCHANGE_METHOD_MAPPINGS = {
+    "GetExchange": "GET",
+    "PostExchange": "POST",
+    "PutExchange": "PUT",
+    "DeleteExchange": "DELETE",
+    "PatchExchange": "PATCH",
+}
 _JAX_RS_PARAM_BINDINGS = {
     "PathParam": "path",
     "QueryParam": "query",
@@ -78,6 +86,16 @@ class HttpEndpointExtractor:
         endpoints: list[HttpEndpoint] = []
         for type_qn, type_entity in types.items():
             type_annos = by_owner.get(type_qn, [])
+            client = cls._client_spec(type_annos, methods_by_type.get(type_qn, []), by_owner)
+            if client is not None:
+                for method in methods_by_type.get(type_qn, []):
+                    method_annos = by_owner.get(method.qualified_name, [])
+                    endpoints.extend(
+                        cls._client_endpoints_for_method(
+                            method, method_annos, type_entity.name, client
+                        )
+                    )
+                continue
             class_paths = cls._all_paths(type_annos, ("RequestMapping", "Path"))
             class_produces = cls._media(type_annos, "produces", "Produces")
             class_consumes = cls._media(type_annos, "consumes", "Consumes")
@@ -191,11 +209,18 @@ class HttpEndpointExtractor:
         bindings: list[dict[str, Any]],
         controller_name: str,
         return_type: str | None,
+        *,
+        outbound: bool = False,
+        target_service: str | None = None,
     ) -> HttpEndpoint:
-        summary = f"{http_method} {path} -> {controller_name}.{method.name}"
+        if outbound:
+            caller = f"{controller_name}.{method.name}"
+            summary = f"{http_method} {path} -> {target_service or '?'} (client {caller})"
+        else:
+            summary = f"{http_method} {path} -> {controller_name}.{method.name}"
         if return_type and return_type not in ("void", "?"):
             summary += f" (returns {return_type})"
-        summary += f" [{framework}]"
+        summary += f" [{'outbound ' if outbound else ''}{framework}]"
         return HttpEndpoint(
             handler_qualified_name=method.qualified_name,
             http_method=http_method,
@@ -205,8 +230,114 @@ class HttpEndpointExtractor:
             consumes=consumes,
             params=params,
             bindings=bindings,
+            outbound=outbound,
+            target_service=target_service,
             embed_text=summary,
         )
+
+    # -- declarative HTTP clients (@FeignClient / @HttpExchange) --
+
+    @classmethod
+    def _client_spec(
+        cls,
+        type_annos: list[Annotation],
+        methods: list[CodeEntity],
+        by_owner: dict[str, list[Annotation]],
+    ) -> dict[str, Any] | None:
+        """`None` for a normal controller; otherwise
+        `{framework, target_service, base_paths}` for a `@FeignClient` /
+        `@HttpExchange` interface client (or a plain interface whose methods
+        carry `@GetExchange` / … shortcuts).
+        """
+        for annotation in type_annos:
+            if annotation.name == "FeignClient":
+                service = (
+                    annotation.attributes.get("value")
+                    or annotation.attributes.get("name")
+                    or annotation.attributes.get("url")
+                )
+                base_paths = cls._string_list(annotation.attributes.get("path")) or [""]
+                return {
+                    "framework": "feign",
+                    "target_service": str(service) if service else None,
+                    "base_paths": base_paths,
+                }
+            if annotation.name == "HttpExchange":
+                return {
+                    "framework": "spring-http-interface",
+                    "target_service": annotation.attributes.get("url"),
+                    "base_paths": cls._all_paths([annotation], ("HttpExchange",)),
+                }
+        has_exchange_method = any(
+            anno.name in _EXCHANGE_METHOD_MAPPINGS or anno.name == "HttpExchange"
+            for method in methods
+            for anno in by_owner.get(method.qualified_name, [])
+        )
+        if has_exchange_method:
+            return {
+                "framework": "spring-http-interface",
+                "target_service": None,
+                "base_paths": [""],
+            }
+        return None
+
+    @classmethod
+    def _client_endpoints_for_method(
+        cls,
+        method: CodeEntity,
+        method_annos: list[Annotation],
+        client_name: str,
+        client: dict[str, Any],
+    ) -> list[HttpEndpoint]:
+        method_only = [a for a in method_annos if a.target == "method"]
+        param_annos = [a for a in method_annos if a.target.startswith("param:")]
+        names = {a.name for a in method_only}
+
+        if client["framework"] == "feign":
+            if not (names & ({"RequestMapping", *_SPRING_METHOD_MAPPINGS})):
+                return []
+            http_methods = cls._http_methods(method_only, "spring-mvc")
+            method_paths = cls._all_paths(method_only, ("RequestMapping", *_SPRING_METHOD_MAPPINGS))
+        else:
+            exchange = names & set(_EXCHANGE_METHOD_MAPPINGS)
+            if exchange:
+                http_methods = [_EXCHANGE_METHOD_MAPPINGS[name] for name in exchange]
+                method_paths = cls._all_paths(
+                    method_only, (*_EXCHANGE_METHOD_MAPPINGS, "HttpExchange")
+                )
+            elif "HttpExchange" in names:
+                raw = cls._attr(method_only, "HttpExchange", "method")
+                http_methods = [v.rsplit(".", 1)[-1] for v in cls._string_list(raw)] or ["*"]
+                method_paths = cls._all_paths(method_only, ("HttpExchange",))
+            else:
+                return []
+
+        paths = _dedupe(
+            cls._join(base_path, method_path)
+            for base_path in client["base_paths"]
+            for method_path in method_paths
+        )
+        param_types = cls._signature_params(method.signature, method.name)
+        bindings = cls._bindings(param_annos, param_types)
+        return_type = cls._return_type(method.signature, method.name)
+        return [
+            cls._build(
+                method,
+                http_method,
+                path,
+                client["framework"],
+                [],
+                [],
+                [],
+                bindings,
+                client_name,
+                return_type,
+                outbound=True,
+                target_service=client["target_service"],
+            )
+            for http_method in http_methods
+            for path in paths
+        ]
 
     # -- annotation attribute helpers --
 
