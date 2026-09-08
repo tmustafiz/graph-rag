@@ -57,7 +57,8 @@ SET e.name = row.name, e.kind = row.kind, e.language = row.language,
     e.embed_text = row.embed_text,
     e.file_path = row.file_path, e.start_line = row.start_line, e.end_line = row.end_line,
     e.signature = row.signature, e.docstring = row.docstring, e.embedding = row.embedding,
-    e.synthetic = row.synthetic, e.origin = row.origin
+    e.synthetic = row.synthetic, e.origin = row.origin,
+    e.resolution = coalesce(row.resolution, 'static')
 WITH e, row
 MATCH (src:Source {path: $source_path})
 MERGE (src)-[:DEFINES]->(e)

@@ -32,6 +32,11 @@ class CodeEntity(BaseModel):
     # field. `origin` names what synthesized it (e.g. `"lombok"`).
     synthetic: bool = False
     origin: str | None = None
+    # How this entity's `calls` / `imports` / supertypes were resolved:
+    # `"static"` (tree-sitter, the default, build-free) or `"scip"` (a
+    # compiler-grade SCIP index — `grag-mcp ingest --scip`). SCIP wins on
+    # overlap: re-ingesting a `Source` from SCIP replaces its static entities.
+    resolution: str = "static"
     calls: list[str] = Field(default_factory=list)
     imports: list[str] = Field(default_factory=list)
     # Direct supertypes of a type entity — resolved to an FQN against the
