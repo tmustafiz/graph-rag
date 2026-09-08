@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- SCIP index ingestion — `grag-mcp ingest --scip <index.scip> [--root <repo>]`.
+  A hand-rolled protobuf reader (`ScipReader`, no `protobuf` runtime) decodes a
+  SCIP `Index`; `ScipSymbolParser` maps a symbol string to a readable
+  `qualified_name`; `ScipIngestor` builds one `ParsedDocument` per SCIP
+  `Document` — `SymbolInformation` → `CodeEntity` (kind from `Kind` else the
+  descriptor suffix), `Relationship(is_implementation)` → `IMPLEMENTS`,
+  `Relationship(is_reference | is_type_definition)` → `IMPORTS`, a reference
+  `Occurrence` with a method `enclosing_range` → `CALLS`. New
+  `CodeEntity.resolution` (`static` / `scip`) records provenance; SCIP entities
+  are written per `Source`, so the existing per-`Source` reconcile drops the
+  file's static entities — SCIP wins on overlap. New `docs/enterprise-java.md`
+  (static vs SCIP decision guidance + how to produce an index).
+  ([#79](https://github.com/tmustafiz/graph-rag/issues/79))
 - AOP & behavioral-annotation model. `@Transactional` / `@Async` / `@Scheduled`
   / `@Retryable` / `@Cacheable` / `@CacheEvict` / `@PreAuthorize` / `@Secured` /
   `@RolesAllowed` on a type or method become `(:CodeEntity)-[:HAS_BEHAVIOR
