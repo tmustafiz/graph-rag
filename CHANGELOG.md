@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Declarative HTTP clients. `@FeignClient(name, path)` and `@HttpExchange`
+  interface methods (`@GetMapping` / `@GetExchange` / …) become *outbound*
+  `HttpEndpoint`s (`outbound=true`, `target_service`, path composed from the
+  type base + method path), wired `(:CodeEntity)-[:CALLS_SERVICE]->(:HttpEndpoint)`.
+  New `ServiceCallResolver` post-ingest pass matches each to an ingested
+  `@RestController` route by `(http_method, path)` (path variables normalized)
+  and adds `(:HttpEndpoint outbound)-[:RESOLVES_TO]->(:HttpEndpoint inbound)` —
+  a cross-service call graph; unmatched outbound endpoints stay standalone.
+  ([#86](https://github.com/tmustafiz/graph-rag/issues/86))
 - Spring events & messaging model. `ApplicationEventPublisher.publishEvent(...)`
   call sites and `@EventListener` / `@TransactionalEventListener` methods are
   bridged by a MERGE-shared `EventType` node

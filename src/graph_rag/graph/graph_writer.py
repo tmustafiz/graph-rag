@@ -154,13 +154,17 @@ MERGE (h:HttpEndpoint {id: row.id})
 SET h.http_method = row.http_method, h.path = row.path, h.framework = row.framework,
     h.produces = row.produces, h.consumes = row.consumes, h.params = row.params,
     h.bindings = row.bindings_json, h.embed_text = row.embed_text, h.embedding = row.embedding,
-    h.handler_qualified_name = row.handler_qualified_name
+    h.handler_qualified_name = row.handler_qualified_name,
+    h.outbound = coalesce(row.outbound, false), h.target_service = row.target_service
 WITH h, row
 MATCH (src:Source {path: $source_path})
 MERGE (src)-[:DEFINES]->(h)
 WITH h, row
 MATCH (handler:CodeEntity {qualified_name: row.handler_qualified_name})
-MERGE (h)-[:HANDLED_BY]->(handler)
+FOREACH (_ IN CASE WHEN coalesce(row.outbound, false) THEN [] ELSE [1] END |
+    MERGE (h)-[:HANDLED_BY]->(handler))
+FOREACH (_ IN CASE WHEN coalesce(row.outbound, false) THEN [1] ELSE [] END |
+    MERGE (handler)-[:CALLS_SERVICE]->(h))
 """
 
 _MERGE_CALLS = """
