@@ -1,9 +1,17 @@
 import builtins
+import json
 from pathlib import Path
 
 import pytest
 
 from graph_rag.ingest.parsers.java_parser import JavaParser
+
+
+def _annotations_by_owner(document: object) -> dict[str, list]:
+    grouped: dict[str, list] = {}
+    for annotation in document.annotations:
+        grouped.setdefault(annotation.owner_qualified_name, []).append(annotation)
+    return grouped
 
 
 def _write(tmp_path: Path, package: str, name: str, body: str) -> Path:
@@ -60,6 +68,29 @@ def test_nested_types_and_members_form_contains_hierarchy(tmp_path: Path) -> Non
     assert deep.kind == "interface"
     assert deep.parent_qualified_name == "com.acme.Outer.Inner"
     assert by_qualified_name["com.acme.Outer.Inner.Deep.go()"].kind == "method"
+
+
+def test_enum_body_declarations_members_are_emitted(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "OrderStatus",
+        "public enum OrderStatus {\n"
+        "    NEW, PAID;\n"
+        "    private final int code = 0;\n"
+        "    public static OrderStatus fromCode(String c) { return NEW; }\n"
+        "    public boolean isTerminal() { return this == PAID; }\n"
+        "    interface Listener { void onChange(); }\n"
+        "}",
+    )
+
+    document = JavaParser().parse(path)
+    by_qualified_name = {entity.qualified_name: entity for entity in document.code_entities}
+
+    assert by_qualified_name["com.acme.OrderStatus.fromCode(String)"].kind == "method"
+    assert by_qualified_name["com.acme.OrderStatus.isTerminal()"].kind == "method"
+    assert by_qualified_name["com.acme.OrderStatus.Listener"].kind == "interface"
+    assert by_qualified_name["com.acme.OrderStatus.Listener.onChange()"].kind == "method"
 
 
 def test_every_type_flavor_maps_to_its_kind(tmp_path: Path) -> None:
@@ -278,6 +309,376 @@ def test_can_handle_only_matches_java_files() -> None:
     assert JavaParser.can_handle(Path("Foo.java")) is True
     assert JavaParser.can_handle(Path("Foo.JAVA")) is True
     assert JavaParser.can_handle(Path("Foo.py")) is False
+
+
+def test_type_level_annotations_are_captured_with_resolved_fqn(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme.web",
+        "OrderController",
+        "import org.springframework.web.bind.annotation.RestController;\n"
+        "import org.springframework.web.bind.annotation.RequestMapping;\n\n"
+        "@RestController\n"
+        '@RequestMapping(path = "/orders", produces = {"application/json", "text/plain"})\n'
+        "public class OrderController {}",
+    )
+
+    document = JavaParser().parse(path)
+
+    annotations = _annotations_by_owner(document)["com.acme.web.OrderController"]
+    by_name = {annotation.name: annotation for annotation in annotations}
+    assert all(annotation.target == "type" for annotation in annotations)
+    assert by_name["RestController"].fqn == (
+        "org.springframework.web.bind.annotation.RestController"
+    )
+    assert by_name["RestController"].attributes == {}
+    request_mapping = by_name["RequestMapping"]
+    assert request_mapping.attributes == {
+        "path": "/orders",
+        "produces": ["application/json", "text/plain"],
+    }
+    # `attributes_json` is what the graph writer persists (Neo4j has no nested maps).
+    assert json.loads(request_mapping.attributes_json)["path"] == "/orders"
+
+
+def test_unresolved_annotation_falls_back_to_simple_name(tmp_path: Path) -> None:
+    path = _write(tmp_path, "com.acme", "Legacy", "@Deprecated\npublic class Legacy {}")
+
+    annotation = _annotations_by_owner(JavaParser().parse(path))["com.acme.Legacy"][0]
+    assert annotation.name == "Deprecated"
+    assert annotation.fqn == "Deprecated"
+
+
+def test_annotated_fields_become_field_entities_plain_fields_do_not(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "OrderService",
+        "import org.springframework.beans.factory.annotation.Autowired;\n"
+        "import org.springframework.beans.factory.annotation.Value;\n\n"
+        "public class OrderService {\n"
+        "    @Autowired private OrderRepo repo;\n"
+        '    @Value("${app.timeout:30}") private int timeout;\n'
+        "    private int callCount;\n"
+        "}",
+    )
+
+    document = JavaParser().parse(path)
+
+    by_qn = {entity.qualified_name: entity for entity in document.code_entities}
+    assert by_qn["com.acme.OrderService#repo"].kind == "field"
+    assert by_qn["com.acme.OrderService#repo"].parent_qualified_name == "com.acme.OrderService"
+    assert "com.acme.OrderService#timeout" in by_qn
+    assert "com.acme.OrderService#callCount" not in by_qn  # plain field: no entity
+    # plain field still folded into the owning type's embed_text
+    assert "callCount" in by_qn["com.acme.OrderService"].embed_text
+
+    value = _annotations_by_owner(document)["com.acme.OrderService#timeout"][0]
+    assert value.target == "field"
+    assert value.name == "Value"
+    assert value.attributes == {"value": "${app.timeout:30}"}
+
+
+def test_method_and_parameter_annotations(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme.web",
+        "OrderApi",
+        "import org.springframework.web.bind.annotation.GetMapping;\n"
+        "import org.springframework.web.bind.annotation.PathVariable;\n\n"
+        "public class OrderApi {\n"
+        '    @GetMapping("/{id}")\n'
+        "    Order get(@PathVariable Long id, int page) { return null; }\n"
+        "}",
+    )
+
+    document = JavaParser().parse(path)
+
+    annotations = _annotations_by_owner(document)["com.acme.web.OrderApi.get(Long,int)"]
+    by_name = {annotation.name: annotation for annotation in annotations}
+    assert by_name["GetMapping"].target == "method"
+    assert by_name["GetMapping"].attributes == {"value": "/{id}"}
+    assert by_name["PathVariable"].target == "param:id"
+    assert by_name["PathVariable"].fqn == "org.springframework.web.bind.annotation.PathVariable"
+
+
+def test_annotation_attribute_value_types(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Widget",
+        "public class Widget {\n"
+        '    @Column(name = "id", nullable = false, length = 36, ratio = 1.5)\n'
+        "    private String id;\n"
+        "    @WithClass(value = Widget.class)\n"
+        "    void a() {}\n"
+        "    @Outer(inner = @Inner(x = 1))\n"
+        "    void b() {}\n"
+        "}",
+    )
+
+    document = JavaParser().parse(path)
+    by_owner = _annotations_by_owner(document)
+
+    column = by_owner["com.acme.Widget#id"][0]
+    assert column.attributes == {"name": "id", "nullable": False, "length": 36, "ratio": 1.5}
+    assert by_owner["com.acme.Widget.a()"][0].attributes == {"value": "Widget.class"}
+    assert by_owner["com.acme.Widget.b()"][0].attributes == {"inner": {"@Inner": {"x": 1}}}
+
+
+def test_graph_writer_annotation_rows_shape(tmp_path: Path) -> None:
+    from graph_rag.graph.graph_writer import GraphWriter
+
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Thing",
+        "@Deprecated\npublic class Thing {}",
+    )
+    document = JavaParser().parse(path)
+
+    rows = GraphWriter._annotation_rows(document)
+    assert rows == [
+        {
+            "id": document.annotations[0].id,
+            "owner_qualified_name": "com.acme.Thing",
+            "target": "type",
+            "fqn": "Deprecated",
+            "name": "Deprecated",
+            "attributes_json": "{}",
+            "line": document.annotations[0].line,
+        }
+    ]
+
+
+def _by_qn(document: object) -> dict[str, object]:
+    return {entity.qualified_name: entity for entity in document.code_entities}
+
+
+def test_class_supertypes_are_resolved_and_split(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme.orders",
+        "OrderService",
+        "import com.acme.common.BaseService;\n"
+        "import java.io.Serializable;\n\n"
+        "public class OrderService extends BaseService implements Runnable, Serializable, Local {\n"
+        "}",
+    )
+
+    entity = _by_qn(JavaParser().parse(path))["com.acme.orders.OrderService"]
+
+    assert entity.extends_types == ["com.acme.common.BaseService"]  # resolved via import
+    assert entity.implements_types == ["Runnable", "java.io.Serializable", "Local"]
+
+
+def test_interface_super_interfaces_count_as_extends(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Repo",
+        "public interface Repo extends java.io.Closeable, AutoCloseable {\n}",
+    )
+
+    entity = _by_qn(JavaParser().parse(path))["com.acme.Repo"]
+
+    assert entity.extends_types == ["java.io.Closeable", "AutoCloseable"]
+    assert entity.implements_types == []
+
+
+def test_same_file_supertype_resolves_to_its_qualified_name(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Outer",
+        "public class Outer {\n"
+        "    interface Handler {}\n"
+        "    static class DefaultHandler implements Handler {}\n"
+        "}",
+    )
+
+    entity = _by_qn(JavaParser().parse(path))["com.acme.Outer.DefaultHandler"]
+
+    assert entity.implements_types == ["com.acme.Outer.Handler"]
+
+
+def test_graph_writer_extends_and_implements_pairs(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Impl",
+        "public class Impl extends Base implements A, B {\n}",
+    )
+
+    document = JavaParser().parse(path)
+
+    from graph_rag.graph.graph_writer import GraphWriter
+
+    assert GraphWriter._extends_pairs(document) == [{"from": "com.acme.Impl", "to": "Base"}]
+    assert GraphWriter._implements_pairs(document) == [
+        {"from": "com.acme.Impl", "to": "A"},
+        {"from": "com.acme.Impl", "to": "B"},
+    ]
+
+
+def test_lombok_data_synthesizes_getters_and_setters(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Customer",
+        "import lombok.Data;\n\n"
+        "@Data\n"
+        "public class Customer {\n"
+        "    private Long id;\n"
+        "    private String name;\n"
+        "    private boolean active;\n"
+        "}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+
+    getter = by_qn["com.acme.Customer.getId()"]
+    assert getter.kind == "method"
+    assert getter.synthetic is True
+    assert getter.origin == "lombok"
+    assert by_qn["com.acme.Customer.setId(Long)"].synthetic is True
+    assert "com.acme.Customer.isActive()" in by_qn  # boolean → isX
+    assert "com.acme.Customer.setName(String)" in by_qn
+
+
+def test_lombok_requiredargsconstructor_uses_final_fields(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "OrderService",
+        "import lombok.RequiredArgsConstructor;\n\n"
+        "@RequiredArgsConstructor\n"
+        "public class OrderService {\n"
+        "    private final OrderRepository repo;\n"
+        "    private final Clock clock;\n"
+        "    private int cacheSize = 100;\n"
+        "}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+
+    constructor = by_qn["com.acme.OrderService.OrderService(OrderRepository,Clock)"]
+    assert constructor.kind == "constructor"
+    assert constructor.synthetic is True
+    assert constructor.origin == "lombok"
+    # the initialised, non-final field is not a constructor parameter
+    assert "com.acme.OrderService.OrderService(OrderRepository,Clock,int)" not in by_qn
+
+
+def test_lombok_slf4j_synthesizes_a_log_field(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Worker",
+        "import lombok.extern.slf4j.Slf4j;\n\n@Slf4j\npublic class Worker {\n}",
+    )
+
+    log = _by_qn(JavaParser().parse(path))["com.acme.Worker#log"]
+    assert log.kind == "field"
+    assert log.name == "log"
+    assert (log.synthetic, log.origin) == (True, "lombok")
+
+
+def test_lombok_value_is_immutable_no_setters_and_builder(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Money",
+        "import lombok.Value;\nimport lombok.Builder;\n\n"
+        "@Value\n@Builder\npublic class Money {\n"
+        "    String currency;\n"
+        "    long amount;\n"
+        "}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+
+    assert "com.acme.Money.getCurrency()" in by_qn
+    assert not any(qn.startswith("com.acme.Money.set") for qn in by_qn)
+    assert by_qn["com.acme.Money.MoneyBuilder"].kind == "class"
+    assert by_qn["com.acme.Money.builder()"].synthetic is True
+    # @Value implies an all-args constructor
+    assert "com.acme.Money.Money(String,long)" in by_qn
+
+
+def test_explicit_accessor_is_not_duplicated_by_lombok(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Account",
+        "import lombok.Data;\n\n@Data\npublic class Account {\n"
+        "    private String owner;\n"
+        "    public String getOwner() { return owner; }\n"
+        "}",
+    )
+
+    owners = [e for e in JavaParser().parse(path).code_entities if e.name == "getOwner"]
+    assert len(owners) == 1
+    assert owners[0].synthetic is False
+
+
+def test_lombok_boolean_is_prefixed_field_reuses_the_name(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Feature",
+        "import lombok.Data;\n\n@Data\npublic class Feature {\n    private boolean isEnabled;\n}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+    assert "com.acme.Feature.isEnabled()" in by_qn  # not isIsEnabled()
+    assert "com.acme.Feature.isIsEnabled()" not in by_qn
+    assert "com.acme.Feature.setEnabled(boolean)" in by_qn  # is-prefix dropped
+
+
+def test_lombok_accessors_fluent_and_chain(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Config",
+        "import lombok.Data;\nimport lombok.experimental.Accessors;\n\n"
+        "@Data\n@Accessors(fluent = true)\npublic class Config {\n"
+        "    private String host;\n"
+        "}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+    assert "com.acme.Config.host()" in by_qn  # fluent getter, not getHost()
+    assert "com.acme.Config.getHost()" not in by_qn
+    setter = by_qn["com.acme.Config.host(String)"]
+    assert setter.signature == "Config host(String)"  # chained return type
+
+
+def test_lombok_allargsconstructor_excludes_initialised_final_fields(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Box",
+        "import lombok.AllArgsConstructor;\n\n@AllArgsConstructor\npublic class Box {\n"
+        '    private final String label = "default";\n'
+        "    private int size;\n"
+        "}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+    assert "com.acme.Box.Box(int)" in by_qn
+    assert "com.acme.Box.Box(String,int)" not in by_qn
+
+
+def test_non_lombok_class_has_no_synthetic_entities(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Plain",
+        "public class Plain {\n    private int count;\n}",
+    )
+
+    assert all(not e.synthetic for e in JavaParser().parse(path).code_entities)
 
 
 def test_parse_without_tree_sitter_raises_actionable_error(

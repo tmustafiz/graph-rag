@@ -23,5 +23,12 @@ class Settings(BaseSettings):
     # `-- grag:dialect=<name>` marker comment overrides this.
     sql_dialect: str | None = Field(default=None, validation_alias="GRAG_SQL_DIALECT")
 
+    # When `False`, a directory ingest skips `.java` under `generated-sources` /
+    # `build/generated` / `target/generated-*` — the annotation-processor output
+    # (MapStruct, QueryDSL, JAXB, …) that only exists after a build.
+    ingest_generated_sources: bool = Field(
+        default=True, validation_alias="GRAG_INGEST_GENERATED_SOURCES"
+    )
+
 
 settings = Settings()

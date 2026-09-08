@@ -213,7 +213,10 @@ milestones, and issues. Workflow for an agent:
 4. Open a PR **into that same `release/vX.Y.0` branch** whose body has
    `Closes #<n>`. Keep the diff scoped to the issue.
 5. The **repo owner merges** PRs (squash) and deletes branches — don't
-   self-merge.
+   self-merge. GitHub does **not** auto-close the issue on merge (the base is
+   `release/*`, not the default branch), so the owner also closes `#<n>`
+   manually, with a comment naming the merge commit. The `Closes #<n>` line
+   still matters — it's what the release PR aggregates for the changelog.
 6. Update `CHANGELOG.md` (`[Unreleased]`) for anything user-visible.
 
 ### Milestone branches (git-flow-lite)

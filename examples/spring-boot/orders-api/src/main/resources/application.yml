@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: orders-api
+  datasource:
+    url: jdbc:postgresql://localhost:5432/orders
+    username: orders
+    password: ${DB_PASSWORD:changeme-local-dev}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+orders:
+  notify-on-create: true
+  max-lines-per-order: 50
+
+notification:
+  from-address: orders@example.com

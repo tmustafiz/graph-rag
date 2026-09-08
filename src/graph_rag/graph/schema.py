@@ -23,6 +23,21 @@ CONSTRAINTS: list[str] = [
     "FOR (n:DbView) REQUIRE n.qualified_name IS UNIQUE",
     "CREATE CONSTRAINT db_index_qualified_name IF NOT EXISTS "
     "FOR (n:DbIndex) REQUIRE n.qualified_name IS UNIQUE",
+    "CREATE CONSTRAINT annotation_id IF NOT EXISTS FOR (n:Annotation) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT config_file_path IF NOT EXISTS FOR (n:ConfigFile) REQUIRE n.path IS UNIQUE",
+    "CREATE CONSTRAINT config_property_id IF NOT EXISTS "
+    "FOR (n:ConfigProperty) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT module_path IF NOT EXISTS FOR (n:Module) REQUIRE n.path IS UNIQUE",
+    "CREATE CONSTRAINT external_artifact_gav IF NOT EXISTS "
+    "FOR (n:ExternalArtifact) REQUIRE n.gav IS UNIQUE",
+    "CREATE CONSTRAINT bean_id IF NOT EXISTS FOR (n:Bean) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT http_endpoint_id IF NOT EXISTS FOR (n:HttpEndpoint) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT spring_xml_bean_id IF NOT EXISTS "
+    "FOR (n:SpringXmlBean) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT jpa_entity_def_qn IF NOT EXISTS "
+    "FOR (n:JpaEntityDef) REQUIRE n.qualified_name IS UNIQUE",
+    "CREATE CONSTRAINT spring_data_repo_def_qn IF NOT EXISTS "
+    "FOR (n:SpringDataRepoDef) REQUIRE n.qualified_name IS UNIQUE",
 ]
 
 # Full-text indexes for keyword-side of hybrid (vector + keyword) retrieval.
@@ -37,6 +52,16 @@ FULLTEXT_INDEXES: list[str] = [
     "FOR (n:AgentMemory) ON EACH [n.content]",
     "CREATE FULLTEXT INDEX db_object_text_fulltext IF NOT EXISTS "
     "FOR (n:DbTable|DbView) ON EACH [n.name, n.qualified_name, n.embed_text]",
+    "CREATE FULLTEXT INDEX annotation_name_fulltext IF NOT EXISTS "
+    "FOR (n:Annotation) ON EACH [n.name, n.fqn]",
+    "CREATE FULLTEXT INDEX config_property_fulltext IF NOT EXISTS "
+    "FOR (n:ConfigProperty) ON EACH [n.key, n.value]",
+    "CREATE FULLTEXT INDEX module_fulltext IF NOT EXISTS "
+    "FOR (n:Module) ON EACH [n.artifact, n.group]",
+    "CREATE FULLTEXT INDEX bean_fulltext IF NOT EXISTS "
+    "FOR (n:Bean) ON EACH [n.name, n.stereotype, n.bean_type]",
+    "CREATE FULLTEXT INDEX http_endpoint_fulltext IF NOT EXISTS "
+    "FOR (n:HttpEndpoint) ON EACH [n.path, n.embed_text]",
 ]
 
 # Range indexes for cheap ordering scans (pruner's recency sweep, centrality ranking).
@@ -137,6 +162,20 @@ def db_view_vector_index_statement(
     )
 
 
+def http_endpoint_vector_index_statement(
+    dimensions: int = settings.embedding_dimensions,
+    similarity_function: str = settings.embedding_similarity_function,
+) -> str:
+    return (
+        "CREATE VECTOR INDEX http_endpoint_embedding IF NOT EXISTS "
+        "FOR (n:HttpEndpoint) ON (n.embedding) "
+        "OPTIONS {indexConfig: {"
+        f"`vector.dimensions`: {dimensions}, "
+        f"`vector.similarity_function`: '{similarity_function}'"
+        "}}"
+    )
+
+
 def apply_schema(driver: Driver) -> list[str]:
     """Create (or verify) all constraints and indexes. Idempotent."""
     statements = [
@@ -149,6 +188,7 @@ def apply_schema(driver: Driver) -> list[str]:
         agent_memory_vector_index_statement(),
         db_table_vector_index_statement(),
         db_view_vector_index_statement(),
+        http_endpoint_vector_index_statement(),
     ]
     with driver.session() as session:
         for statement in statements:

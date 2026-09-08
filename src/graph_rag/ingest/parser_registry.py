@@ -2,11 +2,15 @@ from pathlib import Path
 
 from .parser import Parser
 from .parsers import (
+    ConfigFileParser,
+    GradleParser,
     JavaParser,
     JavaScriptParser,
     MarkdownParser,
+    MavenParser,
     PdfParser,
     PythonParser,
+    SpringXmlParser,
     SqlParser,
     StylesheetParser,
     YamlParser,
@@ -29,6 +33,14 @@ class ParserRegistry:
             JavaScriptParser(),
             SqlParser(),
             StylesheetParser(),
+            MavenParser(),
+            GradleParser(),
+            # Ahead of ConfigFileParser: claims only `.xml` files whose root
+            # element is `<beans>` (a Spring XML application context).
+            SpringXmlParser(),
+            # Ahead of YamlParser: claims Spring/Java `application*` / `bootstrap*`
+            # and `resources/`-dir config; defers Checkov policies back to YamlParser.
+            ConfigFileParser(),
             YamlParser(),
         ]
 

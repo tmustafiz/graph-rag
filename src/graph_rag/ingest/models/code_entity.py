@@ -27,8 +27,18 @@ class CodeEntity(BaseModel):
     signature: str | None = None
     docstring: str | None = None
     parent_qualified_name: str | None = None
+    # `True` for a member a parser materialised that has no source span of its
+    # own — a compile-time-synthesized Lombok accessor / constructor / `log`
+    # field. `origin` names what synthesized it (e.g. `"lombok"`).
+    synthetic: bool = False
+    origin: str | None = None
     calls: list[str] = Field(default_factory=list)
     imports: list[str] = Field(default_factory=list)
+    # Direct supertypes of a type entity — resolved to an FQN against the
+    # file's imports where possible, else the simple name; feed `EXTENDS`
+    # (superclass / super-interface of an interface) and `IMPLEMENTS` edges.
+    extends_types: list[str] = Field(default_factory=list)
+    implements_types: list[str] = Field(default_factory=list)
     # Other `CodeEntity` qualified names this one renders — set only by the
     # React enrichment pass for `component` entities; feeds `RENDERS` edges.
     renders: list[str] = Field(default_factory=list)

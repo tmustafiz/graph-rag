@@ -7,6 +7,254 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-07
+
+### Added
+- Spring-aware retrieval surface + enterprise-Java example. `search_code` gains
+  optional `stereotype=` / `annotation=` / `module=` filters (guards baked into
+  the hybrid query — an unfiltered call is unchanged). New MCP tools
+  `get_beans_for(qualified_name)` (a bean's `INJECTS` / `PRODUCES` wiring both
+  ways + the `ConfigProperty` keys it `BINDS`, annotation- and XML-wired alike)
+  and `get_endpoints(path_glob?, http_method?, module?)` (Spring MVC / JAX-RS
+  routes with handler + module; `path_glob` is `*` / `?` whole-path match).
+  `get_neighbors` now surfaces `Bean` / `HttpEndpoint` / `ConfigProperty`
+  summaries and its docs call out the Java-framework edges (`INJECTS` /
+  `HANDLED_BY` / `MANAGES` / `PERSISTS_AS` / `RELATES_TO` / `BINDS` /
+  `IMPORTS_CONTEXT`). MCP server instructions describe the Spring graph. New
+  `examples/spring-boot/` — a runnable two-module sample (`@RestController`,
+  `@Service` with constructor + field injection, `@ConfigurationProperties`,
+  `@Repository` + `@Entity` with a `@ManyToOne`, `application.yml`, and an
+  XML-wired bean the `@Autowired` field resolves to) with a query walkthrough in
+  its `README.md`. `docs/ARCHITECTURE.md` gains a "Java frameworks" section;
+  `README.md` notes the Spring capability and the v0.7.0 `--scip` precision path.
+  ([#77](https://github.com/tmustafiz/graph-rag/issues/77))
+- Spring Data repository + JPA entity model. New pure `SpringDataExtractor`
+  (inside `JavaParser`) turns repository interfaces (`Repository` /
+  `CrudRepository` / `JpaRepository` / `PagingAndSortingRepository` /
+  `List*Repository` / reactive `ReactiveCrudRepository` / `R2dbcRepository` / …,
+  Mongo / Cassandra / ES, plus `@RepositoryDefinition`; `@NoRepositoryBean`
+  suppressed) into `SpringDataRepoDef`s — managed `entity_type` / `id_type` from
+  the base's generic arguments (`JpaRepository<Order, Long>`, read from the AST
+  since `CodeEntity.extends_types` drops generics), and every declared method
+  classified `derived` / `jpql` / `native` / `modifying` / `procedure` /
+  `inherited` with `@Query` / procedure text and, for derived queries, a
+  best-effort property-path parse of the method name
+  (`findByCustomerIdAndStatusOrderByCreatedAtDesc` → `customerId`, `status`)
+  that never raises on an unparseable name. JPA entities (`@Entity` /
+  `@Embeddable` / `@MappedSuperclass`, `@Table(name)`, `@Id`, `@OneToMany` /
+  `@ManyToOne` / `@ManyToMany` / `@OneToOne` + `mappedBy`) become `JpaEntityDef`s.
+  New `SpringDataResolver` — a fourth post-directory-ingest pass — tags the
+  `CodeEntity`s `:Repository` / `:JpaEntity` (with `repository_*` / `jpa_*`
+  props), tags repo methods with `query_kind` / `query_text` /
+  `query_properties`, and wires `(:Repository)-[:MANAGES]->(:JpaEntity)`,
+  `(:JpaEntity)-[:PERSISTS_AS]->(:DbTable)` (only when a `DbTable` of that name
+  was ingested — the SQL-schema bridge) and
+  `(:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(:JpaEntity)`. New
+  `jpa_entity_def_qn` / `spring_data_repo_def_qn` constraints;
+  `(:Source)-[:DEFINES]->(:SpringDataRepoDef|:JpaEntityDef)`.
+  ([#76](https://github.com/tmustafiz/graph-rag/issues/76))
+- Spring XML context parser (`<beans>`) into the same bean/DI graph. New
+  `SpringXmlParser` (stdlib `xml.etree`, registered ahead of `ConfigFileParser`,
+  matches only `.xml` files whose root element is `<beans>`) turns each `<bean>`
+  — inner beans included — into a `SpringXmlBean` def carrying its `class`,
+  `scope`, `parent`, `factory-*`, `primary`, `abstract`, aliases (`<alias>` +
+  extra `name` tokens), `<constructor-arg ref>` / `<property name ref>` wiring
+  (`<ref bean>`, inner `<bean>`, `<list>` / `<set>` / `<map>` of refs, `p:` /
+  `c:` shortcut namespaces) and the `${key}`s in `value=` attributes.
+  `<context:component-scan>`, `<context:property-placeholder>`, `<import
+  resource>` and non-`beans` namespace elements (`aop:*`, `tx:*`, `util:*` —
+  recorded) land on the `ConfigFile` (`format="spring-xml"`). New
+  `SpringXmlResolver` — a third post-directory-ingest pass, after
+  `SpringBeanResolver` — projects each `SpringXmlBean` into the **same** `Bean`
+  graph (`(:Bean {defined_in:'xml', stereotype:'XmlBean'})`), links
+  `(:CodeEntity)-[:IS_BEAN]->` when the class was ingested, resolves refs by
+  name/alias across XML **and** annotation beans into
+  `(:Bean)-[:INJECTS {via:'xml-constructor'|'xml-property', property}]->(:Bean)`
+  (unknown ref → `stereotype:'XmlBeanStub'` bean; ambiguous →
+  `Bean.unresolved_injections`), links `${key}` property values via `BINDS`, and
+  wires `(:ConfigFile)-[:IMPORTS_CONTEXT {kind:'import'|'property-placeholder'}]->(:ConfigFile)`.
+  New `spring_xml_bean_id` constraint; `(:ConfigFile)-[:DECLARES_BEAN]->(:SpringXmlBean)`.
+  ([#74](https://github.com/tmustafiz/graph-rag/issues/74))
+- Spring MVC / JAX-RS HTTP endpoint model. `HttpEndpointExtractor` (inside
+  `JavaParser`) turns controller handler methods into `(:HttpEndpoint
+  {http_method, path, framework, produces, consumes, params, bindings,
+  embed_text})` nodes — Spring MVC (`@RequestMapping` + `@GetMapping` /
+  `@PostMapping` / `@PutMapping` / `@DeleteMapping` / `@PatchMapping`, class +
+  method path composition) and JAX-RS (`@Path` + `@GET` / `@POST` / …). One
+  endpoint per `(http_method, path)`; parameter bindings (`@PathVariable`,
+  `@RequestParam`, `@RequestBody`, `@RequestHeader`, `@ModelAttribute`;
+  `@PathParam`, `@QueryParam`, `@HeaderParam`, `@FormParam`) matched to the
+  handler params by name with types from the signature; `@ExceptionHandler`
+  methods recorded best-effort as `http_method="EXCEPTION"`.
+  `(:HttpEndpoint)-[:HANDLED_BY]->(:CodeEntity)` and, via the project-model
+  resolver, `-[:IN_MODULE]->(:Module)`. `embed_text` is natural language
+  (`"GET /orders/{id} -> OrderController.getOrder (returns Order) [spring-mvc]"`)
+  and endpoints are embedded + get a vector index, so `search` / `search_code`
+  surface routes from natural language. New `http_endpoint_id` constraint,
+  `http_endpoint_fulltext` + `http_endpoint_embedding` indexes.
+  ([#75](https://github.com/tmustafiz/graph-rag/issues/75))
+- Spring / Spring Boot bean & dependency-injection graph. New
+  `SpringBeanResolver` — a second post-directory-ingest graph pass, after the
+  project-model resolver — derives a `Bean` layer from the annotation,
+  type-hierarchy and config layers already in Neo4j. Stereotyped classes
+  (`@Component` / `@Service` / `@Repository` / `@Controller` /
+  `@RestController` / `@Configuration` / `@SpringBootApplication` /
+  `@ConfigurationProperties`, plus one level of custom meta-annotated
+  stereotype) and `@Bean` factory methods become
+  `(:Bean {name, stereotype, scope, primary, bean_type})`, linked
+  `(:CodeEntity)-[:IS_BEAN]->(:Bean)`; a `@Configuration` bean
+  `-[:PRODUCES]->` its `@Bean` methods. Constructor parameters (incl. Lombok's
+  synthetic `@RequiredArgsConstructor`), `@Autowired` / `@Inject` / `@Resource`
+  fields and setters resolve to a target `Bean` **by type** — matched against
+  each bean's own type and its `EXTENDS` / `IMPLEMENTS` supertypes, unwrapping
+  `List<X>` / `Optional<X>` / `ObjectProvider<X>` / `X[]` (recorded as
+  `multiplicity`), then narrowed by `@Qualifier` / `@Named` — as
+  `(:Bean)-[:INJECTS {via, qualifier, multiplicity}]->(:Bean)`; ambiguous or
+  unmatched injections are left on `Bean.unresolved_injections` (JSON) with a
+  reason, never guessed. `@Value("${key:default}")` and
+  `@ConfigurationProperties(prefix=…)` add `(:Bean)-[:BINDS]->(:ConfigProperty)`.
+  New `bean_id` constraint + `bean_fulltext` index; `IngestionPipeline` now
+  takes a list of post-ingest resolvers.
+  ([#73](https://github.com/tmustafiz/graph-rag/issues/73))
+- Java type-hierarchy edges. `JavaParser` now records a type's direct
+  supertypes on `CodeEntity` (`extends_types` / `implements_types`,
+  import-resolved to FQNs where possible, else the simple name) and
+  `GraphWriter` writes `(:CodeEntity)-[:EXTENDS]->(:CodeEntity)` (superclass, or
+  an interface's super-interface) and `-[:IMPLEMENTS]->` edges. Foundation for
+  injection-target-by-type resolution in the Spring bean model.
+  ([#73](https://github.com/tmustafiz/graph-rag/issues/73))
+- Lombok member synthesis + generated-sources ingestion. `LombokSynthesizer`
+  (inside `JavaParser`) materialises the `CodeEntity`s a compile-time
+  annotation processor would generate: `@Getter` / `@Setter` / `@Data` /
+  `@Value` → `getX()` / `isX()` / `setX()` per field; `@NoArgsConstructor` /
+  `@AllArgsConstructor` / `@RequiredArgsConstructor` (and the `@Data` /
+  `@Value` implied ones) → a constructor entity with the right parameter types
+  (the `@RequiredArgsConstructor` one is what Spring DI resolves through);
+  `@Builder` → `builder()` + a `<Type>Builder` stub; `@Slf4j` and friends → a
+  `log` field. Each is flagged `synthetic=true`, `origin="lombok"`; an explicit
+  accessor of the same name suppresses its synthetic twin. `CodeEntity` gains
+  `synthetic` / `origin`. A directory ingest also parses annotation-processor
+  output under `target/generated-sources` / `build/generated` as normal
+  `.java`; `GRAG_INGEST_GENERATED_SOURCES=false` skips it.
+  ([#71](https://github.com/tmustafiz/graph-rag/issues/71))
+- Maven / Gradle project model. New `MavenParser` (`pom.xml`, stdlib
+  `xml.etree`) and `GradleParser` (`build.gradle` / `build.gradle.kts` /
+  `settings.gradle(.kts)`, tree-sitter `groovy` / `kotlin`) turn build files
+  into `(:Module {group, artifact, version, path, build_tool, packages,
+  source_roots})` nodes with `(:Module)-[:DEPENDS_ON {scope}]->(:Module)` and
+  `-[:DEPENDS_ON_EXTERNAL {gav, scope}]->(:ExternalArtifact)` edges. Maven reads
+  `<parent>` inheritance, `<properties>` `${...}` interpolation, the reactor
+  `<modules>` list, `<dependencies>` GAV + `<scope>`, and
+  `<build><sourceDirectory>`; Gradle does a shallow tree-sitter pass for
+  `group` / `version` / `rootProject.name`, `include`, `dependencies { }`
+  coordinates (configuration → `scope`), `project(':x')` deps, and `srcDirs`.
+  Source-root discovery adds `src/test/java` and `target/generated-sources` /
+  `build/generated` when present. On a directory ingest, build files parse
+  first and a new `ProjectModelResolver` then wires
+  `(:Source)-[:IN_MODULE]->(:Module)` (nearest module dir), promotes sibling
+  dependencies (`project(':x')` / matching GAV → `DEPENDS_ON`), and sets
+  `external` (bool) on every `(:CodeEntity)-[:IMPORTS]->(:CodeEntity)` edge —
+  `false` for first-party / in-project targets, `true` for third-party. New
+  `module_path` / `external_artifact_gav` constraints and a `module_fulltext`
+  index. ([#70](https://github.com/tmustafiz/graph-rag/issues/70))
+- Spring / Java application-config parser (`ConfigFileParser`, stdlib + PyYAML,
+  no extra). Handles `application*` / `bootstrap*` (`.yml` / `.yaml` /
+  `.properties`) and any `*.properties` / `*.yml` under a `resources`
+  directory; registered ahead of `YamlParser`, which still gets Checkov custom
+  policies (name-matched `.yml` with `metadata.id` + `definition` is handed
+  back) and all other generic YAML. Each file becomes a `ConfigFile` plus a
+  flattened `ConfigProperty` list — YAML nesting collapsed to dotted keys
+  (list items `[i]`), `.properties` read line-wise (comment markers, `\` line
+  continuations, `#---` multi-document separators), real line numbers kept.
+  Spring profile resolved from an `application-<profile>` filename or a
+  `spring.config.activate.on-profile` key; `${a.b:default}` placeholders become
+  `(:ConfigProperty)-[:REFERENCES]->(:ConfigProperty)` edges within the file.
+  A `Section` + one `Chunk` per profile makes config searchable via `search`,
+  with secret-looking keys (`password` / `secret` / `token` / `credential` /
+  `key`) redacted in the chunk text (real value stays on the node). New
+  `config_file_path` / `config_property_id` constraints and
+  `config_property_fulltext` index. Feeds `@Value` / `@ConfigurationProperties`
+  resolution in the Spring bean model.
+  ([#72](https://github.com/tmustafiz/graph-rag/issues/72))
+- Structured Java annotation model. `JavaParser` now captures annotations on
+  types, methods, constructors, fields, and parameters as `Annotation` nodes
+  (`(CodeEntity)-[:ANNOTATED_WITH]->(:Annotation {fqn, name, target, attributes,
+  line})`), keyed by `(owner, target, fqn, line)`. Attribute values (string /
+  number / boolean / class-literal / enum-constant / array / nested annotation)
+  are parsed into a map and persisted as a JSON string (`attributes` property);
+  the annotation FQN is resolved against the file's imports, falling back to the
+  simple name. Type-level annotations (`@RestController` on a class, …), which
+  were previously dropped entirely, are now captured. Fields carrying at least
+  one annotation are emitted as `field` `CodeEntity`s (`kind` `field`,
+  `qualified_name` `<type>#<field>`); plain fields stay folded into the owning
+  type's `embed_text` as before. New `Annotation` uniqueness constraint and
+  `annotation_name_fulltext` index. Foundation for the Spring bean / MVC /
+  Spring-Data models. ([#69](https://github.com/tmustafiz/graph-rag/issues/69))
+
+### Fixed
+- Enterprise-Java review sweep (v0.6.0 release gate,
+  [#114](https://github.com/tmustafiz/graph-rag/issues/114)–[#131](https://github.com/tmustafiz/graph-rag/issues/131)):
+  - **Spring Data repositories are now beans.** New final post-ingest pass
+    `SpringInjectionResolver` MERGEs a `(:Bean {stereotype:'Repository'})` +
+    `IS_BEAN` for every repository interface (`bean_type` = interface FQN) and
+    re-runs injection resolution over the complete annotation + XML + repository
+    bean set, so an `@Service` `@Autowired`-ing an XML-only bean or a
+    `JpaRepository` (both unresolvable when the first pass ran) gets its
+    `INJECTS` edge instead of a `"no matching bean"` entry.
+    ([#114](https://github.com/tmustafiz/graph-rag/issues/114),
+    [#122](https://github.com/tmustafiz/graph-rag/issues/122))
+  - `@Bean` factory methods declared `public` / `static` no longer get a
+    `bean_type` like `"Bean public DataSource"` (broke type-based `@Autowired`
+    to them). ([#115](https://github.com/tmustafiz/graph-rag/issues/115))
+  - `search_code` `stereotype=` / `annotation=` / `module=` filters resolve the
+    matching set on the graph first, so a filter is no longer starved by the
+    kNN truncation and returning `[]` for a real match.
+    ([#117](https://github.com/tmustafiz/graph-rag/issues/117))
+  - `get_endpoints(path_glob=…)` substring-matches unless the caller pins an end
+    with `^` / `$` — a bare fragment (`"orders"`) no longer silently returns
+    `[]`. ([#118](https://github.com/tmustafiz/graph-rag/issues/118))
+  - A relative-path directory ingest (`grag ingest examples/spring-boot`) now
+    wires `IN_MODULE` / endpoint-module edges — `ProjectModelResolver` compares
+    `os.path.abspath` of `Source.path` and `Module.path` instead of a raw string
+    prefix (`Source.path` stays stored as ingested). A single-file ingest /
+    `ingest_path` / `--watch` now also runs the post-ingest resolvers and the
+    generated-source skip, not just directory ingest.
+    ([#116](https://github.com/tmustafiz/graph-rag/issues/116),
+    [#120](https://github.com/tmustafiz/graph-rag/issues/120))
+  - A Gradle root dir's `settings.gradle` no longer nulls the `group` /
+    `version` / `packages` its `build.gradle` set on the same `Module`.
+    ([#119](https://github.com/tmustafiz/graph-rag/issues/119))
+  - Renaming or removing an annotated Java type no longer leaks its `Annotation`
+    nodes (deleted with their owner; a global orphan sweep self-heals earlier
+    leaks). ([#121](https://github.com/tmustafiz/graph-rag/issues/121))
+  - Multi-path request mappings (`@GetMapping({"/a","/b"})`, class-level
+    `@RequestMapping({"/v1","/v2"})`) emit one `HttpEndpoint` per
+    (method, path). ([#123](https://github.com/tmustafiz/graph-rag/issues/123))
+  - Enum method / field / nested-type members (inside `enum_body_declarations`)
+    are emitted as `CodeEntity`s.
+    ([#124](https://github.com/tmustafiz/graph-rag/issues/124))
+  - Lombok: a `boolean isX` field's getter is the field name (not `isIsX()`),
+    `@Accessors(fluent=…/chain=…)` is honoured, and `@AllArgsConstructor`
+    excludes initialised `final` fields.
+    ([#125](https://github.com/tmustafiz/graph-rag/issues/125))
+  - Gradle `subprojects {}` / `allprojects {}` dependency blocks are skipped
+    rather than attributed to the root module.
+    ([#126](https://github.com/tmustafiz/graph-rag/issues/126))
+  - Spring Data derived-query subjects tokenise on the PascalCase boundary, so
+    `findByOrderId` yields `orderId`, not `derId`.
+    ([#127](https://github.com/tmustafiz/graph-rag/issues/127))
+  - Maven `${revision}` / `${sha1}` and property-to-property chains interpolate
+    to a fixed point. ([#128](https://github.com/tmustafiz/graph-rag/issues/128))
+  - Nested `<beans profile="…">` blocks in a Spring XML context are walked
+    (their beans were silently skipped); the `profile` is recorded on each bean.
+    ([#129](https://github.com/tmustafiz/graph-rag/issues/129))
+  - Self-referential JPA associations (`Category.parent` + `Category.children`)
+    keep their `RELATES_TO` self-edge.
+    ([#130](https://github.com/tmustafiz/graph-rag/issues/130))
+  - A `)` / `,` inside an annotation attribute string (`@Pattern(regexp = ")")`)
+    no longer truncates the handler parameter scan, so bindings keep their real
+    types. ([#131](https://github.com/tmustafiz/graph-rag/issues/131))
+
 ## [0.5.0] - 2026-09-06
 
 ### Added
@@ -331,7 +579,8 @@ the code graph, agent working-memory with decay pruning, and an MCP server
 (Streamable HTTP) exposing lookup + memory tools. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
-[Unreleased]: https://github.com/tmustafiz/graph-rag/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/tmustafiz/graph-rag/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/tmustafiz/graph-rag/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/tmustafiz/graph-rag/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tmustafiz/graph-rag/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tmustafiz/graph-rag/compare/v0.2.0...v0.3.0

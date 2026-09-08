@@ -5,8 +5,10 @@ from mcp.server import MCPServer
 from ..ingestion_pipeline import IngestionPipeline
 from ..ingestion_result import IngestionResult
 from .models import (
+    BeanDetail,
     CodeCentralityResult,
     CodeSearchResult,
+    EndpointResult,
     NeighborResult,
     OutlineNode,
     PolicyResult,
@@ -33,14 +35,23 @@ KNOWLEDGE_INSTRUCTIONS = (
     "so an empty result may mean the resource type string is off, not that "
     "no policy exists; try `search_policies` instead of guessing variants. "
     "`get_neighbors` walks the graph from any node (Source path, "
-    "Section/Chunk/PolicyRule id, CodeEntity qualified_name, or Concept "
-    "name). `get_central_code_entities` ranks code by PageRank over the "
-    "CALLS/IMPORTS graph — use it to find what's most depended-upon (and "
-    "riskiest to change) in this codebase; empty until `grag-mcp "
-    "compute-centrality` has been run at least once. `cite` returns a "
-    "human-readable citation string for a chunk. `ingest_path` (re-)ingests "
-    "a file or directory after it changes. The source list is also browsable "
-    "as a resource (`graph-rag://sources`) without a tool call."
+    "Section/Chunk/PolicyRule/Bean/HttpEndpoint id, CodeEntity qualified_name, "
+    "Module path, or Concept name). `get_central_code_entities` ranks code by "
+    "PageRank over the CALLS/IMPORTS graph — use it to find what's most "
+    "depended-upon (and riskiest to change) in this codebase; empty until "
+    "`grag-mcp compute-centrality` has been run at least once. `cite` returns "
+    "a human-readable citation string for a chunk. `ingest_path` (re-)ingests "
+    "a file or directory after it changes. For a Spring / Spring Boot / Jakarta "
+    "codebase the graph also carries beans + dependency injection, Spring "
+    "MVC / JAX-RS HTTP endpoints, Spring Data repositories and JPA entities, "
+    "and application config: use `search_code` with `stereotype=` / "
+    "`annotation=` / `module=`, `get_beans_for(qualified_name)` for a bean's "
+    "wiring, `get_endpoints(path_glob?, http_method?, module?)` for routes, and "
+    "`get_neighbors` over `INJECTS` / `HANDLED_BY` / `MANAGES` / `BINDS` / "
+    "`PERSISTS_AS` / `RELATES_TO`. Precise cross-file and library-level symbol "
+    "resolution is the v0.7.0 `--scip` path; today's Java graph is best-effort "
+    "static. The source list is also browsable as a resource "
+    "(`graph-rag://sources`) without a tool call."
 )
 
 
@@ -68,13 +79,25 @@ def register_knowledge_tools(
         return retriever.search(query, top_k, source_type, source_path)
 
     @server.tool()
-    def search_code(query: str, top_k: int = 5) -> list[CodeSearchResult]:
+    def search_code(
+        query: str,
+        top_k: int = 5,
+        stereotype: str | None = None,
+        annotation: str | None = None,
+        module: str | None = None,
+    ) -> list[CodeSearchResult]:
         """Hybrid (vector + full-text) search over indexed source code —
-        functions, classes, modules, and other per-language entities (Python
-        today; more languages as their parser extras are installed) — the
+        functions, classes, modules, and other per-language entities — the
         code-search complement to `search`.
+
+        Optional filters narrow to the Spring / Java-framework graph:
+        `stereotype` (`Service` / `RestController` / `Repository` /
+        `Configuration` / … — a Spring bean stereotype or a bare type-level
+        annotation name), `annotation` (any annotation, simple name or FQN, on
+        the entity), `module` (owning Maven/Gradle `Module` artifact id or a
+        path suffix).
         """
-        return retriever.search_code(query, top_k)
+        return retriever.search_code(query, top_k, stereotype, annotation, module)
 
     @server.tool()
     def get_section(section_id: str, max_chars: int = 8000) -> SectionDetail | None:
@@ -114,11 +137,41 @@ def register_knowledge_tools(
         """Every node directly connected to `node_id`, in both relationship directions.
 
         `node_id` is matched against whichever unique key its node type uses:
-        `Source.path`, `Section`/`Chunk`/`PolicyRule.id`, `CodeEntity.qualified_name`,
-        or `Concept.name`. Optionally filter to specific relationship types
-        (e.g. `["CALLS", "IMPORTS"]`).
+        `Source.path`, `Section`/`Chunk`/`PolicyRule`/`Bean`/`HttpEndpoint.id`,
+        `CodeEntity.qualified_name`, `Module.path`, `ConfigProperty.id`, or
+        `Concept.name`. Optionally filter to specific relationship types — the
+        Java-framework ones are `INJECTS` / `PRODUCES` / `BINDS` / `IS_BEAN`
+        (beans), `HANDLED_BY` (endpoint → handler), `MANAGES` / `PERSISTS_AS` /
+        `RELATES_TO` (Spring Data / JPA), `EXTENDS` / `IMPLEMENTS`,
+        `ANNOTATED_WITH`, `IMPORTS_CONTEXT` — alongside `CALLS` / `IMPORTS` /
+        `IN_MODULE` / `DEPENDS_ON`.
         """
         return retriever.get_neighbors(node_id, rel_types)
+
+    @server.tool()
+    def get_beans_for(qualified_name: str) -> BeanDetail | None:
+        """The Spring bean for a `CodeEntity.qualified_name` (or a `Bean.id`):
+        its stereotype / scope / type, what it `INJECTS` and what injects it,
+        what `PRODUCES` it (an `@Bean` method's `@Configuration`), and the
+        `ConfigProperty` keys it `BINDS` (`@Value` / `@ConfigurationProperties`
+        / XML `${…}`). Annotation- and XML-wired beans are both covered.
+        `None` if the name is not a bean.
+        """
+        return retriever.get_beans_for(qualified_name)
+
+    @server.tool()
+    def get_endpoints(
+        path_glob: str | None = None,
+        http_method: str | None = None,
+        module: str | None = None,
+    ) -> list[EndpointResult]:
+        """Spring MVC / JAX-RS HTTP routes (`HttpEndpoint` nodes) with their
+        handler method and module. Optional filters: `path_glob` (`*` / `?`
+        wildcards; matches a substring of the path unless pinned with `^` / `$`),
+        `http_method` (`GET` / `POST` / … / `EXCEPTION`), `module` (owning
+        `Module` artifact id or path suffix).
+        """
+        return retriever.get_endpoints(path_glob, http_method, module)
 
     @server.tool()
     def get_central_code_entities(top_k: int = 10) -> list[CodeCentralityResult]:
