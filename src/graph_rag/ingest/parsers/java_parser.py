@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..models import Annotation, CamelRoute, CodeEntity, ParsedDocument, Source
 from .aop_extractor import AopExtractor
+from .camel_annotation_extractor import CamelAnnotationExtractor
 from .http_endpoint_extractor import HttpEndpointExtractor
 from .lombok_synthesizer import LombokSynthesizer
 from .message_flow_extractor import MessageFlowExtractor
@@ -160,6 +161,9 @@ class JavaParser:
         camel_routes = self._collect_camel_routes(
             type_nodes, content, imported_types, same_file_types, package, str(path)
         )
+        consume_routes, camel_produce_endpoints = CamelAnnotationExtractor.extract(
+            entities, annotations, len(camel_routes), str(path)
+        )
 
         return ParsedDocument(
             source=source,
@@ -169,7 +173,8 @@ class JavaParser:
             aop_advice=aop_advice,
             event_types=event_types,
             destinations=destinations,
-            camel_routes=camel_routes,
+            camel_routes=camel_routes + consume_routes,
+            camel_produce_endpoints=camel_produce_endpoints,
             http_endpoints=HttpEndpointExtractor.extract(entities, annotations),
             sql_statements=MyBatisExtractor.extract(entities, annotations),
             jpa_entities=jpa_entities,

@@ -1,4 +1,9 @@
 from .aop_extractor import AopExtractor
+from .camel_annotation_extractor import CamelAnnotationExtractor
+from .camel_xml_parser import CamelXmlParser
+from .camel_xml_route_extractor import CamelXmlRouteExtractor
+from .camel_yaml_parser import CamelYamlParser
+from .camel_yaml_route_extractor import CamelYamlRouteExtractor
 from .config_file_parser import ConfigFileParser
 from .gradle_parser import GradleParser
 from .http_endpoint_extractor import HttpEndpointExtractor
@@ -23,6 +28,11 @@ from .yaml_parser import YamlParser
 
 __all__ = [
     "AopExtractor",
+    "CamelAnnotationExtractor",
+    "CamelXmlParser",
+    "CamelXmlRouteExtractor",
+    "CamelYamlParser",
+    "CamelYamlRouteExtractor",
     "ConfigFileParser",
     "GradleParser",
     "HttpEndpointExtractor",

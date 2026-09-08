@@ -60,6 +60,9 @@ class ParsedDocument(BaseModel):
     # feed `(:Route)-[:FROM|TO]->(:CamelEndpoint)` and
     # `(:Route)-[:STEP]->(:CamelStep)-[:INVOKES]->(:CodeEntity)`.
     camel_routes: list[CamelRoute] = Field(default_factory=list)
+    # `@Produce` / `@EndpointInject` producer endpoints: `[{uri, producer_qn}]`;
+    # feed `(:CodeEntity)-[:PRODUCES_TO]->(:CamelEndpoint)`.
+    camel_produce_endpoints: list[dict[str, str]] = Field(default_factory=list)
     policy_rules: list[PolicyRule] = Field(default_factory=list)
     # Spring / Java application config: one `ConfigFile` per parsed file plus its
     # flattened `ConfigProperty` list; feeds
