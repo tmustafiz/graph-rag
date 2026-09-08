@@ -108,6 +108,46 @@ WITH e, collect(DISTINCT bm.marker) AS markers
 SET e.behaviors = markers
 """
 
+_MERGE_EVENT_TYPES = """
+UNWIND $rows AS row
+MERGE (et:EventType {fqn: row.fqn})
+SET et.simple_name = row.simple_name
+"""
+
+_MERGE_DESTINATIONS = """
+UNWIND $rows AS row
+MERGE (d:Destination {id: row.id})
+SET d.name = row.name, d.broker = row.broker
+"""
+
+_MERGE_PUBLISHES = """
+UNWIND $pairs AS pair
+MATCH (m:CodeEntity {qualified_name: pair.method})
+MATCH (et:EventType {fqn: pair.event})
+MERGE (m)-[:PUBLISHES]->(et)
+"""
+
+_MERGE_EVENT_CONSUMED_BY = """
+UNWIND $pairs AS pair
+MATCH (et:EventType {fqn: pair.event})
+MATCH (m:CodeEntity {qualified_name: pair.method})
+MERGE (et)-[:CONSUMED_BY]->(m)
+"""
+
+_MERGE_PRODUCES_TO = """
+UNWIND $pairs AS pair
+MATCH (m:CodeEntity {qualified_name: pair.method})
+MATCH (d:Destination {id: pair.dest})
+MERGE (m)-[:PRODUCES_TO]->(d)
+"""
+
+_MERGE_DEST_CONSUMED_BY = """
+UNWIND $pairs AS pair
+MATCH (d:Destination {id: pair.dest})
+MATCH (m:CodeEntity {qualified_name: pair.method})
+MERGE (d)-[:CONSUMED_BY]->(m)
+"""
+
 _MERGE_HTTP_ENDPOINTS = """
 UNWIND $rows AS row
 MERGE (h:HttpEndpoint {id: row.id})
@@ -447,6 +487,41 @@ WHERE NOT ad.id IN $keep_ids
 DETACH DELETE ad
 """
 
+# `EventType` / `Destination` nodes are MERGE-shared across files, so a re-parse
+# only removes the publish / consume edges *this* Source's methods no longer
+# emit (keyed `method|target`), then sweeps any node left with no edges.
+_RECONCILE_PUBLISHES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)-[r:PUBLISHES]->(et:EventType)
+WHERE NOT (m.qualified_name + '|' + et.fqn) IN $keep
+DELETE r
+"""
+
+_RECONCILE_EVENT_CONSUMED_BY = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)
+MATCH (et:EventType)-[r:CONSUMED_BY]->(m)
+WHERE NOT (et.fqn + '|' + m.qualified_name) IN $keep
+DELETE r
+"""
+
+_RECONCILE_PRODUCES_TO = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)-[r:PRODUCES_TO]->(d:Destination)
+WHERE NOT (m.qualified_name + '|' + d.id) IN $keep
+DELETE r
+"""
+
+_RECONCILE_DEST_CONSUMED_BY = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)
+MATCH (d:Destination)-[r:CONSUMED_BY]->(m)
+WHERE NOT (d.id + '|' + m.qualified_name) IN $keep
+DELETE r
+"""
+
+_SWEEP_ORPHAN_MESSAGE_NODES = """
+MATCH (n)
+WHERE (n:EventType OR n:Destination) AND NOT (n)--()
+DELETE n
+"""
+
 _RECONCILE_HTTP_ENDPOINTS = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(h:HttpEndpoint)
 WHERE NOT h.id IN $keep_ids
@@ -557,6 +632,18 @@ class GraphWriter:
                 session.execute_write(self._write_behavior_markers, batch)
             for batch in self._batched([a.model_dump(mode="json") for a in document.aop_advice]):
                 session.execute_write(self._write_aop_advice, batch)
+            for batch in self._batched([e.model_dump(mode="json") for e in document.event_types]):
+                session.execute_write(self._write_event_types, batch)
+            for batch in self._batched([d.model_dump(mode="json") for d in document.destinations]):
+                session.execute_write(self._write_destinations, batch)
+            for batch in self._batched(self._publish_pairs(document)):
+                session.execute_write(self._write_publishes, batch)
+            for batch in self._batched(self._event_consume_pairs(document)):
+                session.execute_write(self._write_event_consumed_by, batch)
+            for batch in self._batched(self._produce_pairs(document)):
+                session.execute_write(self._write_produces_to, batch)
+            for batch in self._batched(self._dest_consume_pairs(document)):
+                session.execute_write(self._write_dest_consumed_by, batch)
             for batch in self._batched(
                 [e.model_dump(mode="json") for e in document.http_endpoints]
             ):
@@ -654,6 +741,14 @@ class GraphWriter:
                 [a.id for a in document.aop_advice],
             )
             session.execute_write(self._refresh_entity_behaviors, document.source.path)
+            session.execute_write(
+                self._reconcile_message_flow,
+                document.source.path,
+                self._publish_pairs(document),
+                self._event_consume_pairs(document),
+                self._produce_pairs(document),
+                self._dest_consume_pairs(document),
+            )
             session.execute_write(
                 self._reconcile_http_endpoints,
                 document.source.path,
@@ -767,6 +862,30 @@ class GraphWriter:
     @staticmethod
     def _write_aop_advice(tx: ManagedTransaction, rows: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_AOP_ADVICE), rows=rows)
+
+    @staticmethod
+    def _write_event_types(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_EVENT_TYPES), rows=rows)
+
+    @staticmethod
+    def _write_destinations(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_DESTINATIONS), rows=rows)
+
+    @staticmethod
+    def _write_publishes(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_PUBLISHES), pairs=pairs)
+
+    @staticmethod
+    def _write_event_consumed_by(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_EVENT_CONSUMED_BY), pairs=pairs)
+
+    @staticmethod
+    def _write_produces_to(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_PRODUCES_TO), pairs=pairs)
+
+    @staticmethod
+    def _write_dest_consumed_by(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_DEST_CONSUMED_BY), pairs=pairs)
 
     @staticmethod
     def _write_http_endpoints(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
@@ -938,6 +1057,37 @@ class GraphWriter:
         tx.run(cast(LiteralString, _REFRESH_ENTITY_BEHAVIORS), source_path=source_path)
 
     @staticmethod
+    def _reconcile_message_flow(
+        tx: ManagedTransaction,
+        source_path: str,
+        publish_pairs: list[dict],
+        event_consume_pairs: list[dict],
+        produce_pairs: list[dict],
+        dest_consume_pairs: list[dict],
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_PUBLISHES),
+            source_path=source_path,
+            keep=[f"{pair['method']}|{pair['event']}" for pair in publish_pairs],
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_EVENT_CONSUMED_BY),
+            source_path=source_path,
+            keep=[f"{pair['event']}|{pair['method']}" for pair in event_consume_pairs],
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_PRODUCES_TO),
+            source_path=source_path,
+            keep=[f"{pair['method']}|{pair['dest']}" for pair in produce_pairs],
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_DEST_CONSUMED_BY),
+            source_path=source_path,
+            keep=[f"{pair['dest']}|{pair['method']}" for pair in dest_consume_pairs],
+        )
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_MESSAGE_NODES))
+
+    @staticmethod
     def _reconcile_http_endpoints(
         tx: ManagedTransaction, source_path: str, keep_ids: list[str]
     ) -> None:
@@ -1080,6 +1230,38 @@ class GraphWriter:
                 "line": marker.line,
             }
             for marker in document.behavior_markers
+        ]
+
+    @staticmethod
+    def _publish_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"method": method, "event": event.fqn}
+            for event in document.event_types
+            for method in event.published_by
+        ]
+
+    @staticmethod
+    def _event_consume_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"event": event.fqn, "method": method}
+            for event in document.event_types
+            for method in event.consumed_by
+        ]
+
+    @staticmethod
+    def _produce_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"method": method, "dest": destination.id}
+            for destination in document.destinations
+            for method in destination.produced_by
+        ]
+
+    @staticmethod
+    def _dest_consume_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"dest": destination.id, "method": method}
+            for destination in document.destinations
+            for method in destination.consumed_by
         ]
 
     @staticmethod
