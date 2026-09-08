@@ -194,6 +194,55 @@ MERGE (s)-[a:ACCESSES]->(t)
 SET a.mode = pair.mode
 """
 
+# `CamelEndpoint` is MERGE-keyed on `uri`, so a `.to("direct:x")` producer and a
+# `from("direct:x")` consumer route land on one node — that pairs internal routes.
+_MERGE_CAMEL_ROUTES = """
+UNWIND $rows AS row
+MERGE (r:Route {id: row.id})
+SET r.route_id = row.route_id, r.from_uri = row.from_uri,
+    r.embed_text = row.embed_text, r.on_exception = row.on_exception
+WITH r, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(r)
+MERGE (fep:CamelEndpoint {uri: row.from_uri})
+SET fep.scheme = row.from_scheme
+MERGE (r)-[:FROM]->(fep)
+MERGE (fep)-[:CONSUMED_BY]->(r)
+"""
+
+_MERGE_CAMEL_TO = """
+UNWIND $pairs AS pair
+MATCH (r:Route {id: pair.route})
+MERGE (ep:CamelEndpoint {uri: pair.uri})
+SET ep.scheme = pair.scheme
+MERGE (r)-[:TO]->(ep)
+"""
+
+_MERGE_CAMEL_STEPS = """
+UNWIND $rows AS row
+MATCH (r:Route {id: row.route})
+MERGE (st:CamelStep {id: row.id})
+SET st.index = row.index, st.kind = row.kind, st.uri = row.uri,
+    st.ref = row.ref, st.predicate = row.predicate
+MERGE (r)-[s:STEP {index: row.index}]->(st)
+SET s.kind = row.kind, s.predicate = row.predicate
+"""
+
+# `@Produce` / `@EndpointInject` producer field → the endpoint it writes to.
+_MERGE_CAMEL_PRODUCE = """
+UNWIND $pairs AS pair
+MATCH (m:CodeEntity {qualified_name: pair.producer})
+MERGE (ep:CamelEndpoint {uri: pair.uri})
+SET ep.scheme = pair.scheme
+MERGE (m)-[:PRODUCES_TO]->(ep)
+"""
+
+_RECONCILE_CAMEL_PRODUCE = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)-[r:PRODUCES_TO]->(ep:CamelEndpoint)
+WHERE NOT (m.qualified_name + '|' + ep.uri) IN $keep
+DELETE r
+"""
+
 _MERGE_CALLS = """
 UNWIND $pairs AS pair
 MATCH (caller:CodeEntity {qualified_name: pair.from})
@@ -570,6 +619,26 @@ WHERE NOT (t)<-[:ACCESSES]-()
 DETACH DELETE t
 """
 
+# A re-parsed `RouteBuilder` that drops a route / step leaves no orphan
+# `Route` / `CamelStep` behind; then any `CamelEndpoint` with no edge is swept.
+_RECONCILE_CAMEL_ROUTES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(r:Route)
+WHERE NOT r.id IN $keep_ids
+DETACH DELETE r
+"""
+
+_RECONCILE_CAMEL_STEPS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(:Route)-[:STEP]->(st:CamelStep)
+WHERE NOT st.id IN $keep_ids
+DETACH DELETE st
+"""
+
+_SWEEP_ORPHAN_CAMEL_ENDPOINTS = """
+MATCH (e:CamelEndpoint)
+WHERE NOT (e)--()
+DELETE e
+"""
+
 _RECONCILE_POLICY_RULES = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(p:PolicyRule)
 WHERE NOT p.id IN $keep_ids
@@ -696,6 +765,14 @@ class GraphWriter:
                 session.execute_write(self._write_sql_statements, document.source.path, batch)
             for batch in self._batched(self._sql_access_pairs(document)):
                 session.execute_write(self._write_sql_accesses, batch)
+            for batch in self._batched(self._camel_route_rows(document)):
+                session.execute_write(self._write_camel_routes, document.source.path, batch)
+            for batch in self._batched(self._camel_to_pairs(document)):
+                session.execute_write(self._write_camel_to, batch)
+            for batch in self._batched(self._camel_step_rows(document)):
+                session.execute_write(self._write_camel_steps, batch)
+            for batch in self._batched(self._camel_produce_pairs(document)):
+                session.execute_write(self._write_camel_produce, batch)
             for batch in self._batched(self._call_pairs(document)):
                 session.execute_write(self._write_calls, batch)
             for batch in self._batched(self._import_pairs(document)):
@@ -806,6 +883,16 @@ class GraphWriter:
                 self._reconcile_sql_statements,
                 document.source.path,
                 [s.id for s in document.sql_statements],
+            )
+            session.execute_write(
+                self._reconcile_camel_routes,
+                document.source.path,
+                [r.id for r in document.camel_routes],
+                [row["id"] for row in self._camel_step_rows(document)],
+                [
+                    f"{pair['producer']}|{pair['uri']}"
+                    for pair in self._camel_produce_pairs(document)
+                ],
             )
             session.execute_write(
                 self._reconcile_policy_rules,
@@ -951,6 +1038,22 @@ class GraphWriter:
     @staticmethod
     def _write_sql_accesses(tx: ManagedTransaction, pairs: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_SQL_ACCESSES), pairs=pairs)
+
+    @staticmethod
+    def _write_camel_routes(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CAMEL_ROUTES), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_camel_to(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CAMEL_TO), pairs=pairs)
+
+    @staticmethod
+    def _write_camel_steps(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CAMEL_STEPS), rows=rows)
+
+    @staticmethod
+    def _write_camel_produce(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CAMEL_PRODUCE), pairs=pairs)
 
     @staticmethod
     def _write_calls(tx: ManagedTransaction, pairs: list[dict]) -> None:
@@ -1170,6 +1273,31 @@ class GraphWriter:
         tx.run(cast(LiteralString, _SWEEP_ORPHAN_STUB_TABLES))
 
     @staticmethod
+    def _reconcile_camel_routes(
+        tx: ManagedTransaction,
+        source_path: str,
+        route_ids: list[str],
+        step_ids: list[str],
+        produce_keep: list[str],
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_CAMEL_STEPS),
+            source_path=source_path,
+            keep_ids=step_ids,
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_CAMEL_ROUTES),
+            source_path=source_path,
+            keep_ids=route_ids,
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_CAMEL_PRODUCE),
+            source_path=source_path,
+            keep=produce_keep,
+        )
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_CAMEL_ENDPOINTS))
+
+    @staticmethod
     def _reconcile_policy_rules(
         tx: ManagedTransaction, source_path: str, keep_ids: list[str]
     ) -> None:
@@ -1342,6 +1470,59 @@ class GraphWriter:
             {"stmt": statement.id, "table": table["name"], "mode": table["mode"]}
             for statement in document.sql_statements
             for table in statement.tables
+        ]
+
+    @staticmethod
+    def _scheme_of(uri: str) -> str:
+        return uri.split(":", 1)[0] if ":" in uri else uri
+
+    @classmethod
+    def _camel_route_rows(cls, document: ParsedDocument) -> list[dict]:
+        return [
+            {
+                "id": route.id,
+                "route_id": route.route_id,
+                "from_uri": route.from_uri,
+                "from_scheme": cls._scheme_of(route.from_uri),
+                "embed_text": route.embed_text,
+                "on_exception": route.on_exception,
+            }
+            for route in document.camel_routes
+        ]
+
+    @classmethod
+    def _camel_to_pairs(cls, document: ParsedDocument) -> list[dict]:
+        return [
+            {"route": route.id, "uri": uri, "scheme": cls._scheme_of(uri)}
+            for route in document.camel_routes
+            for uri in route.to_uris
+        ]
+
+    @staticmethod
+    def _camel_step_rows(document: ParsedDocument) -> list[dict]:
+        return [
+            {
+                "route": route.id,
+                "id": f"{route.id}#{step['index']}",
+                "index": step["index"],
+                "kind": step["kind"],
+                "uri": step.get("uri"),
+                "ref": step.get("ref"),
+                "predicate": step.get("predicate"),
+            }
+            for route in document.camel_routes
+            for step in route.steps
+        ]
+
+    @classmethod
+    def _camel_produce_pairs(cls, document: ParsedDocument) -> list[dict]:
+        return [
+            {
+                "producer": endpoint["producer_qn"],
+                "uri": endpoint["uri"],
+                "scheme": cls._scheme_of(endpoint["uri"]),
+            }
+            for endpoint in document.camel_produce_endpoints
         ]
 
     @staticmethod
