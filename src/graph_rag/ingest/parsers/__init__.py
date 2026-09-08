@@ -7,6 +7,7 @@ from .javascript_parser import JavaScriptParser
 from .lombok_synthesizer import LombokSynthesizer
 from .markdown_parser import MarkdownParser
 from .maven_parser import MavenParser
+from .message_flow_extractor import MessageFlowExtractor
 from .mybatis_extractor import MyBatisExtractor
 from .mybatis_mapper_parser import MyBatisMapperParser
 from .pdf_parser import PdfParser
@@ -29,6 +30,7 @@ __all__ = [
     "JavaScriptParser",
     "LombokSynthesizer",
     "MarkdownParser",
+    "MessageFlowExtractor",
     "MavenParser",
     "MyBatisExtractor",
     "MyBatisMapperParser",

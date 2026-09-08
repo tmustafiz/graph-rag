@@ -27,6 +27,8 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT behavior_marker_id IF NOT EXISTS "
     "FOR (n:BehaviorMarker) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT advice_id IF NOT EXISTS FOR (n:Advice) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT event_type_fqn IF NOT EXISTS FOR (n:EventType) REQUIRE n.fqn IS UNIQUE",
+    "CREATE CONSTRAINT destination_id IF NOT EXISTS FOR (n:Destination) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT sql_statement_id IF NOT EXISTS FOR (n:SqlStatement) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT config_file_path IF NOT EXISTS FOR (n:ConfigFile) REQUIRE n.path IS UNIQUE",
     "CREATE CONSTRAINT config_property_id IF NOT EXISTS "

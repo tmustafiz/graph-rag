@@ -10,6 +10,8 @@ from .db_index import DbIndex
 from .db_reference import DbReference
 from .db_table import DbTable
 from .db_view import DbView
+from .destination import Destination
+from .event_type import EventType
 from .external_artifact import ExternalArtifact
 from .http_endpoint import HttpEndpoint
 from .jpa_entity import JpaEntity
@@ -36,6 +38,8 @@ __all__ = [
     "DbReference",
     "DbTable",
     "DbView",
+    "Destination",
+    "EventType",
     "ExternalArtifact",
     "HttpEndpoint",
     "JpaEntity",
