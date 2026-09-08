@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from .annotation import Annotation
 from .aop_advice import AopAdvice
 from .behavior_marker import BehaviorMarker
+from .camel_route import CamelRoute
 from .chunk import Chunk
 from .code_entity import CodeEntity
 from .config_file import ConfigFile
@@ -55,6 +56,10 @@ class ParsedDocument(BaseModel):
     # `(CodeEntity)-[:PRODUCES_TO]->(:Destination)-[:CONSUMED_BY]->(CodeEntity)`.
     event_types: list[EventType] = Field(default_factory=list)
     destinations: list[Destination] = Field(default_factory=list)
+    # Apache Camel routes from a `RouteBuilder.configure()` Java DSL chain;
+    # feed `(:Route)-[:FROM|TO]->(:CamelEndpoint)` and
+    # `(:Route)-[:STEP]->(:CamelStep)-[:INVOKES]->(:CodeEntity)`.
+    camel_routes: list[CamelRoute] = Field(default_factory=list)
     policy_rules: list[PolicyRule] = Field(default_factory=list)
     # Spring / Java application config: one `ConfigFile` per parsed file plus its
     # flattened `ConfigProperty` list; feeds
