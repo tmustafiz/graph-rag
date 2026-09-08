@@ -175,6 +175,7 @@ class JavaParser:
             destinations=destinations,
             camel_routes=camel_routes + consume_routes,
             camel_produce_endpoints=camel_produce_endpoints,
+            camel_routes=camel_routes,
             http_endpoints=HttpEndpointExtractor.extract(entities, annotations),
             sql_statements=MyBatisExtractor.extract(entities, annotations),
             jpa_entities=jpa_entities,
