@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field
 
 from .annotation import Annotation
+from .aop_advice import AopAdvice
+from .behavior_marker import BehaviorMarker
 from .chunk import Chunk
 from .code_entity import CodeEntity
 from .config_file import ConfigFile
@@ -36,6 +38,14 @@ class ParsedDocument(BaseModel):
     # Structured annotations on the code entities above, each carrying its
     # `owner_qualified_name`; feeds `(CodeEntity)-[:ANNOTATED_WITH]->(:Annotation)`.
     annotations: list[Annotation] = Field(default_factory=list)
+    # Cross-cutting behavior declared by annotation (`@Transactional`,
+    # `@Scheduled`, `@Async`, `@Cacheable`, `@PreAuthorize`, …); feeds
+    # `(CodeEntity)-[:HAS_BEHAVIOR {marker}]->(:BehaviorMarker)`.
+    behavior_markers: list[BehaviorMarker] = Field(default_factory=list)
+    # `@Aspect` advice / `@Pointcut` methods; feeds
+    # `(CodeEntity)-[:ADVICE_OF]->(:Advice)` and, after the `AopResolver` pass,
+    # `(:Advice)-[:ADVISES]->(:CodeEntity)`.
+    aop_advice: list[AopAdvice] = Field(default_factory=list)
     policy_rules: list[PolicyRule] = Field(default_factory=list)
     # Spring / Java application config: one `ConfigFile` per parsed file plus its
     # flattened `ConfigProperty` list; feeds

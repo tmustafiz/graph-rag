@@ -1,3 +1,4 @@
+from .aop_extractor import AopExtractor
 from .config_file_parser import ConfigFileParser
 from .gradle_parser import GradleParser
 from .http_endpoint_extractor import HttpEndpointExtractor
@@ -17,6 +18,7 @@ from .stylesheet_parser import StylesheetParser
 from .yaml_parser import YamlParser
 
 __all__ = [
+    "AopExtractor",
     "ConfigFileParser",
     "GradleParser",
     "HttpEndpointExtractor",

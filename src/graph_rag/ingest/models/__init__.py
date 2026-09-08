@@ -1,4 +1,6 @@
 from .annotation import Annotation
+from .aop_advice import AopAdvice
+from .behavior_marker import BehaviorMarker
 from .chunk import Chunk
 from .code_entity import CodeEntity
 from .config_file import ConfigFile
@@ -22,6 +24,8 @@ from .spring_xml_bean import SpringXmlBean
 
 __all__ = [
     "Annotation",
+    "AopAdvice",
+    "BehaviorMarker",
     "Chunk",
     "CodeEntity",
     "ConfigFile",
