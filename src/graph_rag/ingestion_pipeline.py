@@ -73,10 +73,6 @@ class IngestionPipeline:
         self._resolvers = resolvers or []
 
     def run(self, path: Path, dry_run: bool = False) -> list[IngestionResult]:
-        # Resolve up front so `Source.path` is always absolute and matches the
-        # `.resolve()`d `Module.path` the build-file parsers store — otherwise a
-        # relative-path ingest wires zero `IN_MODULE` edges (#116).
-        path = path.resolve()
         logger.info("ingestion run starting: path=%s dry_run=%s", path, dry_run)
         skip_generated = not settings.ingest_generated_sources
 

@@ -212,9 +212,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     with `^` / `$` — a bare fragment (`"orders"`) no longer silently returns
     `[]`. ([#118](https://github.com/tmustafiz/graph-rag/issues/118))
   - A relative-path directory ingest (`grag ingest examples/spring-boot`) now
-    wires `IN_MODULE` / endpoint-module edges (paths are resolved up front), and
-    a single-file ingest / `ingest_path` / `--watch` runs the post-ingest
-    resolvers and the generated-source skip, not just directory ingest.
+    wires `IN_MODULE` / endpoint-module edges — `ProjectModelResolver` compares
+    `os.path.abspath` of `Source.path` and `Module.path` instead of a raw string
+    prefix (`Source.path` stays stored as ingested). A single-file ingest /
+    `ingest_path` / `--watch` now also runs the post-ingest resolvers and the
+    generated-source skip, not just directory ingest.
     ([#116](https://github.com/tmustafiz/graph-rag/issues/116),
     [#120](https://github.com/tmustafiz/graph-rag/issues/120))
   - A Gradle root dir's `settings.gradle` no longer nulls the `group` /
