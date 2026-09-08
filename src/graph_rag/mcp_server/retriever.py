@@ -139,8 +139,9 @@ ORDER BY e.pagerank DESC
 LIMIT $top_k
 """
 
-# Optional graph filters for `search_code`, kept in the base query behind
-# `$x IS NULL OR …` guards so an unfiltered call pays only a null check.
+# Optional graph filters for `search_code`, behind `$x IS NULL OR …` guards so
+# an unset filter pays only a null check. Used by `_FILTERED_CODE_KEYS` to
+# resolve the matching `qualified_name` set before the hybrid search runs.
 # `stereotype` matches a Spring `Bean.stereotype` (via `IS_BEAN`) or a bare
 # type-level `@Annotation` name; `annotation` matches an `Annotation` simple
 # name or FQN anywhere on the entity; `module` matches the owning
@@ -164,19 +165,29 @@ WHERE ($stereotype IS NULL
        })
 """
 
-_VECTOR_SEARCH_CODE = f"""
+# `search_code`'s graph filters resolve an allow-set of `qualified_name`s up
+# front (see `_FILTERED_CODE_KEYS`); the ANN / full-text passes below stay
+# unfiltered and are intersected with that set in Python. Filtering inside the
+# index call would only see the `$k` embedding-nearest rows, so a filter that
+# excludes all of them would silently return nothing even when matches exist
+# (#117).
+_FILTERED_CODE_KEYS = f"""
+MATCH (e:CodeEntity)
+{_CODE_FILTERS}
+RETURN e.qualified_name AS qualified_name
+"""
+
+_VECTOR_SEARCH_CODE = """
 CALL db.index.vector.queryNodes('code_entity_embedding', $k, $vector)
 YIELD node AS e, score
-{_CODE_FILTERS}
 RETURN e.qualified_name AS qualified_name, e.name AS name, e.kind AS kind,
        e.language AS language,
        e.docstring AS docstring, e.signature AS signature, e.file_path AS file_path,
        e.start_line AS start_line, e.end_line AS end_line, score
 """
 
-_FULLTEXT_SEARCH_CODE = f"""
+_FULLTEXT_SEARCH_CODE = """
 CALL db.index.fulltext.queryNodes('code_entity_text_fulltext', $query) YIELD node AS e, score
-{_CODE_FILTERS}
 RETURN e.qualified_name AS qualified_name, score
 ORDER BY score DESC
 LIMIT $k
@@ -236,6 +247,10 @@ LIMIT $k
 VECTOR_WEIGHT = 0.7
 FULLTEXT_WEIGHT = 0.3
 CANDIDATE_MULTIPLIER = 4
+# Upper bound on how far `search_code` over-fetches from the vector / full-text
+# indexes when a graph filter is set, so a large filtered set still gets a
+# representative slice ranked (#117) without an unbounded scan.
+MAX_CODE_CANDIDATE_K = 1000
 
 
 class Retriever:
@@ -536,9 +551,9 @@ class Retriever:
         limit: int = 100,
     ) -> list[EndpointResult]:
         """Spring MVC / JAX-RS `HttpEndpoint`s, optionally filtered by a
-        `path_glob` (`*` / `?` wildcards, whole-path match), an exact
-        `http_method` (`GET` / `POST` / … / `EXCEPTION`), and/or the owning
-        `Module.artifact`. Ordered by path then method.
+        `path_glob` (`*` / `?` wildcards; substring match unless pinned with
+        `^` / `$`), an exact `http_method` (`GET` / `POST` / … / `EXCEPTION`),
+        and/or the owning `Module.artifact`. Ordered by path then method.
         """
         params = {
             "path_regex": _glob_to_regex(path_glob) if path_glob else None,
@@ -563,9 +578,16 @@ class Retriever:
             ]
 
     def _code_candidates(
-        self, session: Any, query: str, candidate_k: int, filters: dict[str, str | None]
+        self,
+        session: Any,
+        query: str,
+        candidate_k: int,
+        allowed: set[str] | None,
     ) -> tuple[dict[str, dict[str, Any]], dict[str, float]]:
-        """One hybrid-search pass for `search_code`: `({qualified_name: row}, {qn: score})`."""
+        """One hybrid-search pass for `search_code`: `({qualified_name: row}, {qn: score})`.
+        When `allowed` is set, both halves are intersected with it *after* the
+        index call so the graph filter can't be starved by the `$k` truncation.
+        """
         vector = self._embedder.embed([query])[0]
         vector_rows = [
             dict(row)
@@ -573,18 +595,38 @@ class Retriever:
                 cast(LiteralString, _VECTOR_SEARCH_CODE),
                 k=candidate_k,
                 vector=vector,
-                **filters,
             )
         ]
         fulltext_scores = self._fulltext_scores(
             session,
             cast(LiteralString, _FULLTEXT_SEARCH_CODE),
-            {"query": _escape_lucene(query), "k": candidate_k, **filters},
+            {"query": _escape_lucene(query), "k": candidate_k},
             "qualified_name",
         )
+        if allowed is not None:
+            vector_rows = [row for row in vector_rows if row["qualified_name"] in allowed]
+            fulltext_scores = {qn: score for qn, score in fulltext_scores.items() if qn in allowed}
         by_id = {row["qualified_name"]: row for row in vector_rows}
         combined = combine_scores({qn: row["score"] for qn, row in by_id.items()}, fulltext_scores)
         return by_id, combined
+
+    def _filtered_code_keys(
+        self, stereotype: str | None, annotation: str | None, module: str | None
+    ) -> set[str]:
+        """The `qualified_name`s matching the `search_code` graph filters,
+        resolved on the graph alone (no embedding) so the ANN pass can be
+        intersected against the full matching set rather than pre-truncated.
+        """
+        with self._driver.session() as session:
+            return {
+                row["qualified_name"]
+                for row in session.run(
+                    cast(LiteralString, _FILTERED_CODE_KEYS),
+                    stereotype=stereotype,
+                    annotation=annotation,
+                    module=module,
+                )
+            }
 
     def search_code(
         self,
@@ -600,16 +642,20 @@ class Retriever:
         Spring / Java-framework graph.
         """
         candidate_k = top_k * CANDIDATE_MULTIPLIER
-        filters: dict[str, str | None] = {
-            "stereotype": stereotype,
-            "annotation": annotation,
-            "module": module,
-        }
+        allowed: set[str] | None = None
+        if stereotype is not None or annotation is not None or module is not None:
+            allowed = self._filtered_code_keys(stereotype, annotation, module)
+            if not allowed:
+                return []
+            # over-fetch so the index truncation still reaches enough of the
+            # (usually small) filtered set to rank it properly (#117)
+            candidate_k = min(len(allowed) + candidate_k, MAX_CODE_CANDIDATE_K)
+
         by_id: dict[str, dict[str, Any]] = {}
         combined_scores: dict[str, float] = {}
         with self._driver.session() as session:
             for variant in self._search_queries(query):
-                rows, scores = self._code_candidates(session, variant, candidate_k, filters)
+                rows, scores = self._code_candidates(session, variant, candidate_k, allowed)
                 by_id.update(rows)
                 _merge_keeping_max(combined_scores, scores)
 
@@ -762,18 +808,21 @@ def _bean_edges(rows: list[dict[str, Any]] | None) -> list[BeanEdge]:
 
 def _glob_to_regex(glob: str) -> str:
     """A shell-style `path_glob` (`*` = any run, `?` = one char) as a Neo4j
-    `=~` regex — every other metacharacter is escaped, and the match is
-    whole-string (Neo4j anchors `=~`).
+    `=~` regex. Neo4j anchors `=~` whole-string, so each end that the caller
+    hasn't pinned with `^` / `$` is padded with `.*` — a bare fragment like
+    `orders` then matches any path that contains it. Every other metacharacter
+    is escaped.
     """
-    out: list[str] = []
-    for char in glob:
-        if char == "*":
-            out.append(".*")
-        elif char == "?":
-            out.append(".")
-        else:
-            out.append(re.escape(char))
-    return "".join(out)
+    anchored_start = glob.startswith("^")
+    anchored_end = glob.endswith("$")
+    core = glob[1:] if anchored_start else glob
+    core = core[:-1] if anchored_end else core
+    body = "".join(
+        ".*" if char == "*" else "." if char == "?" else re.escape(char) for char in core
+    )
+    prefix = "" if anchored_start or body.startswith(".*") else ".*"
+    suffix = "" if anchored_end or body.endswith(".*") else ".*"
+    return prefix + body + suffix
 
 
 def _neighbor_results(rows: Any, direction: str) -> list[NeighborResult]:

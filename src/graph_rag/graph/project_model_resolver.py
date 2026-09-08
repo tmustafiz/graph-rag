@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import LiteralString, cast
 
 from neo4j import Driver, ManagedTransaction
@@ -6,17 +7,22 @@ from neo4j import Driver, ManagedTransaction
 logger = logging.getLogger(__name__)
 
 # Every Source file sits under exactly one module: the deepest `Module.path`
-# that is a prefix of it. Rebuilt from scratch each run so a moved/removed
-# file never keeps a stale edge.
+# that contains it. Rebuilt from scratch each run so a moved/removed file
+# never keeps a stale edge.
 _CLEAR_IN_MODULE = "MATCH ()-[r:IN_MODULE]->() DELETE r"
 
-_LINK_IN_MODULE = """
-MATCH (s:Source), (m:Module)
-WHERE s.path STARTS WITH m.path + '/'
-WITH s, m ORDER BY size(m.path) DESC
-WITH s, head(collect(m)) AS nearest
-MERGE (s)-[:IN_MODULE]->(nearest)
-RETURN count(*) AS linked
+_ALL_SOURCE_PATHS = "MATCH (s:Source) RETURN s.path AS path"
+_ALL_MODULE_PATHS = "MATCH (m:Module) RETURN m.path AS path"
+
+# `Module.path` is stored `.resolve()`d by the build-file parsers while
+# `Source.path` is stored as ingested (which the retrieval eval and citations
+# depend on), so the containment test is done in Python over `os.path.abspath`
+# of both — same result whether the ingest arg was absolute or relative (#116).
+_MERGE_IN_MODULE = """
+UNWIND $pairs AS pair
+MATCH (s:Source {path: pair.source})
+MATCH (m:Module {path: pair.module})
+MERGE (s)-[:IN_MODULE]->(m)
 """
 
 # HTTP endpoints inherit their defining Source's module.
@@ -97,12 +103,37 @@ class ProjectModelResolver:
         logger.info("project model resolved: %s", result)
         return result
 
-    @staticmethod
-    def _rewire_in_module(tx: ManagedTransaction) -> int:
+    @classmethod
+    def _rewire_in_module(cls, tx: ManagedTransaction) -> int:
         tx.run(cast(LiteralString, _CLEAR_IN_MODULE))
-        record = tx.run(cast(LiteralString, _LINK_IN_MODULE)).single()
+        source_paths = [row["path"] for row in tx.run(cast(LiteralString, _ALL_SOURCE_PATHS))]
+        module_paths = [row["path"] for row in tx.run(cast(LiteralString, _ALL_MODULE_PATHS))]
+        pairs = cls._nearest_module_pairs(source_paths, module_paths)
+        if pairs:
+            tx.run(cast(LiteralString, _MERGE_IN_MODULE), pairs=pairs)
         tx.run(cast(LiteralString, _LINK_ENDPOINT_MODULE))
-        return record["linked"] if record else 0
+        return len(pairs)
+
+    @staticmethod
+    def _nearest_module_pairs(
+        source_paths: list[str], module_paths: list[str]
+    ) -> list[dict[str, str]]:
+        """`{source, module}` for each Source under a Module — the deepest
+        `Module.path` that contains it, comparing `os.path.abspath` of both so
+        an absolute `Module.path` still matches a relative `Source.path`."""
+        modules = sorted(
+            ((os.path.abspath(path).rstrip(os.sep), path) for path in module_paths),
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )
+        pairs: list[dict[str, str]] = []
+        for source_path in source_paths:
+            absolute = os.path.abspath(source_path)
+            for module_absolute, module_path in modules:
+                if absolute == module_absolute or absolute.startswith(module_absolute + os.sep):
+                    pairs.append({"source": source_path, "module": module_path})
+                    break
+        return pairs
 
     @staticmethod
     def _promote_sibling_dependencies(tx: ManagedTransaction) -> int:

@@ -50,10 +50,11 @@ flowchart TD
 | `graph_rag.ingestion_pipeline` | Orchestrates parse → hash-check → enrich → write. Skips unchanged files; deletes stale children of changed files. |
 | `graph_rag.graph.schema` | Constraint + index DDL (`apply-schema`). Idempotent. |
 | `graph_rag.graph.graph_writer` | Cypher `MERGE` upserts for every node/edge type. |
-| `graph_rag.graph.project_model_resolver` | Post-directory-ingest pass: `(Source)-[:IN_MODULE]->(Module)`, sibling-dependency promotion, and `IMPORTS.external` classification. |
+| `graph_rag.graph.project_model_resolver` | Post-ingest pass: `(Source)-[:IN_MODULE]->(Module)` (nearest containing module, compared over `os.path.abspath` so a relative ingest still links), sibling-dependency promotion, and `IMPORTS.external` classification. |
 | `graph_rag.graph.spring_bean_resolver` | Post-directory-ingest pass: `Bean` nodes + `IS_BEAN` / `INJECTS` / `PRODUCES` / `BINDS` from the annotation + type-hierarchy + config layers. |
 | `graph_rag.graph.spring_xml_resolver` | Post-directory-ingest pass (after `spring_bean_resolver`): projects `SpringXmlBean` defs into the same `Bean` graph (`defined_in:'xml'`), resolves `<ref>` wiring across XML + annotation beans, and `IMPORTS_CONTEXT` for `<import resource>` / `<context:property-placeholder>`. |
-| `graph_rag.graph.spring_data_resolver` | Post-directory-ingest pass (after `spring_xml_resolver`): tags repository / entity `CodeEntity`s `:Repository` / `:JpaEntity`, tags repo methods with `query_kind` / `query_text`, and wires `MANAGES` / `PERSISTS_AS` / `RELATES_TO` from the `SpringDataRepoDef` / `JpaEntityDef` defs. |
+| `graph_rag.graph.spring_data_resolver` | Post-ingest pass (after `spring_xml_resolver`): tags repository / entity `CodeEntity`s `:Repository` / `:JpaEntity`, tags repo methods with `query_kind` / `query_text`, and wires `MANAGES` / `PERSISTS_AS` / `RELATES_TO` from the `SpringDataRepoDef` / `JpaEntityDef` defs. |
+| `graph_rag.graph.spring_injection_resolver` | Final post-ingest pass: MERGEs a `:Bean` + `IS_BEAN` for every Spring Data repository interface (`bean_type` = interface FQN), then re-resolves any bean's `unresolved_injections` against the complete (annotation + XML + repository) bean set, promoting a now-unique match to an `INJECTS` edge. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
@@ -137,14 +138,20 @@ a changed file removes any `Section` / `Chunk` / `CodeEntity` / `PolicyRule` it
 no longer produces. A file that fails to parse/embed/write is recorded and
 skipped without aborting the batch.
 
-On a **directory** ingest, build files (`pom.xml`, `*.gradle*`) parse first so
-the `Module` layer exists before the `.java` files, and once the batch is done
-four graph passes run in order: `ProjectModelResolver` wires `IN_MODULE`,
-promotes sibling dependencies and classifies `IMPORTS.external`;
-`SpringBeanResolver` derives the annotation `Bean` layer; `SpringXmlResolver`
-folds the `SpringXmlBean` defs from any `<beans>` contexts into that same `Bean`
-layer; then `SpringDataResolver` tags the repository / JPA-entity `CodeEntity`s
-and wires `MANAGES` / `PERSISTS_AS` / `RELATES_TO`.
+Build files (`pom.xml`, `*.gradle*`) parse first so the `Module` layer exists
+before the `.java` files, and once the batch is done five graph passes run in
+order: `ProjectModelResolver` wires `IN_MODULE`, promotes sibling dependencies
+and classifies `IMPORTS.external`; `SpringBeanResolver` derives the annotation
+`Bean` layer; `SpringXmlResolver` folds the `SpringXmlBean` defs from any
+`<beans>` contexts into that same `Bean` layer; `SpringDataResolver` tags the
+repository / JPA-entity `CodeEntity`s and wires `MANAGES` / `PERSISTS_AS` /
+`RELATES_TO`; finally `SpringInjectionResolver` makes every Spring Data
+repository interface a `:Bean` and re-runs injection resolution over the now
+complete bean set, so an annotation bean wiring an XML-only bean or a
+repository (unresolvable when the first pass ran) gets its `INJECTS` edge. The
+same passes also run after a **single-file** ingest — each is a full-graph
+rebuild — so `ingest_path` / `grag ingest <file>` / `--watch` keep the
+projections in sync with an edit.
 
 The same operation is reachable three ways: the CLI, the `ingest_path` MCP tool,
 and `POST /ingest` (for CI / pre-commit hooks with no MCP client).
@@ -404,7 +411,7 @@ fields, and `@OneToMany` / `@ManyToOne` / `@ManyToMany` / `@OneToOne`
 (`mappedBy`) associations (target from the field's element type). The raw
 extract lands as `(:Source)-[:DEFINES]->(:SpringDataRepoDef|:JpaEntityDef)`.
 
-`SpringDataResolver` is the fourth post-directory-ingest pass. Rebuilt from
+`SpringDataResolver` is the fourth post-ingest pass. Rebuilt from
 scratch each run (labels, method tags and `MANAGES` / `PERSISTS_AS` /
 `RELATES_TO` edges dropped first): it tags the repository / entity
 `CodeEntity`s `:Repository` / `:JpaEntity` with their props, tags each repo
@@ -412,7 +419,19 @@ method with `query_kind` / `query_text` / `query_properties`, and wires
 `(:Repository)-[:MANAGES]->(:JpaEntity)` (managed type resolved to an ingested
 entity, exact then unique-simple-name), `(:JpaEntity)-[:PERSISTS_AS]->(:DbTable)`
 (only when exactly one `DbTable` carries that name — the SQL-schema bridge), and
-`(:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(:JpaEntity)`.
+`(:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(:JpaEntity)` — including a
+self-edge for tree / hierarchy models (`Category.parent` + `Category.children`).
+
+`SpringInjectionResolver` is the fifth and last pass. It first MERGEs a
+`(:Bean {stereotype:'Repository'})` + `IS_BEAN` for every `SpringDataRepoDef`
+interface (`bean_type` = the interface FQN), so a repository injected by type
+with no `@Repository` annotation is a real candidate. It then re-reads every
+bean's `unresolved_injections` and, with the full bean set (annotation + XML +
+repository) now present, promotes any entry that resolves to a single
+candidate — matched by declared type or supertype simple name, narrowed by
+`@Qualifier` — to an `(:Bean)-[:INJECTS]->(:Bean)` edge, pruning it from
+`unresolved_injections`. This is what lets an `@Service` wire a bean defined
+only in `applicationContext.xml`.
 
 ## Retrieval
 

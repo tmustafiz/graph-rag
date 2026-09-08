@@ -96,6 +96,37 @@ def test_child_pom_inherits_parent_and_interpolates_versions(tmp_path: Path) -> 
     assert scopes["org.junit.jupiter:junit-jupiter"] == "test"
 
 
+_REVISION_POM = """\
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <groupId>com.acme</groupId>
+  <artifactId>ci-friendly</artifactId>
+  <version>${revision}</version>
+  <properties>
+    <revision>1.2.3</revision>
+    <lib.version>${revision}</lib.version>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>com.acme</groupId>
+      <artifactId>shared</artifactId>
+      <version>${lib.version}</version>
+    </dependency>
+  </dependencies>
+</project>
+"""
+
+
+def test_revision_and_chained_properties_resolve_to_a_fixed_point(tmp_path: Path) -> None:
+    pom = tmp_path / "pom.xml"
+    pom.write_text(_REVISION_POM)
+
+    document = MavenParser().parse(pom)
+
+    assert document.modules[0].version == "1.2.3"  # ${revision}
+    shared = {a.artifact: a for a in document.external_artifacts}["shared"]
+    assert shared.version == "1.2.3"  # ${lib.version} -> ${revision} -> 1.2.3
+
+
 def test_source_roots_include_existing_generated_sources(tmp_path: Path) -> None:
     pom = tmp_path / "pom.xml"
     pom.write_text(

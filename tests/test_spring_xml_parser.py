@@ -125,6 +125,29 @@ def test_value_placeholder_keys_captured(tmp_path: Path) -> None:
     assert beans["orderRepository"].value_placeholder_keys == ["db.url"]
 
 
+_NESTED_PROFILE_CONTEXT = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans">
+    <bean id="baseDataSource" class="com.acme.BaseDataSource"/>
+    <beans profile="dev">
+        <bean id="devDataSource" class="org.h2.jdbcx.JdbcDataSource"/>
+    </beans>
+    <beans profile="prod">
+        <bean id="prodDataSource" class="com.zaxxer.hikari.HikariDataSource"/>
+    </beans>
+</beans>
+"""
+
+
+def test_nested_profile_beans_are_parsed_and_tagged(tmp_path: Path) -> None:
+    _document, beans = _parse(tmp_path, "datasource-context.xml", _NESTED_PROFILE_CONTEXT)
+
+    assert set(beans) == {"baseDataSource", "devDataSource", "prodDataSource"}
+    assert beans["baseDataSource"].profile is None
+    assert beans["devDataSource"].profile == "dev"
+    assert beans["prodDataSource"].profile == "prod"
+
+
 # -- SpringXmlResolver._assemble (pure, no Neo4j) --
 
 

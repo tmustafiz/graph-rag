@@ -189,6 +189,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `annotation_name_fulltext` index. Foundation for the Spring bean / MVC /
   Spring-Data models. ([#69](https://github.com/tmustafiz/graph-rag/issues/69))
 
+### Fixed
+- Enterprise-Java review sweep (v0.6.0 release gate,
+  [#114](https://github.com/tmustafiz/graph-rag/issues/114)–[#131](https://github.com/tmustafiz/graph-rag/issues/131)):
+  - **Spring Data repositories are now beans.** New final post-ingest pass
+    `SpringInjectionResolver` MERGEs a `(:Bean {stereotype:'Repository'})` +
+    `IS_BEAN` for every repository interface (`bean_type` = interface FQN) and
+    re-runs injection resolution over the complete annotation + XML + repository
+    bean set, so an `@Service` `@Autowired`-ing an XML-only bean or a
+    `JpaRepository` (both unresolvable when the first pass ran) gets its
+    `INJECTS` edge instead of a `"no matching bean"` entry.
+    ([#114](https://github.com/tmustafiz/graph-rag/issues/114),
+    [#122](https://github.com/tmustafiz/graph-rag/issues/122))
+  - `@Bean` factory methods declared `public` / `static` no longer get a
+    `bean_type` like `"Bean public DataSource"` (broke type-based `@Autowired`
+    to them). ([#115](https://github.com/tmustafiz/graph-rag/issues/115))
+  - `search_code` `stereotype=` / `annotation=` / `module=` filters resolve the
+    matching set on the graph first, so a filter is no longer starved by the
+    kNN truncation and returning `[]` for a real match.
+    ([#117](https://github.com/tmustafiz/graph-rag/issues/117))
+  - `get_endpoints(path_glob=…)` substring-matches unless the caller pins an end
+    with `^` / `$` — a bare fragment (`"orders"`) no longer silently returns
+    `[]`. ([#118](https://github.com/tmustafiz/graph-rag/issues/118))
+  - A relative-path directory ingest (`grag ingest examples/spring-boot`) now
+    wires `IN_MODULE` / endpoint-module edges — `ProjectModelResolver` compares
+    `os.path.abspath` of `Source.path` and `Module.path` instead of a raw string
+    prefix (`Source.path` stays stored as ingested). A single-file ingest /
+    `ingest_path` / `--watch` now also runs the post-ingest resolvers and the
+    generated-source skip, not just directory ingest.
+    ([#116](https://github.com/tmustafiz/graph-rag/issues/116),
+    [#120](https://github.com/tmustafiz/graph-rag/issues/120))
+  - A Gradle root dir's `settings.gradle` no longer nulls the `group` /
+    `version` / `packages` its `build.gradle` set on the same `Module`.
+    ([#119](https://github.com/tmustafiz/graph-rag/issues/119))
+  - Renaming or removing an annotated Java type no longer leaks its `Annotation`
+    nodes (deleted with their owner; a global orphan sweep self-heals earlier
+    leaks). ([#121](https://github.com/tmustafiz/graph-rag/issues/121))
+  - Multi-path request mappings (`@GetMapping({"/a","/b"})`, class-level
+    `@RequestMapping({"/v1","/v2"})`) emit one `HttpEndpoint` per
+    (method, path). ([#123](https://github.com/tmustafiz/graph-rag/issues/123))
+  - Enum method / field / nested-type members (inside `enum_body_declarations`)
+    are emitted as `CodeEntity`s.
+    ([#124](https://github.com/tmustafiz/graph-rag/issues/124))
+  - Lombok: a `boolean isX` field's getter is the field name (not `isIsX()`),
+    `@Accessors(fluent=…/chain=…)` is honoured, and `@AllArgsConstructor`
+    excludes initialised `final` fields.
+    ([#125](https://github.com/tmustafiz/graph-rag/issues/125))
+  - Gradle `subprojects {}` / `allprojects {}` dependency blocks are skipped
+    rather than attributed to the root module.
+    ([#126](https://github.com/tmustafiz/graph-rag/issues/126))
+  - Spring Data derived-query subjects tokenise on the PascalCase boundary, so
+    `findByOrderId` yields `orderId`, not `derId`.
+    ([#127](https://github.com/tmustafiz/graph-rag/issues/127))
+  - Maven `${revision}` / `${sha1}` and property-to-property chains interpolate
+    to a fixed point. ([#128](https://github.com/tmustafiz/graph-rag/issues/128))
+  - Nested `<beans profile="…">` blocks in a Spring XML context are walked
+    (their beans were silently skipped); the `profile` is recorded on each bean.
+    ([#129](https://github.com/tmustafiz/graph-rag/issues/129))
+  - Self-referential JPA associations (`Category.parent` + `Category.children`)
+    keep their `RELATES_TO` self-edge.
+    ([#130](https://github.com/tmustafiz/graph-rag/issues/130))
+  - A `)` / `,` inside an annotation attribute string (`@Pattern(regexp = ")")`)
+    no longer truncates the handler parameter scan, so bindings keep their real
+    types. ([#131](https://github.com/tmustafiz/graph-rag/issues/131))
+
 ## [0.5.0] - 2026-09-06
 
 ### Added

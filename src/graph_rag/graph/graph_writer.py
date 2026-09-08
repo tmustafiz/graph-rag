@@ -251,7 +251,8 @@ _MERGE_SPRING_XML_BEANS = """
 UNWIND $rows AS row
 MERGE (b:SpringXmlBean {id: row.id})
 SET b.source_path = row.source_path, b.bean_id = row.bean_id, b.bean_name = row.bean_name,
-    b.class_name = row.class_name, b.scope = row.scope, b.parent = row.parent,
+    b.class_name = row.class_name, b.profile = row.profile,
+    b.scope = row.scope, b.parent = row.parent,
     b.factory_bean = row.factory_bean, b.factory_method = row.factory_method,
     b.primary = row.primary, b.abstract = row.abstract, b.lazy_init = row.lazy_init,
     b.aliases = row.aliases, b.depends_on = row.depends_on,
@@ -304,11 +305,23 @@ MATCH (target:ConfigProperty {id: pair.to})
 MERGE (cp)-[:REFERENCES]->(target)
 """
 
+# A Gradle root dir emits a Module row from both `build.gradle` (with
+# group/version/packages) and `settings.gradle` (without) on the same path.
+# coalesce / non-empty guards keep the second MERGE from nulling coordinates
+# the first one populated (#119).
 _MERGE_MODULES = """
 UNWIND $rows AS row
 MERGE (m:Module {path: row.path})
-SET m.artifact = row.artifact, m.group = row.group, m.version = row.version,
-    m.build_tool = row.build_tool, m.packages = row.packages, m.source_roots = row.source_roots
+SET m.artifact = row.artifact,
+    m.group = coalesce(row.group, m.group),
+    m.version = coalesce(row.version, m.version),
+    m.build_tool = coalesce(row.build_tool, m.build_tool),
+    m.packages = CASE
+        WHEN row.packages IS NOT NULL AND size(row.packages) > 0 THEN row.packages
+        ELSE coalesce(m.packages, row.packages) END,
+    m.source_roots = CASE
+        WHEN row.source_roots IS NOT NULL AND size(row.source_roots) > 0 THEN row.source_roots
+        ELSE coalesce(m.source_roots, row.source_roots) END
 WITH m
 MATCH (src:Source {path: $source_path})
 MERGE (src)-[:DEFINES]->(m)
@@ -358,20 +371,30 @@ WHERE NOT sec.id IN $keep_ids
 DETACH DELETE sec
 """
 
+# Deleting the entity also deletes its `Annotation` nodes: `DETACH DELETE e`
+# alone drops only the `ANNOTATED_WITH` edge, orphaning the far node, which
+# `_RECONCILE_ANNOTATIONS` (reachability-based) can then never see (#121).
 _RECONCILE_CODE_ENTITIES = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(e:CodeEntity)
 WHERE NOT e.qualified_name IN $keep_ids
-DETACH DELETE e
+OPTIONAL MATCH (e)-[:ANNOTATED_WITH]->(a:Annotation)
+DETACH DELETE e, a
 """
 
 # Annotations reachable from a CodeEntity this Source defines but no longer
-# emitted (an `@Deprecated` removed, a field un-annotated) — swept after the
-# code-entity reconcile, which has already DETACH-deleted annotations hanging
-# off entities that vanished entirely.
+# emitted (an `@Deprecated` removed, a field un-annotated); plus a sweep of any
+# fully-orphaned `Annotation` (no owner edge) — self-heals leaks from earlier
+# runs before the code-entity reconcile started deleting them.
 _RECONCILE_ANNOTATIONS = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(:CodeEntity)-[:ANNOTATED_WITH]->(a:Annotation)
 WHERE NOT a.id IN $keep_ids
 DETACH DELETE a
+"""
+
+_SWEEP_ORPHAN_ANNOTATIONS = """
+MATCH (a:Annotation)
+WHERE NOT ()-[:ANNOTATED_WITH]->(a)
+DELETE a
 """
 
 _RECONCILE_HTTP_ENDPOINTS = """
@@ -815,6 +838,7 @@ class GraphWriter:
             source_path=source_path,
             keep_ids=keep_ids,
         )
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_ANNOTATIONS))
 
     @staticmethod
     def _reconcile_http_endpoints(

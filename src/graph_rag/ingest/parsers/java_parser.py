@@ -163,7 +163,7 @@ class JavaParser:
             names.setdefault(simple, qualified_name)
             body = node.child_by_field_name("body")
             if body is not None:
-                for child in body.children:
+                for child in cls._body_members(body):
                     if child.type in _TYPE_KINDS:
                         walk(child, qualified_name)
 
@@ -243,7 +243,9 @@ class JavaParser:
         body = node.child_by_field_name("body")
 
         member_nodes = (
-            [child for child in body.children if child.type in _MEMBER_KINDS] if body else []
+            [child for child in cls._body_members(body) if child.type in _MEMBER_KINDS]
+            if body
+            else []
         )
         overloads: dict[str, list[str]] = {}
         for member in member_nodes:
@@ -291,14 +293,15 @@ class JavaParser:
                 type_qualified_name=qualified_name,
                 type_simple_name=simple_name,
                 path=path,
-                existing_members=set(overloads) | set(field_names),
+                existing_members=set(overloads),
+                existing_fields=set(field_names),
             )
         )
 
         if body is None:
             return entities
 
-        for child in body.children:
+        for child in cls._body_members(body):
             if child.type in _MEMBER_KINDS:
                 entities.append(
                     cls._build_member_entity(
@@ -681,10 +684,25 @@ class JavaParser:
         text = cls._collapse(content[node.start_byte : end_byte].decode("utf-8", "replace"))
         return text.rstrip("{;").strip()
 
+    @staticmethod
+    def _body_members(body: "Node") -> list["Node"]:
+        """The member declarations of a type body. For an `enum_body`,
+        tree-sitter-java nests methods / fields / nested types inside an
+        `enum_body_declarations` child (the constants stay direct); flatten it
+        so enum members are walked like any class's.
+        """
+        members: list[Node] = []
+        for child in body.children:
+            if child.type == "enum_body_declarations":
+                members.extend(child.children)
+            else:
+                members.append(child)
+        return members
+
     @classmethod
     def _field_names(cls, body: "Node", content: bytes) -> list[str]:
         names: list[str] = []
-        for child in body.children:
+        for child in cls._body_members(body):
             if child.type != "field_declaration":
                 continue
             for declarator in child.children:
@@ -781,7 +799,7 @@ class JavaParser:
                     bindings[qualified_name] = binding
             body = node.child_by_field_name("body")
             if body is not None:
-                for child in body.children:
+                for child in cls._body_members(body):
                     if child.type in _TYPE_KINDS:
                         walk(child, qualified_name)
 

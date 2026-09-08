@@ -167,7 +167,7 @@ def register_knowledge_tools(
     ) -> list[EndpointResult]:
         """Spring MVC / JAX-RS HTTP routes (`HttpEndpoint` nodes) with their
         handler method and module. Optional filters: `path_glob` (`*` / `?`
-        wildcards, whole-path match — use `*orders*` for a substring),
+        wildcards; matches a substring of the path unless pinned with `^` / `$`),
         `http_method` (`GET` / `POST` / … / `EXCEPTION`), `module` (owning
         `Module` artifact id or path suffix).
         """

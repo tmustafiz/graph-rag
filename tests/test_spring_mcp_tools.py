@@ -57,10 +57,15 @@ def _retriever(responder) -> tuple[Retriever, _FakeDriver]:
 
 
 def test_glob_to_regex() -> None:
-    assert _glob_to_regex("/api/orders/*") == r"/api/orders/.*"
+    # unpinned ends are padded with .* so a bare fragment substring-matches (#118)
+    assert _glob_to_regex("orders") == r".*orders.*"
+    assert _glob_to_regex("/api/orders/*") == r".*/api/orders/.*"
     assert _glob_to_regex("*orders*") == r".*orders.*"
-    assert _glob_to_regex("/api/orders/{id}") == r"/api/orders/\{id\}"
-    assert _glob_to_regex("/x/?") == r"/x/."
+    assert _glob_to_regex("/api/orders/{id}") == r".*/api/orders/\{id\}.*"
+    assert _glob_to_regex("/x/?") == r".*/x/..*"
+    # explicit ^ / $ anchors suppress the padding
+    assert _glob_to_regex("^/api/orders$") == r"/api/orders"
+    assert _glob_to_regex("^/api/") == r"/api/.*"
 
 
 def _edge(bean_id, name=None, stereotype=None, via=None) -> dict[str, Any]:
@@ -142,7 +147,7 @@ def test_get_endpoints_passes_glob_regex_and_method() -> None:
         path_glob="/api/orders*", http_method="get", module="orders-api"
     )
 
-    assert captured["path_regex"] == r"/api/orders.*"
+    assert captured["path_regex"] == r".*/api/orders.*"
     assert captured["http_method"] == "GET"
     assert captured["module"] == "orders-api"
     assert len(results) == 1
@@ -168,11 +173,18 @@ def test_get_endpoints_no_filters_passes_nulls() -> None:
 # -- search_code filters --
 
 
-def test_search_code_threads_filters_into_the_query_params() -> None:
-    seen: list[dict[str, Any]] = []
+def _is_index_pass(cypher: str) -> bool:
+    return "db.index.vector" in cypher or "db.index.fulltext" in cypher
 
-    def responder(_cypher: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        seen.append(params)
+
+def test_search_code_prefilters_on_the_graph_when_a_filter_is_set() -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def responder(cypher: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        calls.append((cypher, params))
+        if not _is_index_pass(cypher):
+            # the graph pre-filter pass resolving the allowed qualified_name set
+            return [{"qualified_name": "com.acme.OrderService"}]
         return []
 
     retriever, _driver = _retriever(responder)
@@ -180,19 +192,32 @@ def test_search_code_threads_filters_into_the_query_params() -> None:
         "order service", stereotype="Service", annotation="Transactional", module="orders-api"
     )
 
-    # both the vector and the full-text pass carry the filters
-    assert seen, "no query ran"
-    for params in seen:
-        assert params["stereotype"] == "Service"
-        assert params["annotation"] == "Transactional"
-        assert params["module"] == "orders-api"
+    prefilter = [params for cypher, params in calls if not _is_index_pass(cypher)]
+    assert prefilter, "no graph pre-filter pass ran"
+    assert prefilter[0]["stereotype"] == "Service"
+    assert prefilter[0]["annotation"] == "Transactional"
+    assert prefilter[0]["module"] == "orders-api"
+    # the index passes stay unfiltered — the intersection happens in Python (#117)
+    for cypher, params in calls:
+        if _is_index_pass(cypher):
+            assert "stereotype" not in params
 
 
-def test_search_code_without_filters_passes_nones() -> None:
-    seen: list[dict[str, Any]] = []
-    retriever, _driver = _retriever(lambda _c, params: seen.append(params) or [])
+def test_search_code_returns_empty_when_prefilter_matches_nothing() -> None:
+    calls: list[str] = []
+
+    def responder(cypher: str, _params: dict[str, Any]) -> list[dict[str, Any]]:
+        calls.append(cypher)
+        return []
+
+    retriever, _driver = _retriever(responder)
+    assert retriever.search_code("x", stereotype="Repository") == []
+    assert calls and not any(_is_index_pass(cypher) for cypher in calls)
+
+
+def test_search_code_without_filters_skips_the_prefilter() -> None:
+    calls: list[str] = []
+    retriever, _driver = _retriever(lambda cypher, _p: calls.append(cypher) or [])
     retriever.search_code("anything")
-    for params in seen:
-        assert params["stereotype"] is None
-        assert params["annotation"] is None
-        assert params["module"] is None
+    assert calls, "no query ran"
+    assert all(_is_index_pass(cypher) for cypher in calls)

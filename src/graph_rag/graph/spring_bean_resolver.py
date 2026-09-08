@@ -20,6 +20,21 @@ _STEREOTYPES = {
     "ConfigurationProperties",
 }
 _INJECT_MARKERS = {"Autowired", "Inject", "Resource"}
+# Java modifier keywords that can precede a return type in a `@Bean` method
+# signature — stripped so `bean_type` is the type, not `"Bean public DataSource"`.
+_MODIFIERS = {
+    "public",
+    "private",
+    "protected",
+    "static",
+    "final",
+    "abstract",
+    "synchronized",
+    "native",
+    "default",
+    "transient",
+    "volatile",
+}
 _VALUE_PLACEHOLDER = re.compile(r"\$\{([^:}]+)(?::[^}]*)?\}")
 _GENERIC = re.compile(r"([\w.]+)\s*<\s*(.+)\s*>$")
 _COLLECTION_TYPES = {"List", "Set", "Collection", "Iterable"}
@@ -316,7 +331,7 @@ class SpringBeanResolver:
             else "ambiguous: " + ", ".join(sorted(beans[b]["name"] for b in candidates))
         )
         unresolved.setdefault(source_bean_id, []).append(
-            {"type": element, "via": via, "reason": reason}
+            {"type": element, "via": via, "qualifier": qualifier or "", "reason": reason}
         )
 
     # -- pure helpers --
@@ -458,9 +473,19 @@ class SpringBeanResolver:
         if not signature:
             return "?"
         # The type token directly before `<method_name>(` — robust to leading
-        # `@Bean(...)` / modifiers that a naive `split("(")` would trip on.
+        # `@Bean(...)` / modifiers that a naive `split("(")` would trip on. The
+        # `[\w.$<>, ]` char class also swallows any `public` / `static` between
+        # the annotation and the type, so drop modifier tokens and keep the
+        # last real token (#115).
         match = re.search(rf"([\w.$<>, ]+?)\s+{re.escape(method_name)}\s*\(", signature)
-        return match.group(1).strip() if match else "?"
+        if match is None:
+            return "?"
+        tokens = [token for token in match.group(1).split() if token not in _MODIFIERS]
+        # a bare leading annotation name (`@` is a regex delimiter, so only the
+        # one adjacent to the type leaks in) sits before the real type
+        if len(tokens) >= 2:
+            tokens = tokens[1:]
+        return " ".join(tokens) if tokens else "?"
 
     @classmethod
     def _constructor_params(cls, ctor_qns: list[str], autowired: set[str]) -> list[str]:

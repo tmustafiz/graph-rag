@@ -123,6 +123,25 @@ def test_derived_query_property_parse(tmp_path: Path) -> None:
     assert properties["findByCustomerIdAndStatusOrderByCreatedAtDesc"] == "customerId,status"
 
 
+def test_derived_property_with_and_or_letters_is_not_split(tmp_path: Path) -> None:
+    document = _parse(
+        tmp_path,
+        "CatalogRepository.java",
+        "package com.acme;\n"
+        "import java.util.List;\n"
+        "import org.springframework.data.repository.CrudRepository;\n"
+        "public interface CatalogRepository extends CrudRepository<Item, Long> {\n"
+        "  List<Item> findByOrderId(Long orderId);\n"
+        "  List<Item> findByBrandNameAndOrgUnit(String brandName, String orgUnit);\n"
+        "}",
+    )
+    repo = document.spring_data_repositories[0]
+    properties = dict(zip(repo.method_names, repo.method_properties, strict=True))
+
+    assert properties["findByOrderId"] == "orderId"
+    assert properties["findByBrandNameAndOrgUnit"] == "brandName,orgUnit"
+
+
 def test_unparseable_derived_name_does_not_raise(tmp_path: Path) -> None:
     document = _parse(
         tmp_path,
@@ -260,7 +279,7 @@ def test_assemble_persists_as_only_on_unambiguous_table_name() -> None:
     assert ambiguous.persists_as == []
 
 
-def test_assemble_relates_to_resolves_target_and_skips_self() -> None:
+def test_assemble_relates_to_resolves_target_and_keeps_self_edges() -> None:
     order = _entity_def(
         qualified_name="com.acme.Order",
         simple_name="Order",
@@ -290,7 +309,14 @@ def test_assemble_relates_to_resolves_target_and_skips_self() -> None:
             "field": "lines",
             "kind": "one-to-many",
             "mapped_by": "order",
-        }
+        },
+        {
+            "from": "com.acme.Order",
+            "to": "com.acme.Order",
+            "field": "parent",
+            "kind": "many-to-one",
+            "mapped_by": "",
+        },
     ]
 
 

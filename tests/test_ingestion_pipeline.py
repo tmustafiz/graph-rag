@@ -97,6 +97,46 @@ def test_run_on_unsupported_single_file_raises(tmp_path: Path) -> None:
         _pipeline(writer).run(path)
 
 
+class _RecordingResolver:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def resolve(self) -> dict[str, int]:
+        self.calls += 1
+        return {"linked": 0}
+
+
+def test_single_file_ingest_runs_post_ingest_resolvers(tmp_path: Path) -> None:
+    path = tmp_path / "notes.md"
+    path.write_text("# Title\n\nSome text.\n")
+    resolver = _RecordingResolver()
+    pipeline = IngestionPipeline(ParserRegistry(), _FakeEmbedder(), _FakeGraphWriter(), [resolver])
+
+    pipeline.run(path)
+    assert resolver.calls == 1
+
+    pipeline.run(path, dry_run=True)
+    assert resolver.calls == 1  # dry run does not re-project
+
+
+def test_single_file_generated_source_is_skipped_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from graph_rag.settings import settings
+
+    generated = tmp_path / "target" / "generated-sources" / "a"
+    generated.mkdir(parents=True)
+    path = generated / "OrderMapperImpl.java"
+    path.write_text("package a;\npublic class OrderMapperImpl {}\n")
+
+    monkeypatch.setattr(settings, "ingest_generated_sources", False)
+    writer = _FakeGraphWriter()
+    results = _pipeline(writer).run(path)
+
+    assert results[0].skipped is True
+    assert writer.written == []
+
+
 def test_run_on_directory_recurses_and_skips_unsupported_files(tmp_path: Path) -> None:
     (tmp_path / "notes.md").write_text("# Title\n\nSome text.\n")
     sub = tmp_path / "sub"

@@ -105,6 +105,33 @@ def test_settings_file_yields_root_name_and_reactor_edges(tmp_path: Path) -> Non
     assert all(d.scope == "reactor" for d in document.module_dependencies)
 
 
+_ROOT_BUILD_WITH_SUBPROJECTS = """\
+group = "com.acme.platform"
+version = "1.0.0"
+
+subprojects {
+    dependencies {
+        implementation 'com.google.guava:guava:33.0.0-jre'
+    }
+}
+
+dependencies {
+    implementation 'org.slf4j:slf4j-api:2.0.9'
+}
+"""
+
+
+def test_subprojects_block_dependencies_are_not_attributed_to_the_root(tmp_path: Path) -> None:
+    build = tmp_path / "build.gradle"
+    build.write_text(_ROOT_BUILD_WITH_SUBPROJECTS)
+
+    document = GradleParser().parse(build)
+
+    gavs = {a.gav for a in document.external_artifacts}
+    assert "org.slf4j:slf4j-api" in gavs  # the root's own dependency
+    assert "com.google.guava:guava" not in gavs  # belongs to the subprojects
+
+
 def test_unparseable_gradle_still_yields_a_module(tmp_path: Path) -> None:
     build = tmp_path / "build.gradle"
     build.write_text(textwrap.dedent("this is not ( valid groovy {{{"))

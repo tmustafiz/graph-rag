@@ -70,6 +70,29 @@ def test_nested_types_and_members_form_contains_hierarchy(tmp_path: Path) -> Non
     assert by_qualified_name["com.acme.Outer.Inner.Deep.go()"].kind == "method"
 
 
+def test_enum_body_declarations_members_are_emitted(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "OrderStatus",
+        "public enum OrderStatus {\n"
+        "    NEW, PAID;\n"
+        "    private final int code = 0;\n"
+        "    public static OrderStatus fromCode(String c) { return NEW; }\n"
+        "    public boolean isTerminal() { return this == PAID; }\n"
+        "    interface Listener { void onChange(); }\n"
+        "}",
+    )
+
+    document = JavaParser().parse(path)
+    by_qualified_name = {entity.qualified_name: entity for entity in document.code_entities}
+
+    assert by_qualified_name["com.acme.OrderStatus.fromCode(String)"].kind == "method"
+    assert by_qualified_name["com.acme.OrderStatus.isTerminal()"].kind == "method"
+    assert by_qualified_name["com.acme.OrderStatus.Listener"].kind == "interface"
+    assert by_qualified_name["com.acme.OrderStatus.Listener.onChange()"].kind == "method"
+
+
 def test_every_type_flavor_maps_to_its_kind(tmp_path: Path) -> None:
     path = _write(
         tmp_path,
@@ -597,6 +620,54 @@ def test_explicit_accessor_is_not_duplicated_by_lombok(tmp_path: Path) -> None:
     owners = [e for e in JavaParser().parse(path).code_entities if e.name == "getOwner"]
     assert len(owners) == 1
     assert owners[0].synthetic is False
+
+
+def test_lombok_boolean_is_prefixed_field_reuses_the_name(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Feature",
+        "import lombok.Data;\n\n@Data\npublic class Feature {\n    private boolean isEnabled;\n}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+    assert "com.acme.Feature.isEnabled()" in by_qn  # not isIsEnabled()
+    assert "com.acme.Feature.isIsEnabled()" not in by_qn
+    assert "com.acme.Feature.setEnabled(boolean)" in by_qn  # is-prefix dropped
+
+
+def test_lombok_accessors_fluent_and_chain(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Config",
+        "import lombok.Data;\nimport lombok.experimental.Accessors;\n\n"
+        "@Data\n@Accessors(fluent = true)\npublic class Config {\n"
+        "    private String host;\n"
+        "}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+    assert "com.acme.Config.host()" in by_qn  # fluent getter, not getHost()
+    assert "com.acme.Config.getHost()" not in by_qn
+    setter = by_qn["com.acme.Config.host(String)"]
+    assert setter.signature == "Config host(String)"  # chained return type
+
+
+def test_lombok_allargsconstructor_excludes_initialised_final_fields(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "com.acme",
+        "Box",
+        "import lombok.AllArgsConstructor;\n\n@AllArgsConstructor\npublic class Box {\n"
+        '    private final String label = "default";\n'
+        "    private int size;\n"
+        "}",
+    )
+
+    by_qn = _by_qn(JavaParser().parse(path))
+    assert "com.acme.Box.Box(int)" in by_qn
+    assert "com.acme.Box.Box(String,int)" not in by_qn
 
 
 def test_non_lombok_class_has_no_synthetic_entities(tmp_path: Path) -> None:
