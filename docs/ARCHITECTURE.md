@@ -61,6 +61,7 @@ flowchart TD
 | `graph_rag.graph.aop_resolver` | Post-ingest pass (after the Spring passes): best-effort AspectJ pointcut matching — resolves each `@Aspect` advice's `execution(…)` / `within(…)` / `@annotation(…)` pointcut (with `&&` / `\|\|` and one level of named-`@Pointcut` substitution) to the `CodeEntity`s it advises, rebuilding `(:Advice)-[:ADVISES]->(:CodeEntity)` and recording `Advice.unresolved_reason` for what it can't match. |
 | `graph_rag.graph.service_call_resolver` | Post-ingest pass (last): links each outbound `HttpEndpoint` (`@FeignClient` / `@HttpExchange` client method) to the ingested `@RestController` route it calls — `(:HttpEndpoint {outbound:true})-[:RESOLVES_TO]->(:HttpEndpoint inbound)` — matched on `(http_method, path)` with path variables normalized. |
 | `graph_rag.graph.mybatis_resolver` | Post-ingest pass (last): binds each XML-derived `SqlStatement` to the `@Mapper` interface method it implements — `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)` — by matching the mapper `namespace` + statement `id` to a method. |
+| `graph_rag.graph.camel_resolver` | Post-ingest pass (last): resolves each Camel `process(...)` / `bean(...)` / `to("bean:...")` step's reference to the `CodeEntity` it runs — `(:CamelStep)-[:INVOKES]->(:CodeEntity)` — by `Type.method` / bare `Type` / `beanName` best-effort match. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
@@ -99,6 +100,9 @@ flowchart TD
 | `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs` / `feign` / `spring-http-interface`), `produces`, `consumes`, `params`, `bindings` (JSON), `outbound` (true for a `@FeignClient` / `@HttpExchange` client call), `target_service` (Feign `name` / `url`), `embed_text`, `embedding` (384-d) |
 | `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs`), `produces`, `consumes`, `params`, `bindings` (JSON), `embed_text`, `embedding` (384-d) |
 | `SqlStatement` | `id` (hash of mapper_qn + statement_id + kind + origin) | `mapper_qn` (namespace / interface FQN), `statement_id`, `kind` (`select`/`insert`/`update`/`delete`), `text` (flattened SQL), `origin` (`mybatis-xml` / `mybatis-annotation`), `method_qn` (set for the annotation form) |
+| `Route` | `id` (hash of source path + ordinal) | `route_id` (explicit `.routeId(...)` or `<file>:<n>`), `from_uri`, `embed_text`, `on_exception` (exception FQNs from the builder's `onException(...)`) — one Camel route |
+| `CamelStep` | `id` (`<route id>#<index>`) | `index`, `kind` (`to` / `process` / `bean` / `choice` / `when` / `split` / …), `uri`, `ref` (process/bean target, resolved by `CamelResolver`), `predicate` (for `when` / `filter`) |
+| `CamelEndpoint` | `uri` | `scheme` (before the first `:`) — MERGE-shared, so `.to("direct:x")` and `from("direct:x")` pair |
 | `SpringDataRepoDef` / `JpaEntityDef` | `qualified_name` | Per-`.java` raw extract of a Spring Data repository (`base`, `entity_type`, `id_type`, `reactive`, parallel `method_*` arrays) / JPA type (`kind`, `table`, `id_fields`, parallel `association_*` arrays); projected onto the `CodeEntity` by `SpringDataResolver` |
 
 A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `repository_entity_type` / `repository_id_type` / `repository_reactive`), a **`:JpaEntity`** label (`jpa_kind` / `jpa_table`), or, on a repository method, `query_kind` (`derived` / `jpql` / `native` / `modifying` / `procedure` / `inherited`) + `query_text` + `query_properties` — all set by `SpringDataResolver`.
@@ -134,6 +138,8 @@ A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `re
 - `(HttpEndpoint)-[:HANDLED_BY]->(CodeEntity)` (the Spring MVC / JAX-RS handler method), `(HttpEndpoint)-[:IN_MODULE]->(Module)`
 - `(CodeEntity)-[:CALLS_SERVICE]->(HttpEndpoint {outbound:true})` (a `@FeignClient` / `@HttpExchange` client method → the outbound call it declares), `(HttpEndpoint outbound)-[:RESOLVES_TO]->(HttpEndpoint inbound)` (wired by `ServiceCallResolver` when a matching controller route is ingested — a cross-service call graph)
 - `(CodeEntity)-[:EXECUTES]->(SqlStatement)` (a `@Mapper` method → the MyBatis SQL it runs — XML statements bound by `MyBatisResolver`, annotation ones at write time), `(SqlStatement)-[:ACCESSES {mode}]->(DbTable)` (`mode` = `read` / `write`; a stub `DbTable {name, stub:true}` when the schema was not separately ingested)
+- `(Route)-[:FROM]->(CamelEndpoint)`, `(Route)-[:TO]->(CamelEndpoint)`, `(CamelEndpoint)-[:CONSUMED_BY]->(Route)` (the route this endpoint is the `from` of — an internal `direct:` / `seda:` / `vm:` endpoint thus links producer route → consumer route via the shared node)
+- `(Route)-[:STEP {index, kind, predicate?}]->(CamelStep)`, `(CamelStep)-[:INVOKES]->(CodeEntity)` (`process` / `bean` step target, wired by `CamelResolver`)
 - `(Source)-[:DEFINES]->(SpringDataRepoDef|JpaEntityDef)` (per-`.java` raw extract)
 - `(CodeEntity:Repository)-[:MANAGES]->(CodeEntity:JpaEntity)` (repo's managed domain type), `(CodeEntity:JpaEntity)-[:PERSISTS_AS]->(DbTable)` (only when a `DbTable` with that name was ingested), `(CodeEntity:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(CodeEntity:JpaEntity)` (`@OneToMany` / `@ManyToOne` / `@ManyToMany` / `@OneToOne`)
 
@@ -172,6 +178,8 @@ repository (unresolvable when the first pass ran) gets its `INJECTS` edge;
 `@FeignClient` / `@HttpExchange` endpoint to the controller route it calls. The
 `CodeEntity`s it advises; finally `MyBatisResolver` binds each XML mapper
 statement to its `@Mapper` interface method. The
+`CodeEntity`s it advises; finally `CamelResolver` resolves each Camel `process` /
+`bean` step to the `CodeEntity` it invokes. The
 same passes also run after a **single-file** ingest — each is a full-graph
 rebuild — so `ingest_path` / `grag ingest <file>` / `--watch` keep the
 projections in sync with an edit.
@@ -537,6 +545,34 @@ Broker: `@KafkaListener(topics=)` / `@RabbitListener(queues=)` /
 call sites with a literal destination become
 `(:CodeEntity)-[:PRODUCES_TO]->(:Destination {broker})-[:CONSUMED_BY]->(:CodeEntity)`.
 No resolver pass — the shared-node MERGE does the cross-file join.
+**Apache Camel (Java DSL).** `JavaParser._collect_camel_routes` walks each
+`RouteBuilder` subclass's `configure()` body. A fluent
+`from(uri).routeId(id).<step>.<step>...` chain — which the generic `CALLS`
+resolver deliberately skips — is unwound in source order into a `CamelRoute`:
+`from_uri`, `route_id` (explicit or `<file>:<ordinal>`), and an ordered `steps`
+list (`to` / `toD` / `process` / `bean` / `choice` / `when` / `otherwise` /
+`split` / `multicast` / `wireTap` / `enrich` / `setHeader` / …), with
+`onException(...)` / `errorHandler(...)` exception FQNs attached to every route
+in the builder. Endpoint URIs become MERGE-shared `CamelEndpoint {uri, scheme}`
+nodes, so a `.to("direct:x")` and a `from("direct:x")` in different routes pair
+through `(:Route)-[:TO]->(:CamelEndpoint)-[:CONSUMED_BY]->(:Route)` with no
+resolver. `CamelResolver` (seventh post-ingest pass) resolves each `process` /
+`bean` / `to("bean:...")` step's reference (`Type.method`, bare `Type`, or
+`beanName`) to `(:CamelStep)-[:INVOKES]->(:CodeEntity)`.
+
+The **XML** and **YAML** DSLs feed the same model. `CamelXmlParser` claims a
+`.xml` with a `<camelContext>` / `<routes>` / `<route>` root (a `<beans>` file
+that embeds a `<camelContext>` stays with `SpringXmlParser`, which calls the
+shared `CamelXmlRouteExtractor` too); `CamelYamlParser` claims a `.yaml` whose
+entries carry a `route.from` / top-level `from`. Nested
+`<choice><when><simple/></when><otherwise/></choice>` (XML) and the equivalent
+YAML mapping are flattened to the same `choice / when / … / otherwise / … / end`
+step list. `@Consume(uri=)` on a method becomes a one-`bean`-step route into
+that method; `@Produce` / `@EndpointInject` on a field becomes
+`(:CodeEntity)-[:PRODUCES_TO]->(:CamelEndpoint)`. All four sources (Java DSL,
+XML, YAML, annotations) share the MERGE-keyed `CamelEndpoint`, so a
+`direct:` / `seda:` endpoint pairs producer and consumer no matter which DSL
+each side is written in.
 
 ## Retrieval
 

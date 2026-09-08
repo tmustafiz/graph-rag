@@ -1,6 +1,8 @@
 from .annotation import Annotation
 from .aop_advice import AopAdvice
 from .behavior_marker import BehaviorMarker
+from .camel_endpoint import CamelEndpoint
+from .camel_route import CamelRoute
 from .chunk import Chunk
 from .code_entity import CodeEntity
 from .config_file import ConfigFile
@@ -29,6 +31,8 @@ __all__ = [
     "Annotation",
     "AopAdvice",
     "BehaviorMarker",
+    "CamelEndpoint",
+    "CamelRoute",
     "Chunk",
     "CodeEntity",
     "ConfigFile",

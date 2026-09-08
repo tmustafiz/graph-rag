@@ -99,3 +99,6 @@ jobs:
           NEO4J_URI: ${{ secrets.NEO4J_URI }}
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
 ```
+> The `scip-java` binary is an external tool — graph-rag does not vendor or
+> invoke it. A CI recipe and a `grag-mcp scip-java` wrapper are tracked in
+> [#80](https://github.com/tmustafiz/graph-rag/issues/80).

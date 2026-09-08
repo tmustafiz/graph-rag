@@ -8,6 +8,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from ..models import Chunk, ConfigFile, ParsedDocument, Section, Source, SpringXmlBean
+from .camel_xml_route_extractor import CamelXmlRouteExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,8 @@ class SpringXmlParser:
             chunks=chunks,
             config_files=[config_file],
             spring_xml_beans=beans,
+            # a `<beans>` file may also embed a `<camelContext>` with routes.
+            camel_routes=CamelXmlRouteExtractor.extract(root, source.path),
         )
 
     # -- <beans> container walk (recurses into nested <beans profile="...">) --
