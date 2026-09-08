@@ -12,6 +12,8 @@ from .db_index import DbIndex
 from .db_reference import DbReference
 from .db_table import DbTable
 from .db_view import DbView
+from .destination import Destination
+from .event_type import EventType
 from .external_artifact import ExternalArtifact
 from .http_endpoint import HttpEndpoint
 from .jpa_entity import JpaEntity
@@ -46,6 +48,12 @@ class ParsedDocument(BaseModel):
     # `(CodeEntity)-[:ADVICE_OF]->(:Advice)` and, after the `AopResolver` pass,
     # `(:Advice)-[:ADVISES]->(:CodeEntity)`.
     aop_advice: list[AopAdvice] = Field(default_factory=list)
+    # In-process application events + broker destinations, carrying their
+    # publisher / consumer method `qualified_name`s; feed
+    # `(CodeEntity)-[:PUBLISHES]->(:EventType)-[:CONSUMED_BY]->(CodeEntity)` and
+    # `(CodeEntity)-[:PRODUCES_TO]->(:Destination)-[:CONSUMED_BY]->(CodeEntity)`.
+    event_types: list[EventType] = Field(default_factory=list)
+    destinations: list[Destination] = Field(default_factory=list)
     policy_rules: list[PolicyRule] = Field(default_factory=list)
     # Spring / Java application config: one `ConfigFile` per parsed file plus its
     # flattened `ConfigProperty` list; feeds
