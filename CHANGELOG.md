@@ -55,6 +55,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a MyBatis mapper) with a query walkthrough; `docs/enterprise-java.md` and
   `docs/ARCHITECTURE.md` "Java frameworks" completed with a precision-tier
   table. ([#87](https://github.com/tmustafiz/graph-rag/issues/87))
+- `grag-mcp scip-java <repo>` — one-command wrapper that shells out to the
+  external `scip-java` binary (`scip-java index --output … [--build-tool …]
+  [-- <build args>]`) and ingests the produced index. `docs/enterprise-java.md`
+  gains the `scip-java index` workflow (build-tool detection, `--` escape
+  hatch, output conventions) and a copy-pasteable GitHub Actions recipe
+  (build → index → upload → ingest).
+  ([#80](https://github.com/tmustafiz/graph-rag/issues/80))
+- SCIP index ingestion — `grag-mcp ingest --scip <index.scip> [--root <repo>]`.
+  A hand-rolled protobuf reader (`ScipReader`, no `protobuf` runtime) decodes a
+  SCIP `Index`; `ScipSymbolParser` maps a symbol string to a readable
+  `qualified_name`; `ScipIngestor` builds one `ParsedDocument` per SCIP
+  `Document` — `SymbolInformation` → `CodeEntity` (kind from `Kind` else the
+  descriptor suffix), `Relationship(is_implementation)` → `IMPLEMENTS`,
+  `Relationship(is_reference | is_type_definition)` → `IMPORTS`, a reference
+  `Occurrence` with a method `enclosing_range` → `CALLS`. New
+  `CodeEntity.resolution` (`static` / `scip`) records provenance; SCIP entities
+  are written per `Source`, so the existing per-`Source` reconcile drops the
+  file's static entities — SCIP wins on overlap. New `docs/enterprise-java.md`
+  (static vs SCIP decision guidance + how to produce an index).
+  ([#79](https://github.com/tmustafiz/graph-rag/issues/79))
 - Apache Camel routes — XML & YAML DSL + Camel annotations. New `CamelXmlParser`
   (`<camelContext>` / `<routes>` / `<route>` root; a `<beans>` file embedding a
   `<camelContext>` stays with `SpringXmlParser`, which now also runs the shared

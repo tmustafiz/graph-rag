@@ -136,3 +136,6 @@ grag-mcp compute-centrality
 # optional, on top:
 grag-mcp scip-java examples/enterprise-java
 ```
+> The `scip-java` binary is an external tool — graph-rag does not vendor or
+> invoke it. A CI recipe and a `grag-mcp scip-java` wrapper are tracked in
+> [#80](https://github.com/tmustafiz/graph-rag/issues/80).

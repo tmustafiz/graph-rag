@@ -43,6 +43,9 @@ flowchart TD
 | Package | Responsibility |
 | --- | --- |
 | `graph_rag.ingest.parsers` | One `Parser` per file type. `parse(path) -> ParsedDocument` (Sections/Chunks/CodeEntities/PolicyRules). |
+| `graph_rag.ingest.scip` | Reader for a SCIP (Sourcegraph Code Intelligence Protocol) index — a hand-rolled protobuf decoder (`ScipReader`, no `protobuf` runtime) + `ScipSymbolParser` (symbol string → `qualified_name`). |
+| `graph_rag.scip_ingestor` | `grag-mcp ingest --scip`: maps a SCIP `Index` to `ParsedDocument`s (`CodeEntity.resolution="scip"`), replacing the static entities for every file the index covers. |
+| `graph_rag.scip_java_runner` | `grag-mcp scip-java <repo>`: thin wrapper that shells out to the external `scip-java` binary (not vendored) and feeds its index to the ingestor. |
 | `graph_rag.ingest.parser_registry` | Maps file extension → parser. New type = new module + one registration line. |
 | `graph_rag.ingest.chunker` | Splits section body text into token-bounded, overlapping chunks that never cross a heading; keeps code/table blocks intact. |
 | `graph_rag.ingest.embedders` | `Embedder` interface; `SentenceTransformerEmbedder` (local `all-MiniLM-L6-v2`, 384-dim) is the default — no API key, works offline. `build_embedder()` reads `GRAG_EMBEDDING_PROVIDER` and can instead return a hosted `RestEmbedder` (OpenAI / Ollama / Voyage / Cohere / Gemini — plain `httpx`, no SDKs), probing vector width against `EMBEDDING_DIMENSIONS` at startup. |
@@ -63,7 +66,7 @@ flowchart TD
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
 | `graph_rag.memory` | `AgentMemory` write / recall / decay-pruning. |
-| `graph_rag.cli` | `typer` CLI: `status`, `apply-schema`, `ingest`, `serve-mcp`, `compute-centrality`, `prune-memory`, `eval-retrieval`. |
+| `graph_rag.cli` | `typer` CLI: `status`, `apply-schema`, `ingest` (`--scip` for a SCIP index), `scip-java`, `serve-mcp`, `compute-centrality`, `prune-memory`, `eval-retrieval`. |
 | `graph_rag.http_app` | FastAPI app mounted alongside the MCP server; exposes `POST /ingest`. |
 
 ## Graph data model
@@ -75,7 +78,7 @@ flowchart TD
 | `Source` | `path` | `source_type`, `content_hash`, `ingested_at` |
 | `Section` | `id` | `title`, `level`, `breadcrumb`, `order`, page range |
 | `Chunk` | `id` | `text`, `token_count`, `embedding` (384-d), page/line range |
-| `CodeEntity` | `qualified_name` (globally unique across every language) | `name`, `kind` (per-language vocabulary), `language`, `signature`, `docstring`, `path`, line range, `embedding`, `pagerank`, `synthetic` / `origin` (compile-time-synthesized members, e.g. Lombok) |
+| `CodeEntity` | `qualified_name` (globally unique across every language) | `name`, `kind` (per-language vocabulary), `language`, `signature`, `docstring`, `path`, line range, `embedding`, `pagerank`, `synthetic` / `origin` (compile-time-synthesized members, e.g. Lombok), `resolution` (`static` tree-sitter default / `scip` compiler-grade), `behaviors` (marker slugs, see `BehaviorMarker`) |
 | `PolicyRule` | `id` | `name`, `category`, `severity`, `guideline`, `embedding` |
 | `Concept` | `name` | e.g. a Terraform `resource_type` |
 | `AgentMemory` | `id` | `content`, `embedding`, `last_accessed_at`, access count, soft-delete flag |
@@ -212,6 +215,35 @@ class satisfying the `Parser` protocol (`can_handle(path) -> bool`,
 `search_code`, `get_neighbors`, and `compute-centrality` operate on
 `CodeEntity` regardless of language, so a new parser needs no retrieval-side
 change.
+
+### SCIP (compiler-grade resolution, optional)
+
+Static parsing is deliberately build-free — it can't resolve library symbols,
+overloads by type, or cross-module calls. A **SCIP index** (Sourcegraph's Code
+Intelligence Protocol; `scip-java index` runs the real compiler with the full
+classpath) carries a precise symbol graph. `grag-mcp ingest --scip <index.scip>
+[--root <repo>]` consumes it:
+
+- `ScipReader` decodes the protobuf `Index` message directly off the wire — no
+  `protobuf` runtime, no generated stubs — into `ScipDocument` / `ScipSymbol` /
+  `ScipOccurrence`.
+- `ScipSymbolParser` turns a SCIP symbol string
+  (`scip-java maven com.acme 1.0 com/acme/OrderService#submit().`) into a
+  readable `qualified_name` (`com.acme.OrderService.submit`) + a `kind` from the
+  descriptor suffix (`#` type, `().` method, `.` term).
+- `ScipIngestor` maps each `Document` to a `ParsedDocument`: `SymbolInformation`
+  → `CodeEntity` (`kind` from `Kind` else the descriptor; `documentation` →
+  `docstring` / `embed_text`); `Relationship(is_implementation)` → `IMPLEMENTS`;
+  `Relationship(is_reference | is_type_definition)` → `IMPORTS`; a reference
+  `Occurrence` whose `enclosing_range` belongs to a method → `CALLS`.
+- Every SCIP entity is tagged `resolution="scip"`. It is written per `Source`,
+  so `GraphWriter`'s existing per-`Source` reconcile drops the file's
+  static-parsed entities — **SCIP wins on overlap**. Language-agnostic:
+  validated with `scip-java`, spot-checked with `scip-typescript` /
+  `scip-python`.
+
+The index is not vendored or produced by graph-rag — see
+`docs/enterprise-java.md` for how to generate one.
 
 `JavaParser` (`grag-mcp[java]`, backed by `tree-sitter` +
 `tree-sitter-language-pack`) is the first non-Python implementation and the
