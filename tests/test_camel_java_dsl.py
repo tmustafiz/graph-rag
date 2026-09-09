@@ -119,6 +119,58 @@ def test_choice_branch_to_steps_are_conditional_with_their_predicate(tmp_path: P
     assert "conditional" not in by_uri["bean:auditService?method=record"]
 
 
+_NESTED_BLOCK_IN_CHOICE = """\
+package com.acme.routes;
+
+import org.apache.camel.builder.RouteBuilder;
+
+public class SplitRoutes extends RouteBuilder {
+
+    @Override
+    public void configure() throws Exception {
+        from("jms:queue:orders")
+            .routeId("split-in-choice")
+            .choice()
+                .when(header("priority").isEqualTo("high"))
+                    .split(body())
+                        .to("direct:each-item")
+                    .end()
+                    .to("direct:priority-done")
+                .otherwise()
+                    .to("direct:standard")
+            .end()
+            .to("log:audit");
+    }
+}
+"""
+
+
+def test_nested_end_inside_a_choice_branch_does_not_leak_conditional(tmp_path: Path) -> None:
+    """#161 residual — a `.split(...).end()` inside a `when` branch closes the
+    split, not the `choice`; the rest of the branch and the `otherwise` stay
+    conditional, and only the post-`end()` step is an unconditional target."""
+    package_dir = tmp_path / "com" / "acme" / "routes"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    path = package_dir / "SplitRoutes.java"
+    path.write_text(_NESTED_BLOCK_IN_CHOICE)
+
+    route = next(
+        r for r in JavaParser().parse(path).camel_routes if r.route_id == "split-in-choice"
+    )
+    by_uri = {step["uri"]: step for step in route.steps if step.get("uri")}
+
+    assert by_uri["direct:each-item"]["conditional"] is True
+    assert "priority" in by_uri["direct:each-item"]["predicate"]
+    # the step after the nested `.end()` is still in the `when` branch
+    assert by_uri["direct:priority-done"]["conditional"] is True
+    assert "priority" in by_uri["direct:priority-done"]["predicate"]
+    # the `otherwise` branch is not mislabeled unconditional either
+    assert by_uri["direct:standard"]["conditional"] is True
+    assert by_uri["direct:standard"]["predicate"] == "otherwise"
+    # only the step after the `choice`'s own `.end()` is a real target
+    assert "conditional" not in by_uri["log:audit"]
+
+
 _NESTED_ROUTE_BUILDER = """\
 package com.acme.routes;
 

@@ -281,7 +281,7 @@ WHERE $module IS NULL OR mod.artifact = $module OR mod.path ENDS WITH ('/' + $mo
 RETURN r.route_id AS route_id, r.from_uri AS from_uri, r.on_exception AS on_exception,
        [u IN to_uris WHERE u IS NOT NULL] AS to_uris,
        [q IN invokes WHERE q IS NOT NULL] AS invokes,
-       [s IN raw_steps WHERE s.k IS NOT NULL AND s.i IS NOT NULL] AS raw_steps,
+       [s IN raw_steps WHERE s.k IS NOT NULL] AS raw_steps,
        mod.artifact AS module, rs.path AS source_path
 ORDER BY r.route_id
 LIMIT $limit
@@ -770,10 +770,8 @@ class Retriever:
                 to_uris=row["to_uris"],
                 steps=[
                     step["k"] + (f"({step['u']})" if step["u"] else "")
-                    for step in sorted(
-                        row["raw_steps"],
-                        key=lambda step: step["i"] if step["i"] is not None else 0,
-                    )
+                    # `CamelStep.index` is guaranteed non-null by the writer.
+                    for step in sorted(row["raw_steps"], key=lambda step: step["i"])
                 ],
                 invokes=row["invokes"],
                 on_exception=row["on_exception"] or [],

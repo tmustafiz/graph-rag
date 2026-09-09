@@ -169,6 +169,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@GetExchange(url=)` path prefixes and target service are read.
   ([#164](https://github.com/tmustafiz/graph-rag/issues/164),
   [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+- Residual defects from a `/code-review` of the fixes above: SCIP `CALLS`
+  attribution handles a single-line (3-int) enclosing range and the language
+  sniff skips `local` symbols; the bare/FQN `EventType` fold only applies when
+  the simple name resolves to exactly one sibling (an ambiguous name is left
+  alone rather than wired non-deterministically); the Camel Java-DSL branch
+  tracker is block-aware, so a nested `split` / `filter` / `doTry` `.end()`
+  inside a `choice` branch no longer clears the branch predicate; an OSGi
+  `<blueprint>` wrapping a `<camelContext>` is parsed again; `SqlTableScanner`
+  also strips MySQL `\'` escapes and `#` comments; a full-URL
+  `@HttpExchange(url="https://svc")` base populates only `target_service`, not
+  the endpoint path; `CamelStep.index` is guaranteed non-null at write time.
+  ([#154](https://github.com/tmustafiz/graph-rag/issues/154),
+  [#156](https://github.com/tmustafiz/graph-rag/issues/156),
+  [#161](https://github.com/tmustafiz/graph-rag/issues/161),
+  [#162](https://github.com/tmustafiz/graph-rag/issues/162),
+  [#164](https://github.com/tmustafiz/graph-rag/issues/164),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
 
 ## [0.6.0] - 2026-09-07
 

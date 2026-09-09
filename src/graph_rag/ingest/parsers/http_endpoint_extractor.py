@@ -52,6 +52,11 @@ _MODIFIERS = {
 # depth counters.
 _STRING_LITERAL = re.compile(r'"(?:\\.|[^"\\])*"' + r"|'(?:\\.|[^'\\])*'")
 
+# `scheme://…` — an absolute base URI (`@HttpExchange(url = "https://user-service")`,
+# `lb://orders`). It names the target service, never a routable sub-path, so it
+# must not be `_join`ed onto method paths.
+_ABSOLUTE_URI = re.compile(r"^[a-zA-Z][\w+.-]*://")
+
 
 class HttpEndpointExtractor:
     """Derives `HttpEndpoint`s from a parsed `.java` file's `CodeEntity` +
@@ -373,7 +378,7 @@ class HttpEndpointExtractor:
                     continue
                 # keep "" — `@GetMapping({"", "/list"})` maps the base path too
                 items = raw if isinstance(raw, (list, tuple)) else [raw]
-                paths.extend(str(item) for item in items)
+                paths.extend(str(item) for item in items if not _ABSOLUTE_URI.match(str(item)))
         return _dedupe(paths) or [""]
 
     @classmethod

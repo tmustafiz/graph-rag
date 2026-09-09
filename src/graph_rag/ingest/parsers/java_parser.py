@@ -57,6 +57,22 @@ _CAMEL_ROUTE_BUILDERS = {"RouteBuilder", "EndpointRouteBuilder", "AdviceWithRout
 _CAMEL_PREDICATE_STEPS = {"when", "filter", "validate"}
 # Step calls whose first string argument is an endpoint URI (also a `to_uri`).
 _CAMEL_URI_STEPS = {"to", "toD", "wireTap", "enrich", "pollEnrich", "recipientList"}
+# Block-EIP openers — each is closed by a matching `.end()` (NOT `.endChoice()`,
+# which only ends a `choice` branch). Tracked as a stack so a nested block's
+# `.end()` inside a `choice` branch doesn't close the `choice` early.
+_CAMEL_BLOCK_OPENERS = {
+    "choice",
+    "split",
+    "aggregate",
+    "multicast",
+    "loadBalance",
+    "filter",
+    "loop",
+    "doTry",
+    "resequence",
+    "circuitBreaker",
+    "saga",
+}
 
 _EVENT_LISTENER_ANNOS = {"EventListener", "TransactionalEventListener"}
 _PUBLISH_METHODS = {"publishEvent"}
@@ -1307,9 +1323,12 @@ class JavaParser:
         steps: list[dict[str, Any]] = []
         step_index = 0
         # `choice()...when(pred).to(x)...otherwise().to(y)...end()` — a `to(...)`
-        # between `choice` and its `end` is conditional on the enclosing branch
-        # predicate, not an unconditional route target.
-        choice_depth = 0
+        # reached only through a `choice` branch is conditional on that branch's
+        # predicate, not an unconditional route target. `.end()` closes whatever
+        # block EIP is open (`split` / `filter` / `doTry` / … as well as
+        # `choice`), so a stack is tracked; `.endChoice()` resets the branch
+        # inside an open `choice` without closing it.
+        block_stack: list[str] = []
         branch_predicate: str | None = None
         for name, args in chain[1:]:
             if name in ("routeId", "id"):
@@ -1317,17 +1336,20 @@ class JavaParser:
                 if explicit:
                     route_id = explicit
                 continue
+            if name in _CAMEL_BLOCK_OPENERS:
+                block_stack.append(name)
             if name == "choice":
-                choice_depth += 1
                 branch_predicate = None
-            elif name in ("end", "endChoice") and choice_depth > 0:
-                choice_depth -= 1
+            elif name == "endChoice":
                 branch_predicate = None
-            elif name in ("when", "filter"):
+            elif name == "end" and block_stack:
+                if block_stack.pop() == "choice":
+                    branch_predicate = None
+            if name in ("when", "filter"):
                 branch_predicate = cls._collapse(cls._text(args, content)) if args else ""
             elif name == "otherwise":
                 branch_predicate = "otherwise"
-            conditional = choice_depth > 0 and name != "choice"
+            conditional = "choice" in block_stack and name != "choice"
             step: dict[str, Any] = {"index": step_index, "kind": name}
             if conditional:
                 step["conditional"] = True

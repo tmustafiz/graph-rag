@@ -169,3 +169,12 @@ def test_table_scanner_still_sees_a_real_join_and_write() -> None:
     sql = "UPDATE orders SET n = 1 FROM staging s JOIN sales.customer c ON c.id = s.id"
     modes = {row["name"]: row["mode"] for row in SqlTableScanner.scan(sql)}
     assert modes == {"orders": "write", "staging": "read", "customer": "read"}
+
+
+def test_table_scanner_handles_mysql_backslash_escapes_and_hash_comments() -> None:
+    """#164 residual — MySQL `\\'` string escapes and `#` line comments."""
+    sql = (
+        "SELECT * FROM orders o  # join audit_log\n"
+        "WHERE o.note = 'can\\'t ship from warehouse' AND o.tag = 'from ops'"
+    )
+    assert SqlTableScanner.scan(sql) == [{"name": "orders", "mode": "read"}]

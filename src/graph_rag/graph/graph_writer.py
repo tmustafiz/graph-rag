@@ -619,13 +619,17 @@ DELETE r
 # `OrderPlaced` write two nodes. Fold the bare-name node into its FQN sibling
 # (re-pointing PUBLISHES / CONSUMED_BY) so the flow connects across files. Runs
 # every message-flow reconcile; label-scoped and a no-op when there are none.
+# Folds only when the simple name resolves to exactly one FQN sibling — an
+# ambiguous `OrderPlaced` (present in two packages) is left as its own node, so
+# the worst case stays a missing flow rather than one wired to the wrong event.
 _MERGE_EVENT_TYPE_ALIASES = """
 MATCH (bare:EventType)
 WHERE NOT bare.fqn CONTAINS '.'
 MATCH (full:EventType)
 WHERE full <> bare AND full.fqn ENDS WITH ('.' + bare.fqn)
-WITH bare, head(collect(full)) AS full
-WHERE full IS NOT NULL
+WITH bare, collect(full) AS fulls
+WHERE size(fulls) = 1
+WITH bare, fulls[0] AS full
 CALL {
     WITH bare, full
     MATCH (p:CodeEntity)-[r:PUBLISHES]->(bare)
@@ -1584,20 +1588,26 @@ class GraphWriter:
 
     @staticmethod
     def _camel_step_rows(document: ParsedDocument) -> list[dict]:
-        return [
-            {
-                "route": route.id,
-                "id": f"{route.id}#{step['index']}",
-                "index": step["index"],
-                "kind": step["kind"],
-                "uri": step.get("uri"),
-                "ref": step.get("ref"),
-                "predicate": step.get("predicate"),
-                "conditional": bool(step.get("conditional", False)),
-            }
-            for route in document.camel_routes
-            for step in route.steps
-        ]
+        rows: list[dict] = []
+        for route in document.camel_routes:
+            for position, step in enumerate(route.steps):
+                # the ordinal position is the source of truth for step order;
+                # a parser-supplied `index` only overrides it when present, so
+                # `CamelStep.index` is never null downstream.
+                index = step["index"] if step.get("index") is not None else position
+                rows.append(
+                    {
+                        "route": route.id,
+                        "id": f"{route.id}#{index}",
+                        "index": index,
+                        "kind": step["kind"],
+                        "uri": step.get("uri"),
+                        "ref": step.get("ref"),
+                        "predicate": step.get("predicate"),
+                        "conditional": bool(step.get("conditional", False)),
+                    }
+                )
+        return rows
 
     @classmethod
     def _camel_produce_pairs(cls, document: ParsedDocument) -> list[dict]:

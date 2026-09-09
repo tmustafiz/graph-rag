@@ -10,7 +10,8 @@ from .camel_xml_route_extractor import CamelXmlRouteExtractor
 logger = logging.getLogger(__name__)
 
 # Only these as the document *root* claim the file — not a `<route>` buried in a
-# gateway descriptor / OSGi blueprint / custom-schema config.
+# gateway descriptor / custom-schema config. An OSGi `<blueprint>` wrapper is the
+# one exception: it's claimed when it *embeds* a `<camelContext>` (below).
 _CAMEL_ROOT_TAGS = {"camelContext", "routes", "route", "routeTemplate"}
 _CAMEL_NS_PREFIX = "http://camel.apache.org/schema/"
 
@@ -23,11 +24,20 @@ def _namespace(tag: str) -> str:
     return tag[1 : tag.index("}")] if tag.startswith("{") else ""
 
 
+def _is_camel_tag(tag: str) -> bool:
+    """A bare (namespace-free) tag — hand-written snippet / fixture — or one in
+    the Camel schema namespace.
+    """
+    namespace = _namespace(tag)
+    return namespace == "" or namespace.startswith(_CAMEL_NS_PREFIX)
+
+
 class CamelXmlParser:
-    """Parses a standalone Camel XML DSL file — a `<camelContext>` / `<routes>` /
-    `<routeTemplate>` / `<route>` document root — into `CamelRoute`s. A
-    namespaced root must be in the Camel namespace
-    (`http://camel.apache.org/schema/...`); a bare (namespace-free) root is
+    """Parses a Camel XML DSL file into `CamelRoute`s. Claims a
+    `<camelContext>` / `<routes>` / `<routeTemplate>` / `<route>` document root,
+    or a non-`<beans>` wrapper (an OSGi `<blueprint>`, …) that embeds a
+    `<camelContext>`. A namespaced Camel element must be in the Camel namespace
+    (`http://camel.apache.org/schema/...`); a bare (namespace-free) one is
     accepted for hand-written snippets / test fixtures.
 
     A Spring `<beans>` file that *embeds* a `<camelContext>` is claimed by
@@ -45,10 +55,18 @@ class CamelXmlParser:
             )
         except (ElementTree.ParseError, OSError):
             return False
-        if _local(root.tag) not in _CAMEL_ROOT_TAGS:
+        if _local(root.tag) in _CAMEL_ROOT_TAGS:
+            return _is_camel_tag(root.tag)
+        # A non-Camel wrapper that embeds a `<camelContext>` — an Apache Karaf /
+        # ServiceMix / Fuse OSGi `<blueprint>`, a ServiceMix `<xbean>`, … The
+        # route extractor scopes to the `<camelContext>` subtree. `<beans>` is
+        # left out: SpringXmlParser claims those (and runs the extractor itself).
+        if _local(root.tag) == "beans":
             return False
-        namespace = _namespace(root.tag)
-        return namespace == "" or namespace.startswith(_CAMEL_NS_PREFIX)
+        return any(
+            _local(element.tag) == "camelContext" and _is_camel_tag(element.tag)
+            for element in root.iter()
+        )
 
     def parse(self, path: Path) -> ParsedDocument:
         raw = path.read_bytes()

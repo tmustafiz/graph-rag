@@ -14,8 +14,12 @@ _QUOTES = '`"[]'
 # produce a phantom table. Block comments first (they can wrap `--` and `'`),
 # then string literals, then line comments.
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-_STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
-_LINE_COMMENT = re.compile(r"--[^\n]*")
+# `''` doubling (ANSI) and `\'` backslash escapes (MySQL default `sql_mode`) both
+# stay inside the literal, so `note = 'can\'t ship from orders'` isn't split at
+# the apostrophe into a phantom `orders`.
+_STRING_LITERAL = re.compile(r"'(?:[^'\\]|''|\\.)*'")
+# `--` (ANSI) and `#` (MySQL) line comments.
+_LINE_COMMENT = re.compile(r"(?:--|#)[^\n]*")
 
 
 class SqlTableScanner:

@@ -128,6 +128,32 @@ def test_yaml_with_a_lone_from_key_is_not_claimed_as_camel(tmp_path: Path) -> No
     assert not isinstance(ParserRegistry().for_path(path), CamelYamlParser)
 
 
+_BLUEPRINT_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<blueprint xmlns="http://www.osgi.org/xmlns/blueprint/v1.0.0">
+    <camelContext xmlns="http://camel.apache.org/schema/blueprint">
+        <route id="bp-intake">
+            <from uri="jms:queue:in"/>
+            <to uri="log:done"/>
+        </route>
+    </camelContext>
+</blueprint>
+"""
+
+
+def test_osgi_blueprint_wrapping_a_camel_context_is_parsed(tmp_path: Path) -> None:
+    """#162 residual — a `<blueprint>` root that embeds a `<camelContext>` is a
+    common Karaf / ServiceMix deployment; its routes must still be extracted."""
+    path = tmp_path / "blueprint.xml"
+    path.write_text(_BLUEPRINT_XML)
+
+    assert CamelXmlParser.can_handle(path) is True
+    routes = CamelXmlParser().parse(path).camel_routes
+    assert [route.route_id for route in routes] == ["bp-intake"]
+    assert routes[0].from_uri == "jms:queue:in"
+    assert routes[0].to_uris == ["log:done"]
+
+
 def test_consume_annotation_becomes_a_route(tmp_path: Path) -> None:
     package_dir = tmp_path / "com" / "acme" / "camel"
     package_dir.mkdir(parents=True, exist_ok=True)
