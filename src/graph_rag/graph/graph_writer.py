@@ -161,10 +161,19 @@ WITH h, row
 MATCH (src:Source {path: $source_path})
 MERGE (src)-[:DEFINES]->(h)
 WITH h, row
-MATCH (handler:CodeEntity {qualified_name: row.handler_qualified_name})
-FOREACH (_ IN CASE WHEN coalesce(row.outbound, false) THEN [] ELSE [1] END |
+// `HttpEndpoint.id` does not include `outbound`, so a handler that flips between
+// `@GetMapping` and `@GetExchange` keeps the same node — rebuild its single
+// direction edge from scratch each ingest instead of only ever adding one.
+OPTIONAL MATCH (h)-[stale_handled:HANDLED_BY]->()
+OPTIONAL MATCH ()-[stale_calls:CALLS_SERVICE]->(h)
+DELETE stale_handled, stale_calls
+WITH h, row
+OPTIONAL MATCH (handler:CodeEntity {qualified_name: row.handler_qualified_name})
+FOREACH (_ IN CASE
+        WHEN handler IS NOT NULL AND NOT coalesce(row.outbound, false) THEN [1] ELSE [] END |
     MERGE (h)-[:HANDLED_BY]->(handler))
-FOREACH (_ IN CASE WHEN coalesce(row.outbound, false) THEN [1] ELSE [] END |
+FOREACH (_ IN CASE
+        WHEN handler IS NOT NULL AND coalesce(row.outbound, false) THEN [1] ELSE [] END |
     MERGE (handler)-[:CALLS_SERVICE]->(h))
 """
 
@@ -183,14 +192,23 @@ FOREACH (_ IN CASE WHEN row.method_qn IS NULL THEN [] ELSE [1] END |
     MERGE (m)-[:EXECUTES]->(s))
 """
 
-# A stub `DbTable` (only `name`, `stub=true`) is created when the schema was not
-# separately ingested; MERGE on `name` alone reuses a real `DbTable` if one
-# exists with that name.
+# Every real `DbTable` is keyed on `qualified_name` (the unique constraint), so
+# resolve the bare MyBatis table name to an ingested table's `qualified_name`
+# when exactly one matches; otherwise (schema not ingested, or an ambiguous bare
+# name shared across schemas) fall back to a stub keyed on a synthesized
+# `qualified_name` — never MERGE on `name`, which would strand a second,
+# `qualified_name`-null node that no reconcile can reach.
 _MERGE_SQL_ACCESSES = """
 UNWIND $pairs AS pair
 MATCH (s:SqlStatement {id: pair.stmt})
-MERGE (t:DbTable {name: pair.table})
-ON CREATE SET t.stub = true
+OPTIONAL MATCH (real:DbTable {name: pair.table})
+WHERE coalesce(real.stub, false) = false AND real.qualified_name IS NOT NULL
+WITH s, pair, collect(DISTINCT real.qualified_name) AS real_qns
+WITH s, pair,
+     CASE WHEN size(real_qns) = 1 THEN real_qns[0]
+          ELSE '__stub__.' + pair.table END AS table_qn
+MERGE (t:DbTable {qualified_name: table_qn})
+ON CREATE SET t.stub = true, t.name = pair.table
 MERGE (s)-[a:ACCESSES]->(t)
 SET a.mode = pair.mode
 """
@@ -593,9 +611,45 @@ WHERE NOT (d.id + '|' + m.qualified_name) IN $keep
 DELETE r
 """
 
-_SWEEP_ORPHAN_MESSAGE_NODES = """
-MATCH (n)
-WHERE (n:EventType OR n:Destination) AND NOT (n)--()
+# `EventType.fqn` is import-resolved per file, so a publisher that resolves
+# `com.acme.events.OrderPlaced` and a same-package listener that only sees
+# `OrderPlaced` write two nodes. Fold the bare-name node into its FQN sibling
+# (re-pointing PUBLISHES / CONSUMED_BY) so the flow connects across files. Runs
+# every message-flow reconcile; label-scoped and a no-op when there are none.
+_MERGE_EVENT_TYPE_ALIASES = """
+MATCH (bare:EventType)
+WHERE NOT bare.fqn CONTAINS '.'
+MATCH (full:EventType)
+WHERE full <> bare AND full.fqn ENDS WITH ('.' + bare.fqn)
+WITH bare, head(collect(full)) AS full
+WHERE full IS NOT NULL
+CALL {
+    WITH bare, full
+    MATCH (p:CodeEntity)-[r:PUBLISHES]->(bare)
+    MERGE (p)-[:PUBLISHES]->(full)
+    DELETE r
+}
+CALL {
+    WITH bare, full
+    MATCH (bare)-[r:CONSUMED_BY]->(c:CodeEntity)
+    MERGE (full)-[:CONSUMED_BY]->(c)
+    DELETE r
+}
+WITH bare
+DETACH DELETE bare
+"""
+
+# Label-scoped so a re-ingest of a plain Python / JS file (zero messaging nodes)
+# does not trigger a full-graph `MATCH (n)` scan.
+_SWEEP_ORPHAN_EVENT_TYPES = """
+MATCH (n:EventType)
+WHERE NOT (n)--()
+DELETE n
+"""
+
+_SWEEP_ORPHAN_DESTINATIONS = """
+MATCH (n:Destination)
+WHERE NOT (n)--()
 DELETE n
 """
 
@@ -725,7 +779,15 @@ class GraphWriter:
     def __init__(self, driver: Driver) -> None:
         self._driver = driver
 
-    def write(self, document: ParsedDocument) -> None:
+    def write(self, document: ParsedDocument, *, reconcile_frameworks: bool = True) -> None:
+        """Persist `document`, then per-`Source` reconcile stale nodes.
+
+        `reconcile_frameworks=False` (used by `ScipIngestor`) stops after the
+        chunk / section / code-entity reconcile, so a partial document that only
+        carries `code_entities` does not `DETACH DELETE` the framework graph
+        (annotations, endpoints, routes, SQL, events, beans, modules, …) a prior
+        static ingest attached to the same path.
+        """
         with self._driver.session() as session:
             session.execute_write(self._write_source, document)
             for batch in self._batched(self._source_import_pairs(document)):
@@ -851,6 +913,8 @@ class GraphWriter:
                 document.source.path,
                 [e.qualified_name for e in document.code_entities],
             )
+            if not reconcile_frameworks:
+                return
             session.execute_write(
                 self._reconcile_annotations,
                 document.source.path,
@@ -1250,7 +1314,9 @@ class GraphWriter:
             source_path=source_path,
             keep=[f"{pair['dest']}|{pair['method']}" for pair in dest_consume_pairs],
         )
-        tx.run(cast(LiteralString, _SWEEP_ORPHAN_MESSAGE_NODES))
+        tx.run(cast(LiteralString, _MERGE_EVENT_TYPE_ALIASES))
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_EVENT_TYPES))
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_DESTINATIONS))
 
     @staticmethod
     def _reconcile_http_endpoints(

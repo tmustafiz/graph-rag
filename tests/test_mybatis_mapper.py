@@ -7,6 +7,7 @@ from pathlib import Path
 from graph_rag.graph.mybatis_resolver import MyBatisResolver
 from graph_rag.ingest.parsers.java_parser import JavaParser
 from graph_rag.ingest.parsers.mybatis_mapper_parser import MyBatisMapperParser
+from graph_rag.ingest.parsers.sql_table_scanner import SqlTableScanner
 
 _MAPPER_XML = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -135,3 +136,36 @@ def test_resolver_leaves_an_unmatched_statement_unbound() -> None:
     assembled = MyBatisResolver._assemble(statements, methods)
 
     assert assembled.executes == []
+
+
+def test_rebuild_clears_xml_executes_every_run() -> None:
+    """#165.6 — stale EXECUTES must not survive a renamed @Mapper method."""
+    from graph_rag.graph.mybatis_resolver import _CLEAR_XML_EXECUTES
+
+    class _Tx:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def run(self, query: str, **_params: object) -> list:
+            self.queries.append(query)
+            return []
+
+    tx = _Tx()
+    MyBatisResolver._rebuild(tx)  # type: ignore[arg-type]
+    assert _CLEAR_XML_EXECUTES in tx.queries
+
+
+def test_table_scanner_ignores_from_join_inside_strings_and_comments() -> None:
+    """#164 — no phantom tables from FROM/JOIN matched in a literal or comment."""
+    sql = (
+        "SELECT * FROM orders o -- join audit_log\n"
+        "/* nightly: select from archive */\n"
+        "WHERE o.note LIKE '%from customer%' AND o.msg = 'sent from billing'"
+    )
+    assert SqlTableScanner.scan(sql) == [{"name": "orders", "mode": "read"}]
+
+
+def test_table_scanner_still_sees_a_real_join_and_write() -> None:
+    sql = "UPDATE orders SET n = 1 FROM staging s JOIN sales.customer c ON c.id = s.id"
+    modes = {row["name"]: row["mode"] for row in SqlTableScanner.scan(sql)}
+    assert modes == {"orders": "write", "staging": "read", "customer": "read"}

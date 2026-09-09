@@ -249,7 +249,8 @@ RETURN b.id AS bean_id, b.name AS name, b.stereotype AS stereotype, b.scope AS s
 
 _GET_ENDPOINTS = """
 MATCH (h:HttpEndpoint)
-WHERE ($http_method IS NULL OR h.http_method = $http_method)
+WHERE coalesce(h.outbound, false) = false
+  AND ($http_method IS NULL OR h.http_method = $http_method)
   AND ($path_regex IS NULL OR h.path =~ $path_regex)
 OPTIONAL MATCH (h)-[:HANDLED_BY]->(handler:CodeEntity)
 OPTIONAL MATCH (h)-[:IN_MODULE]->(mod:Module)
@@ -280,7 +281,7 @@ WHERE $module IS NULL OR mod.artifact = $module OR mod.path ENDS WITH ('/' + $mo
 RETURN r.route_id AS route_id, r.from_uri AS from_uri, r.on_exception AS on_exception,
        [u IN to_uris WHERE u IS NOT NULL] AS to_uris,
        [q IN invokes WHERE q IS NOT NULL] AS invokes,
-       [s IN raw_steps WHERE s.k IS NOT NULL] AS raw_steps,
+       [s IN raw_steps WHERE s.k IS NOT NULL AND s.i IS NOT NULL] AS raw_steps,
        mod.artifact AS module, rs.path AS source_path
 ORDER BY r.route_id
 LIMIT $limit
@@ -315,46 +316,54 @@ RETURN
                     th: th.qualified_name}) AS outbound
 """
 
-_GET_ARCHITECTURE_OUTLINE = """
+# The module filter accepts either the exact Maven artifactId or a path suffix
+# (`mod.path ENDS WITH '/' + $module`), matching `get_endpoints` / `get_routes` /
+# `search_code`; `'unassigned'` stays reachable when no module is passed.
+_MODULE_FILTER = (
+    "WHERE $module IS NULL OR module = $module "
+    "OR (modpath IS NOT NULL AND modpath ENDS WITH ('/' + $module))"
+)
+
+_GET_ARCHITECTURE_OUTLINE = f"""
 MATCH (c:CodeEntity)-[:IS_BEAN]->(b:Bean)
 OPTIONAL MATCH (bs:Source)-[:DEFINES]->(c)
 OPTIONAL MATCH (bs)-[:IN_MODULE]->(bm:Module)
-WITH coalesce(bm.artifact, 'unassigned') AS module, 'bean' AS cat,
+WITH coalesce(bm.artifact, 'unassigned') AS module, bm.path AS modpath, 'bean' AS cat,
      b.name + ' [' + coalesce(b.stereotype, '?') + ']' AS item
-WHERE $module IS NULL OR module = $module
+{_MODULE_FILTER}
 RETURN module, cat, item
 UNION
 MATCH (h:HttpEndpoint)
 WHERE coalesce(h.outbound, false) = false
 OPTIONAL MATCH (h)-[:IN_MODULE]->(hm:Module)
-WITH coalesce(hm.artifact, 'unassigned') AS module, 'endpoint' AS cat,
+WITH coalesce(hm.artifact, 'unassigned') AS module, hm.path AS modpath, 'endpoint' AS cat,
      h.http_method + ' ' + h.path AS item
-WHERE $module IS NULL OR module = $module
+{_MODULE_FILTER}
 RETURN module, cat, item
 UNION
 MATCH (r:Route)
 OPTIONAL MATCH (rs:Source)-[:DEFINES]->(r)
 OPTIONAL MATCH (rs)-[:IN_MODULE]->(rm:Module)
-WITH coalesce(rm.artifact, 'unassigned') AS module, 'route' AS cat,
+WITH coalesce(rm.artifact, 'unassigned') AS module, rm.path AS modpath, 'route' AS cat,
      r.route_id + ': ' + r.from_uri AS item
-WHERE $module IS NULL OR module = $module
+{_MODULE_FILTER}
 RETURN module, cat, item
 UNION
 MATCH (src)-[:CONSUMED_BY]->(lc:CodeEntity)
 WHERE src:EventType OR src:Destination
 OPTIONAL MATCH (ls:Source)-[:DEFINES]->(lc)
 OPTIONAL MATCH (ls)-[:IN_MODULE]->(lm:Module)
-WITH coalesce(lm.artifact, 'unassigned') AS module, 'listener' AS cat,
+WITH coalesce(lm.artifact, 'unassigned') AS module, lm.path AS modpath, 'listener' AS cat,
      lc.qualified_name + ' <- ' + coalesce(src.fqn, src.name) AS item
-WHERE $module IS NULL OR module = $module
+{_MODULE_FILTER}
 RETURN module, cat, item
 UNION
-MATCH (sc:CodeEntity)-[:HAS_BEHAVIOR {marker: 'scheduled'}]->(smk:BehaviorMarker)
+MATCH (sc:CodeEntity)-[:HAS_BEHAVIOR {{marker: 'scheduled'}}]->(smk:BehaviorMarker)
 OPTIONAL MATCH (ss:Source)-[:DEFINES]->(sc)
 OPTIONAL MATCH (ss)-[:IN_MODULE]->(sm:Module)
-WITH coalesce(sm.artifact, 'unassigned') AS module, 'scheduled' AS cat,
+WITH coalesce(sm.artifact, 'unassigned') AS module, sm.path AS modpath, 'scheduled' AS cat,
      sc.qualified_name + coalesce(' (' + smk.attributes + ')', '') AS item
-WHERE $module IS NULL OR module = $module
+{_MODULE_FILTER}
 RETURN module, cat, item
 """
 
@@ -761,7 +770,10 @@ class Retriever:
                 to_uris=row["to_uris"],
                 steps=[
                     step["k"] + (f"({step['u']})" if step["u"] else "")
-                    for step in sorted(row["raw_steps"], key=lambda step: step["i"])
+                    for step in sorted(
+                        row["raw_steps"],
+                        key=lambda step: step["i"] if step["i"] is not None else 0,
+                    )
                 ],
                 invokes=row["invokes"],
                 on_exception=row["on_exception"] or [],

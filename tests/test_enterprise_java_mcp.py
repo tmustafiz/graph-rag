@@ -6,8 +6,8 @@ Neo4j, matching `test_spring_mcp_tools.py`). Plus the centrality projection.
 
 from typing import Any
 
-from graph_rag.graph.centrality_analyzer import _PROJECT_GRAPH
-from graph_rag.mcp_server.retriever import Retriever
+from graph_rag.graph.centrality_analyzer import _FRAMEWORK_TYPES, _NODE_LABELS
+from graph_rag.mcp_server.retriever import _GET_ARCHITECTURE_OUTLINE, _GET_ENDPOINTS, Retriever
 
 
 class _FakeResult:
@@ -89,6 +89,40 @@ def test_get_routes_shapes_steps_and_invokes_and_passes_the_uri_regex() -> None:
     assert route.steps == ["process", "bean", "to(direct:priority)"]  # re-ordered by index
     assert route.invokes == ["com.acme.OrderService.enrich(Order)"]
     assert route.on_exception == ["java.io.IOException"]
+
+
+def test_get_routes_tolerates_a_step_with_a_null_index() -> None:
+    """#165.1 — a `CamelStep` with a null `index` must not abort the whole call."""
+
+    def responder(_cypher: str, _params: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {
+                "route_id": "r1",
+                "from_uri": "direct:in",
+                "on_exception": [],
+                "to_uris": [],
+                "invokes": [],
+                "raw_steps": [
+                    {"i": None, "k": "log", "u": None},
+                    {"i": 0, "k": "to", "u": "mock:out"},
+                ],
+                "module": None,
+                "source_path": None,
+            }
+        ]
+
+    routes = _retriever(responder).get_routes()
+    assert routes[0].steps == ["log", "to(mock:out)"]
+
+
+def test_get_endpoints_query_excludes_outbound_declarations() -> None:
+    """#155 — outbound @FeignClient / @HttpExchange rows are not served routes."""
+    assert "coalesce(h.outbound, false) = false" in _GET_ENDPOINTS
+
+
+def test_architecture_outline_module_filter_accepts_a_path_suffix() -> None:
+    """#163 — consistent with get_endpoints / get_routes / search_code."""
+    assert _GET_ARCHITECTURE_OUTLINE.count("ENDS WITH ('/' + $module)") == 5
 
 
 # -- get_message_flows --
@@ -262,6 +296,7 @@ def test_search_code_without_any_filter_still_skips_the_prefilter() -> None:
 
 def test_pagerank_projection_includes_framework_relationship_types() -> None:
     for relationship in ("INJECTS", "PUBLISHES", "CALLS_SERVICE", "INVOKES", "EXECUTES"):
-        assert relationship in _PROJECT_GRAPH
+        assert relationship in _FRAMEWORK_TYPES
+    assert "HANDLED_BY" in _FRAMEWORK_TYPES
     for label in ("Bean", "EventType", "HttpEndpoint", "CamelStep"):
-        assert label in _PROJECT_GRAPH
+        assert label in _NODE_LABELS

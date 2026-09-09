@@ -6,10 +6,17 @@ from neo4j import Driver, ManagedTransaction
 logger = logging.getLogger(__name__)
 
 # XML-derived statements only — the annotation form already carries its method.
-_UNBOUND_STATEMENTS = """
-MATCH (s:SqlStatement)
-WHERE NOT ( ()-[:EXECUTES]->(s) )
+# All of them: the EXECUTES edges below are cleared and rebuilt every run (like
+# the camel / aop / service-call resolvers), so a renamed / moved `@Mapper`
+# method does not strand its old edge on the previous `CodeEntity`.
+_XML_STATEMENTS = """
+MATCH (s:SqlStatement {origin: 'mybatis-xml'})
 RETURN s.id AS id, s.mapper_qn AS mapper_qn, s.statement_id AS statement_id
+"""
+
+_CLEAR_XML_EXECUTES = """
+MATCH (:CodeEntity)-[r:EXECUTES]->(:SqlStatement {origin: 'mybatis-xml'})
+DELETE r
 """
 
 _MAPPER_METHODS = """
@@ -49,14 +56,15 @@ class MyBatisResolver:
 
     @classmethod
     def _rebuild(cls, tx: ManagedTransaction) -> dict[str, int]:
-        statements = [dict(row) for row in tx.run(cast(LiteralString, _UNBOUND_STATEMENTS))]
+        statements = [dict(row) for row in tx.run(cast(LiteralString, _XML_STATEMENTS))]
+        tx.run(cast(LiteralString, _CLEAR_XML_EXECUTES))
         if not statements:
-            return {"unbound": 0, "bound": 0}
+            return {"xml_statements": 0, "bound": 0}
         methods = [dict(row) for row in tx.run(cast(LiteralString, _MAPPER_METHODS))]
         assembled = cls._assemble(statements, methods)
         if assembled.executes:
             tx.run(cast(LiteralString, _MERGE_EXECUTES), pairs=assembled.executes)
-        return {"unbound": len(statements), "bound": len(assembled.executes)}
+        return {"xml_statements": len(statements), "bound": len(assembled.executes)}
 
     # -- assembly (pure — unit-tested without Neo4j) --
 
