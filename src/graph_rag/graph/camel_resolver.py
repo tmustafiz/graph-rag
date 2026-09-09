@@ -1,9 +1,8 @@
-import logging
 from typing import Any, LiteralString, NamedTuple, cast
 
-from neo4j import Driver, ManagedTransaction
+from neo4j import ManagedTransaction
 
-logger = logging.getLogger(__name__)
+from .graph_resolver import GraphResolver
 
 _STEPS_WITH_REF = """
 MATCH (st:CamelStep)
@@ -37,7 +36,7 @@ class _Assembled(NamedTuple):
     invokes: list[dict[str, str]]
 
 
-class CamelResolver:
+class CamelResolver(GraphResolver):
     """Post-ingest pass that resolves a Camel `process(...)` / `bean(...)` /
     `to("bean:...")` step's reference to the `CodeEntity` it invokes —
     `(:CamelStep)-[:INVOKES]->(:CodeEntity)`.
@@ -52,14 +51,7 @@ class CamelResolver:
     Ambiguous or unresolved references add no edge. Rebuilt each run.
     """
 
-    def __init__(self, driver: Driver) -> None:
-        self._driver = driver
-
-    def resolve(self) -> dict[str, int]:
-        with self._driver.session() as session:
-            result = session.execute_write(self._rebuild)
-        logger.info("camel graph resolved: %s", result)
-        return result
+    _log_label = "camel"
 
     @classmethod
     def _rebuild(cls, tx: ManagedTransaction) -> dict[str, int]:
