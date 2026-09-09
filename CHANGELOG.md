@@ -169,6 +169,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@GetExchange(url=)` path prefixes and target service are read.
   ([#164](https://github.com/tmustafiz/graph-rag/issues/164),
   [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+- Residual defects from a `/code-review` of the fixes above: SCIP `CALLS`
+  attribution handles a single-line (3-int) enclosing range and the language
+  sniff skips `local` symbols; the bare/FQN `EventType` fold only applies when
+  the simple name resolves to exactly one sibling (an ambiguous name is left
+  alone rather than wired non-deterministically); a Camel `choice` branch step
+  is flagged `conditional` on a best-effort basis (block nesting can't be
+  rebuilt exactly from a flat Java-DSL call chain), and `get_routes` now keeps
+  **every** `TO` target in `to_uris` regardless of that flag — with a
+  `conditional_to_uris` subset alongside — so a mislabel can never hide a real
+  route destination; the branch `predicate` on a step is cleared on every
+  `end` / `endChoice`, so a step after a nested `choice` closes carries no
+  label rather than the inner branch's stale one, and the `CamelRoute` model
+  docstring matches the new `to_uris` semantics; an OSGi `<blueprint>` wrapping
+  a *namespaced* `<camelContext>` is parsed again, while an unknown wrapper with
+  only a bare-tag `camelContext` descendant is left to the generic parsers;
+  `SqlTableScanner` treats `#` as a line comment only when it is not a MyBatis
+  `#{param}` bind or a T-SQL `#temp` name, and keeps standard `''` quoting (no
+  `\` escape, which broke Postgres/ANSI literals); a full-URL
+  `@HttpExchange(url="https://svc")` base populates only `target_service`, not
+  the endpoint path; `CamelStep.index` is guaranteed non-null at write time and
+  `get_routes` sorts a legacy null-index step last instead of raising.
+  ([#154](https://github.com/tmustafiz/graph-rag/issues/154),
+  [#156](https://github.com/tmustafiz/graph-rag/issues/156),
+  [#161](https://github.com/tmustafiz/graph-rag/issues/161),
+  [#162](https://github.com/tmustafiz/graph-rag/issues/162),
+  [#164](https://github.com/tmustafiz/graph-rag/issues/164),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
 
 ## [0.6.0] - 2026-09-07
 

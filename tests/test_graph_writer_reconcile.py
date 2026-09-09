@@ -30,6 +30,10 @@ def test_message_flow_reconcile_is_label_scoped_and_folds_fqn_aliases() -> None:
     assert "PUBLISHES" in gw._MERGE_EVENT_TYPE_ALIASES
     assert "CONSUMED_BY" in gw._MERGE_EVENT_TYPE_ALIASES
     assert "DETACH DELETE bare" in gw._MERGE_EVENT_TYPE_ALIASES
+    # #156 residual — an ambiguous simple name (two packages) is NOT folded onto
+    # a non-deterministically chosen sibling; fold only the unique match.
+    assert "head(collect(full))" not in gw._MERGE_EVENT_TYPE_ALIASES
+    assert "size(fulls) = 1" in gw._MERGE_EVENT_TYPE_ALIASES
 
 
 def test_sql_accesses_merges_on_qualified_name_not_name() -> None:

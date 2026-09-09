@@ -7,8 +7,11 @@ from itertools import count
 from pathlib import Path
 from xml.etree import ElementTree
 
+from ..dedupe import dedupe
 from ..models import Chunk, ConfigFile, ParsedDocument, Section, Source, SpringXmlBean
 from .camel_xml_route_extractor import CamelXmlRouteExtractor
+from .xml_namespace import local_name as _local
+from .xml_namespace import namespace as _namespace
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +38,6 @@ _NS_SHORT = {
 _PLACEHOLDER = re.compile(r"\$\{([^{}:]+)(?::[^{}]*)?\}")
 
 
-def _local(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
-
-
-def _namespace(tag: str) -> str:
-    return tag[1:].split("}", 1)[0] if tag.startswith("{") else ""
-
-
 def _split_list(raw: str | None) -> list[str]:
     if not raw:
         return []
@@ -53,13 +48,6 @@ def _placeholders(raw: str | None) -> list[str]:
     if not raw:
         return []
     return [match.group(1).strip() for match in _PLACEHOLDER.finditer(raw)]
-
-
-def _dedupe(items: list[str]) -> list[str]:
-    seen: dict[str, None] = {}
-    for item in items:
-        seen.setdefault(item, None)
-    return list(seen)
 
 
 @dataclass
@@ -144,10 +132,10 @@ class SpringXmlParser:
         config_file = ConfigFile(
             path=source.path,
             format="spring-xml",
-            scan_packages=_dedupe(scan_packages),
-            placeholder_locations=_dedupe(placeholder_locations),
-            import_resources=_dedupe(import_resources),
-            namespace_elements=_dedupe(namespace_elements),
+            scan_packages=dedupe(scan_packages, keep_empty=True),
+            placeholder_locations=dedupe(placeholder_locations, keep_empty=True),
+            import_resources=dedupe(import_resources, keep_empty=True),
+            namespace_elements=dedupe(namespace_elements, keep_empty=True),
         )
         sections, chunks = self._build_chunks(source.path, path.stem, beans)
         return ParsedDocument(
@@ -266,7 +254,7 @@ class SpringXmlParser:
                 constructor_arg_refs=constructor_arg_refs,
                 property_names=property_names,
                 property_refs=property_refs,
-                value_placeholder_keys=_dedupe(value_placeholder_keys),
+                value_placeholder_keys=dedupe(value_placeholder_keys, keep_empty=True),
             )
         )
         return bean_id

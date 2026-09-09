@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .graph.graph_writer import GraphWriter
+from .ingest.dedupe import dedupe
 from .ingest.embedders import Embedder
 from .ingest.enricher import Enricher
 from .ingest.models import CodeEntity, ParsedDocument, Source
@@ -179,9 +180,9 @@ class ScipIngestor:
             file_path=file_path,
             docstring=docstring,
             parent_qualified_name=parent if parent in qn_by_symbol.values() else None,
-            calls=_dedupe(calls),
-            imports=_dedupe(imports),
-            implements_types=_dedupe(implements),
+            calls=dedupe(calls),
+            imports=dedupe(imports),
+            implements_types=dedupe(implements),
             resolution="scip",
         )
 
@@ -205,10 +206,16 @@ class ScipIngestor:
         enclosing_range: list[int],
         definition_spans: list[tuple[tuple[int, int], str]],
     ) -> str | None:
-        if len(enclosing_range) < 4:
+        if len(enclosing_range) < 3:
             return None
         start = (enclosing_range[0], enclosing_range[1])
-        end = (enclosing_range[2], enclosing_range[3])
+        # SCIP packs a single-line range as three ints `[line, startChar, endChar]`;
+        # a multi-line range uses four `[startLine, startChar, endLine, endChar]`.
+        end = (
+            (enclosing_range[0], enclosing_range[2])
+            if len(enclosing_range) == 3
+            else (enclosing_range[2], enclosing_range[3])
+        )
         contained = [
             (identifier_start, symbol)
             for identifier_start, symbol in definition_spans
@@ -225,8 +232,14 @@ class ScipIngestor:
         # token (scip-java historically emits scheme `semanticdb`).
         if scip_document.language:
             return scip_document.language.lower()
+        # `local N` symbols carry no scheme token; skip them so the sniff sees a
+        # real `<scheme> <manager> ...` symbol.
         scheme = next(
-            (symbol.symbol.split(" ", 1)[0] for symbol in scip_document.symbols if symbol.symbol),
+            (
+                symbol.symbol.split(" ", 1)[0]
+                for symbol in scip_document.symbols
+                if symbol.symbol and not symbol.symbol.startswith("local ")
+            ),
             "",
         )
         return {
@@ -243,11 +256,3 @@ class ScipIngestor:
         except OSError:
             seed = (scip_document.relative_path + "|scip").encode("utf-8")
             return hashlib.sha256(seed).hexdigest()
-
-
-def _dedupe(items: list[str]) -> list[str]:
-    seen: dict[str, None] = {}
-    for item in items:
-        if item:
-            seen.setdefault(item, None)
-    return list(seen)

@@ -1,6 +1,7 @@
 import re
 from typing import Any
 
+from ..dedupe import dedupe
 from ..models import Annotation, CodeEntity, HttpEndpoint
 
 # method-level Spring mapping annotation → HTTP method it implies.
@@ -51,6 +52,11 @@ _MODIFIERS = {
 # annotation attribute value (`@Pattern(regexp = ")")`) can't unbalance the
 # depth counters.
 _STRING_LITERAL = re.compile(r'"(?:\\.|[^"\\])*"' + r"|'(?:\\.|[^'\\])*'")
+
+# `scheme://…` — an absolute base URI (`@HttpExchange(url = "https://user-service")`,
+# `lb://orders`). It names the target service, never a routable sub-path, so it
+# must not be `_join`ed onto method paths.
+_ABSOLUTE_URI = re.compile(r"^[a-zA-Z][\w+.-]*://")
 
 
 class HttpEndpointExtractor:
@@ -169,10 +175,13 @@ class HttpEndpointExtractor:
         method_paths = cls._all_paths(
             method_annos, ("RequestMapping", *_SPRING_METHOD_MAPPINGS, "Path")
         )
-        paths = _dedupe(
-            cls._join(class_path, method_path)
-            for class_path in class_paths
-            for method_path in method_paths
+        paths = dedupe(
+            [
+                cls._join(class_path, method_path)
+                for class_path in class_paths
+                for method_path in method_paths
+            ],
+            keep_empty=True,
         )
         produces = cls._media(method_annos, "produces", "Produces") or class_produces
         consumes = cls._media(method_annos, "consumes", "Consumes") or class_consumes
@@ -315,10 +324,13 @@ class HttpEndpointExtractor:
             else:
                 return []
 
-        paths = _dedupe(
-            cls._join(base_path, method_path)
-            for base_path in client["base_paths"]
-            for method_path in method_paths
+        paths = dedupe(
+            [
+                cls._join(base_path, method_path)
+                for base_path in client["base_paths"]
+                for method_path in method_paths
+            ],
+            keep_empty=True,
         )
         param_types = cls._signature_params(method.signature, method.name)
         bindings = cls._bindings(param_annos, param_types)
@@ -373,8 +385,8 @@ class HttpEndpointExtractor:
                     continue
                 # keep "" — `@GetMapping({"", "/list"})` maps the base path too
                 items = raw if isinstance(raw, (list, tuple)) else [raw]
-                paths.extend(str(item) for item in items)
-        return _dedupe(paths) or [""]
+                paths.extend(str(item) for item in items if not _ABSOLUTE_URI.match(str(item)))
+        return dedupe(paths, keep_empty=True) or [""]
 
     @classmethod
     def _media(cls, annos: list[Annotation], spring_attr: str, jaxrs_anno: str) -> list[str]:
@@ -470,18 +482,6 @@ class HttpEndpointExtractor:
     def _join(prefix: str, suffix: str) -> str:
         parts = [segment.strip("/") for segment in (prefix, suffix) if segment.strip("/")]
         return "/" + "/".join(parts) if parts else "/"
-
-
-def _dedupe(items: Any) -> list[str]:
-    """Order-preserving de-dup — a class- and method-level path that compose to
-    the same route, or a repeated array entry, collapse to one endpoint."""
-    seen: set[str] = set()
-    out: list[str] = []
-    for item in items:
-        if item not in seen:
-            seen.add(item)
-            out.append(item)
-    return out
 
 
 def _split_top_level(text: str) -> list[str]:

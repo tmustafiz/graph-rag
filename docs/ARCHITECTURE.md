@@ -163,23 +163,21 @@ no longer produces. A file that fails to parse/embed/write is recorded and
 skipped without aborting the batch.
 
 Build files (`pom.xml`, `*.gradle*`) parse first so the `Module` layer exists
-before the `.java` files, and once the batch is done seven graph passes run in
+before the `.java` files, and once the batch is done nine graph passes run in
 order: `ProjectModelResolver` wires `IN_MODULE`, promotes sibling dependencies
 and classifies `IMPORTS.external`; `SpringBeanResolver` derives the annotation
 `Bean` layer; `SpringXmlResolver` folds the `SpringXmlBean` defs from any
 `<beans>` contexts into that same `Bean` layer; `SpringDataResolver` tags the
 repository / JPA-entity `CodeEntity`s and wires `MANAGES` / `PERSISTS_AS` /
-`RELATES_TO`; finally `SpringInjectionResolver` makes every Spring Data
-repository interface a `:Bean` and re-runs injection resolution over the now
-complete bean set, so an annotation bean wiring an XML-only bean or a
-repository (unresolvable when the first pass ran) gets its `INJECTS` edge;
-`AopResolver` matches every `@Aspect` advice's pointcut to the
-`CodeEntity`s it advises; finally `ServiceCallResolver` links each outbound
-`@FeignClient` / `@HttpExchange` endpoint to the controller route it calls. The
-`CodeEntity`s it advises; finally `MyBatisResolver` binds each XML mapper
-statement to its `@Mapper` interface method. The
-`CodeEntity`s it advises; finally `CamelResolver` resolves each Camel `process` /
-`bean` step to the `CodeEntity` it invokes. The
+`RELATES_TO`; `SpringInjectionResolver` makes every Spring Data repository
+interface a `:Bean` and re-runs injection resolution over the now complete
+bean set, so an annotation bean wiring an XML-only bean or a repository
+(unresolvable when the first pass ran) gets its `INJECTS` edge; `AopResolver`
+matches every `@Aspect` advice's pointcut to the `CodeEntity`s it advises;
+`ServiceCallResolver` links each outbound `@FeignClient` / `@HttpExchange`
+endpoint to the controller route it calls; `MyBatisResolver` binds each XML
+mapper statement to its `@Mapper` interface method; and `CamelResolver`
+resolves each Camel `process` / `bean` step to the `CodeEntity` it invokes. The
 same passes also run after a **single-file** ingest — each is a full-graph
 rebuild — so `ingest_path` / `grag ingest <file>` / `--watch` keep the
 projections in sync with an edit.
@@ -482,7 +480,8 @@ entity, exact then unique-simple-name), `(:JpaEntity)-[:PERSISTS_AS]->(:DbTable)
 `(:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(:JpaEntity)` — including a
 self-edge for tree / hierarchy models (`Category.parent` + `Category.children`).
 
-`SpringInjectionResolver` is the fifth and last pass. It first MERGEs a
+`SpringInjectionResolver` is the fifth pass, and the last of the Spring
+passes. It first MERGEs a
 `(:Bean {stereotype:'Repository'})` + `IS_BEAN` for every `SpringDataRepoDef`
 interface (`bean_type` = the interface FQN), so a repository injected by type
 with no `@Repository` annotation is a real candidate. It then re-reads every
@@ -515,7 +514,7 @@ one per method mapping (`@GetMapping` / `@GetExchange` / …), path composed fro
 the type base + method path, `outbound=true`, `target_service` = the Feign
 `name` / `url`. The client method is wired
 `(:CodeEntity)-[:CALLS_SERVICE]->(:HttpEndpoint outbound)`.
-`ServiceCallResolver` (last post-ingest pass) then matches each outbound
+`ServiceCallResolver` (seventh post-ingest pass) then matches each outbound
 endpoint to an ingested `@RestController` route by `(http_method, path)` — path
 variables normalized to `{}`, a trailing slash trimmed, `*` matching any method
 — and adds `(:HttpEndpoint outbound)-[:RESOLVES_TO]->(:HttpEndpoint inbound)`
@@ -556,7 +555,7 @@ list (`to` / `toD` / `process` / `bean` / `choice` / `when` / `otherwise` /
 in the builder. Endpoint URIs become MERGE-shared `CamelEndpoint {uri, scheme}`
 nodes, so a `.to("direct:x")` and a `from("direct:x")` in different routes pair
 through `(:Route)-[:TO]->(:CamelEndpoint)-[:CONSUMED_BY]->(:Route)` with no
-resolver. `CamelResolver` (seventh post-ingest pass) resolves each `process` /
+resolver. `CamelResolver` (ninth post-ingest pass) resolves each `process` /
 `bean` / `to("bean:...")` step's reference (`Type.method`, bare `Type`, or
 `beanName`) to `(:CamelStep)-[:INVOKES]->(:CodeEntity)`.
 

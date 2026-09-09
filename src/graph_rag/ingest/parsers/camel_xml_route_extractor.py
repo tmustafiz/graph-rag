@@ -2,7 +2,9 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
+from ..dedupe import dedupe
 from ..models import CamelRoute
+from .xml_namespace import local_name as _local
 
 # element local-name → step kind for the flat step list. `choice` / `when` /
 # `otherwise` are emitted with a synthetic `end` so the shape matches the Java DSL.
@@ -29,10 +31,6 @@ _PASSTHROUGH_STEPS = {
     "transform",
 }
 _PREDICATE_TAGS = ("simple", "xpath", "groovy", "jsonpath", "constant", "header", "method")
-
-
-def _local(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
 class CamelXmlRouteExtractor:
@@ -111,7 +109,7 @@ class CamelXmlRouteExtractor:
             from_uri=from_uri,
             source_path=source_path,
             ordinal=ordinal,
-            to_uris=_dedupe(to_uris),
+            to_uris=dedupe(to_uris),
             steps=steps,
             embed_text=embed_text,
         )
@@ -208,11 +206,3 @@ class CamelXmlRouteExtractor:
     @staticmethod
     def _descendants(element: ElementTree.Element, local_name: str) -> list[ElementTree.Element]:
         return [node for node in element.iter() if _local(node.tag) == local_name]
-
-
-def _dedupe(items: list[str]) -> list[str]:
-    seen: dict[str, None] = {}
-    for item in items:
-        if item:
-            seen.setdefault(item, None)
-    return list(seen)

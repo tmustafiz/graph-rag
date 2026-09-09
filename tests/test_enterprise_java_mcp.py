@@ -69,7 +69,8 @@ def test_get_routes_shapes_steps_and_invokes_and_passes_the_uri_regex() -> None:
                 "route_id": "order-intake",
                 "from_uri": "jms:queue:orders",
                 "on_exception": ["java.io.IOException"],
-                "to_uris": ["direct:priority", "bean:audit"],
+                "to_uris": ["direct:priority", "direct:standard", "bean:audit"],
+                "conditional_to_uris": ["direct:priority", "direct:standard"],
                 "invokes": ["com.acme.OrderService.enrich(Order)"],
                 "raw_steps": [
                     {"i": 1, "k": "bean", "u": None},
@@ -89,30 +90,56 @@ def test_get_routes_shapes_steps_and_invokes_and_passes_the_uri_regex() -> None:
     assert route.steps == ["process", "bean", "to(direct:priority)"]  # re-ordered by index
     assert route.invokes == ["com.acme.OrderService.enrich(Order)"]
     assert route.on_exception == ["java.io.IOException"]
+    # #161 round 3 — a conditional branch target is still a real destination:
+    # kept in `to_uris`, and also surfaced in `conditional_to_uris`.
+    assert route.to_uris == ["direct:priority", "direct:standard", "bean:audit"]
+    assert route.conditional_to_uris == ["direct:priority", "direct:standard"]
 
 
-def test_get_routes_tolerates_a_step_with_a_null_index() -> None:
-    """#165.1 — a `CamelStep` with a null `index` must not abort the whole call."""
+def test_get_routes_query_keeps_conditional_targets_in_to_uris() -> None:
+    """#161 round 3 — `_GET_ROUTES` no longer filters `TO` edges by
+    `conditional`; a mislabelled branch step can't hide a real destination."""
+    from graph_rag.mcp_server.retriever import _GET_ROUTES
 
-    def responder(_cypher: str, _params: dict[str, Any]) -> list[dict[str, Any]]:
-        return [
-            {
-                "route_id": "r1",
-                "from_uri": "direct:in",
-                "on_exception": [],
-                "to_uris": [],
-                "invokes": [],
-                "raw_steps": [
-                    {"i": None, "k": "log", "u": None},
-                    {"i": 0, "k": "to", "u": "mock:out"},
-                ],
-                "module": None,
-                "source_path": None,
-            }
-        ]
+    assert "collect(DISTINCT toe.uri) AS to_uris" in _GET_ROUTES
+    assert "WHEN NOT coalesce(t_to.conditional, false)" not in _GET_ROUTES
+    assert "AS conditional_to_uris" in _GET_ROUTES
 
-    routes = _retriever(responder).get_routes()
-    assert routes[0].steps == ["log", "to(mock:out)"]
+
+def test_camel_step_rows_guarantee_a_non_null_index() -> None:
+    """#165.1 — the writer fills `CamelStep.index` from the ordinal position when
+    a parser omits it, so `get_routes` never sorts on a null. The Cypher no
+    longer carries the `s.i IS NOT NULL` guard either.
+    """
+    from datetime import UTC, datetime
+
+    from graph_rag.graph import graph_writer as gw
+    from graph_rag.ingest.models import CamelRoute, ParsedDocument, Source
+    from graph_rag.mcp_server.retriever import _GET_ROUTES
+
+    route = CamelRoute(
+        route_id="r",
+        from_uri="direct:in",
+        source_path="Routes.java",
+        ordinal=0,
+        steps=[
+            {"kind": "log"},
+            {"index": None, "kind": "to", "uri": "mock:out"},
+        ],
+        embed_text="x",
+    )
+    document = ParsedDocument(
+        source=Source(
+            path="Routes.java",
+            source_type="java",
+            content_hash="h",
+            ingested_at=datetime.now(UTC),
+        ),
+        camel_routes=[route],
+    )
+    indexes = [row["index"] for row in gw.GraphWriter._camel_step_rows(document)]
+    assert indexes == [0, 1]
+    assert "s.i IS NOT NULL" not in _GET_ROUTES
 
 
 def test_get_endpoints_query_excludes_outbound_declarations() -> None:

@@ -95,6 +95,30 @@ def test_http_exchange_url_attribute_supplies_base_and_method_paths(tmp_path: Pa
     assert endpoints[("GET", "/api/persons/{id}")].target_service == "/api/persons"
 
 
+_HTTP_EXCHANGE_ABSOLUTE_URL = """\
+package com.acme.orders.client;
+
+import org.springframework.web.service.annotation.*;
+
+@HttpExchange(url = "https://user-service")
+public interface UserClient {
+
+    @GetExchange(url = "/pets")
+    Pet pets();
+}
+"""
+
+
+def test_http_exchange_absolute_url_populates_target_service_not_the_path(tmp_path: Path) -> None:
+    """#165.5 residual — a full-URL base must not be `_join`ed onto method paths
+    (`/https://user-service/pets`); it only names the target service."""
+    endpoints = _endpoints(tmp_path, "UserClient.java", _HTTP_EXCHANGE_ABSOLUTE_URL)
+
+    assert ("GET", "/pets") in endpoints
+    assert not any(path.startswith("/https:") for _method, path in endpoints)
+    assert endpoints[("GET", "/pets")].target_service == "https://user-service"
+
+
 # -- ServiceCallResolver._assemble --
 
 

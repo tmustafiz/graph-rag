@@ -202,11 +202,13 @@ def register_knowledge_tools(
 
     @server.tool()
     def get_routes(uri_glob: str | None = None, module: str | None = None) -> list[RouteResult]:
-        """Apache Camel routes (`Route` nodes) — `from` endpoint, `to` endpoints,
-        ordered step list, and the `CodeEntity`s the `process` / `bean` steps
-        invoke. Optional `uri_glob` (`*` / `?`; substring unless `^` / `$`) is
-        matched against the route's `from` and any `to` endpoint URI; `module`
-        is the owning `Module` artifact id or path suffix.
+        """Apache Camel routes (`Route` nodes) — `from` endpoint, `to` endpoints
+        (`to_uris` is every target; `conditional_to_uris` is the best-effort
+        subset reached only through a `choice` branch), ordered step list, and
+        the `CodeEntity`s the `process` / `bean` steps invoke. Optional
+        `uri_glob` (`*` / `?`; substring unless `^` / `$`) is matched against the
+        route's `from` and any `to` endpoint URI; `module` is the owning
+        `Module` artifact id or path suffix.
         """
         return retriever.get_routes(uri_glob, module)
 

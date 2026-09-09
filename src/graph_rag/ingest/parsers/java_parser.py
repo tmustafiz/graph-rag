@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..dedupe import dedupe
 from ..models import Annotation, CamelRoute, CodeEntity, ParsedDocument, Source
 from .aop_extractor import AopExtractor
 from .camel_annotation_extractor import CamelAnnotationExtractor
@@ -20,14 +21,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _WHITESPACE_RE = re.compile(r"\s+")
-
-
-def _dedupe_str(items: list[str]) -> list[str]:
-    seen: dict[str, None] = {}
-    for item in items:
-        if item:
-            seen.setdefault(item, None)
-    return list(seen)
 
 
 _ANNOTATION_NODE_TYPES = ("marker_annotation", "annotation")
@@ -1271,7 +1264,7 @@ class JavaParser:
                 route = cls._camel_route_from_chain(
                     chain, content, source_path, ordinal, imported_types, same_file_types
                 )
-                route.on_exception = _dedupe_str(on_exception)
+                route.on_exception = dedupe(on_exception)
                 routes.append(route)
                 ordinal += 1
         return routes
@@ -1307,8 +1300,16 @@ class JavaParser:
         steps: list[dict[str, Any]] = []
         step_index = 0
         # `choice()...when(pred).to(x)...otherwise().to(y)...end()` — a `to(...)`
-        # between `choice` and its `end` is conditional on the enclosing branch
-        # predicate, not an unconditional route target.
+        # reached only through a `choice` branch is conditional on that branch's
+        # predicate. Nesting can't be reconstructed exactly from a flat call
+        # chain: `.end()` closes *some* block EIP (`split` / `filter` / `doTry` /
+        # …, not just `choice`) and `.endChoice()` is overloaded (end-branch vs
+        # end-choice). So `choice_depth` is a best-effort counter and the
+        # `conditional` flag is advisory — a nested block's `.end()` can zero it
+        # early, under-reporting conditionality. That direction is deliberate:
+        # `_GET_ROUTES` keeps every real `TO` target in `to_uris` regardless of
+        # the flag (with `conditional_to_uris` alongside), so a mislabel
+        # over-reports an always-taken destination rather than hiding one. (#161)
         choice_depth = 0
         branch_predicate: str | None = None
         for name, args in chain[1:]:
@@ -1322,8 +1323,11 @@ class JavaParser:
                 branch_predicate = None
             elif name in ("end", "endChoice") and choice_depth > 0:
                 choice_depth -= 1
+                # Reset on every decrement, not just at depth 0. A fully-correct
+                # predicate for an outer branch after a nested `choice` closes
+                # would need a predicate stack; "no label" beats the wrong one.
                 branch_predicate = None
-            elif name in ("when", "filter"):
+            if name in ("when", "filter"):
                 branch_predicate = cls._collapse(cls._text(args, content)) if args else ""
             elif name == "otherwise":
                 branch_predicate = "otherwise"
@@ -1364,7 +1368,7 @@ class JavaParser:
             from_uri=from_uri,
             source_path=source_path,
             ordinal=ordinal,
-            to_uris=_dedupe_str(to_uris),
+            to_uris=dedupe(to_uris),
             steps=steps,
             embed_text=embed_text,
         )

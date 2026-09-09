@@ -14,8 +14,15 @@ _QUOTES = '`"[]'
 # produce a phantom table. Block comments first (they can wrap `--` and `'`),
 # then string literals, then line comments.
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-_STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
-_LINE_COMMENT = re.compile(r"--[^\n]*")
+# `''` doubling only — the SQL standard. A dialect-specific `\'` escape isn't
+# assumed: `scan` gets no dialect, and treating `\` as special breaks a
+# standard / Postgres literal like `'C:\'` (runs the match past the real
+# closing quote). Matches `procedural_sql_extractor._STRING_LITERAL_RE`.
+_STRING_LITERAL = re.compile(r"'(?:''|[^'])*'")
+# `--` line comments (ANSI), and `#` line comments (MySQL) only when the `#` is
+# followed by whitespace — never `#{param}` MyBatis binds (this scanner only
+# ever sees MyBatis SQL) or a T-SQL `#temp` table name.
+_LINE_COMMENT = re.compile(r"--[^\n]*|#[ \t][^\n]*")
 
 
 class SqlTableScanner:

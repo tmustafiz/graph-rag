@@ -3,6 +3,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ..dedupe import dedupe
 from ..models import CodeEntity
 
 if TYPE_CHECKING:
@@ -183,8 +184,8 @@ class ProceduralSqlExtractor:
                     docstring=draft.docstring,
                     parent_qualified_name=draft.parent_qualified_name,
                     calls=calls,
-                    reads=_unique(draft.reads),
-                    writes=_unique(draft.writes),
+                    reads=dedupe(draft.reads),
+                    writes=dedupe(draft.writes),
                     trigger_table=draft.trigger_table,
                 )
             )
@@ -569,9 +570,9 @@ class ProceduralSqlExtractor:
         if draft.trigger_table:
             summary = f"{summary}. Fires on {draft.trigger_table}"
         if draft.writes:
-            summary = f"{summary}. Writes: {', '.join(_unique(draft.writes))}"
+            summary = f"{summary}. Writes: {', '.join(dedupe(draft.writes))}"
         if draft.reads:
-            summary = f"{summary}. Reads: {', '.join(_unique(draft.reads))}"
+            summary = f"{summary}. Reads: {', '.join(dedupe(draft.reads))}"
         return summary
 
 
@@ -637,14 +638,6 @@ def _strip_noise(sql: str) -> str:
     sql = _LINE_COMMENT_RE.sub(" ", sql)
     sql = _STRING_LITERAL_RE.sub("''", sql)
     return sql
-
-
-def _unique(values: list[str]) -> list[str]:
-    seen: dict[str, None] = {}
-    for value in values:
-        if value:
-            seen.setdefault(value, None)
-    return list(seen)
 
 
 def _collapse(text: str) -> str:

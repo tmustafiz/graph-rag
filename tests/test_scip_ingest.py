@@ -184,6 +184,50 @@ def test_two_definitions_on_one_line_do_not_shadow_each_other() -> None:
     assert compute.calls == ["com.acme.JpaOrderRepository.save"]
 
 
+def test_calls_attributed_when_the_enclosing_decl_is_a_single_line_3_int_range() -> None:
+    """#154 residual — SCIP packs a one-line range as `[line, startChar, endChar]`;
+    an expression-bodied / one-line method must still get its CALLS edges."""
+    symbols = [
+        _sym("com/acme/Box#name().", kind=38),
+    ]
+    occurrences = [
+        _occ("com/acme/Box#name().", [3, 18, 3, 22], defn=True),
+        # `String name() { return fmt(raw); }` all on line 3 — enclosing_range
+        # has three ints, not four.
+        _occ(
+            "com/acme/Formatter#fmt().",
+            [3, 33, 3, 36],
+            defn=False,
+            enclosing=[3, 11, 45],
+        ),
+    ]
+    parsed = ScipIngestor._build_documents([_doc(symbols, occurrences)], None)[0]
+    name = _by_qn(parsed.code_entities)["com.acme.Box.name"]
+    assert name.calls == ["com.acme.Formatter.fmt"]
+
+
+def test_language_scheme_sniff_skips_local_symbols() -> None:
+    """#165.3 residual — a leading `local N` symbol has no scheme token; the sniff
+    must look past it to a real `<scheme> ...` symbol."""
+    doc = ScipDocument(
+        relative_path="com/acme/OrderService.java",
+        language="",
+        symbols=[
+            ScipSymbol(symbol="local 0", kind=0),
+            ScipSymbol(symbol="scip-java maven com.acme 1.0 com/acme/OrderService#", kind=6),
+        ],
+        occurrences=[
+            ScipOccurrence(
+                symbol="scip-java maven com.acme 1.0 com/acme/OrderService#",
+                symbol_roles=1,
+                range=[0, 6, 0, 18],
+            )
+        ],
+    )
+    parsed = ScipIngestor._build_documents([doc], None)[0]
+    assert parsed.code_entities[0].language == "java"
+
+
 @pytest.mark.parametrize(
     ("doc_language", "scheme", "expected"),
     [
