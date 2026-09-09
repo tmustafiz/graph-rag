@@ -2,43 +2,26 @@ from typing import LiteralString, cast
 
 from neo4j import Driver
 
+from .schema import (
+    DIRECT_RELATIONSHIP_TYPES,
+    FRAMEWORK_NODE_LABELS,
+    FRAMEWORK_RELATIONSHIP_TYPES,
+)
+
 _PROJECTION_NAME = "code-deps"
 
-# Direct dependency edges — PageRank always needs at least one of these present,
-# and they keep their natural direction ("many callers reach X" → X ranks high).
-_DIRECT_TYPES: tuple[str, ...] = ("CALLS", "IMPORTS")
-
-# Framework-mediated edges (v0.7.0): a controller `IS_BEAN`→ bean `INJECTS`→ repo
-# bean ←`IS_BEAN` repository, an `@EventListener` reached via `EventType`, a Camel
-# `process` step's `INVOKES`, a `@FeignClient` `CALLS_SERVICE`, a `@Mapper`
-# `EXECUTES`, a controller route `HANDLED_BY` its method. Projected UNDIRECTED so
-# framework-mediated rank actually reaches the target `CodeEntity` regardless of
-# each edge's stored direction.
-_FRAMEWORK_TYPES: tuple[str, ...] = (
-    "IS_BEAN",
-    "INJECTS",
-    "PUBLISHES",
-    "CONSUMED_BY",
-    "HANDLED_BY",
-    "CALLS_SERVICE",
-    "RESOLVES_TO",
-    "INVOKES",
-    "EXECUTES",
-)
-
-# Node labels the edges above connect. Only those that exist are projected —
-# `gds.graph.project` validates every label / type against the DB token store and
-# throws when one has zero instances (so a plain Python / pre-v0.7.0 DB used to
-# abort instead of scoring).
-_NODE_LABELS: tuple[str, ...] = (
-    "CodeEntity",
-    "Bean",
-    "EventType",
-    "Destination",
-    "HttpEndpoint",
-    "CamelStep",
-    "SqlStatement",
-)
+# The projection vocabulary lives in `schema.py` (single source of truth):
+#   - `DIRECT_RELATIONSHIP_TYPES` — `CALLS` / `IMPORTS`, kept NATURAL so
+#     "many callers reach X" ranks X high; PageRank needs >=1 of these present.
+#   - `FRAMEWORK_RELATIONSHIP_TYPES` — the v0.7.0 framework-mediated edges
+#     (`IS_BEAN` / `INJECTS`, `PUBLISHES` / `CONSUMED_BY`, `HANDLED_BY`,
+#     Camel `INVOKES`, `CALLS_SERVICE`, `RESOLVES_TO`, `EXECUTES`), projected
+#     UNDIRECTED so framework rank reaches the target `CodeEntity` whichever way
+#     each edge is stored.
+#   - `FRAMEWORK_NODE_LABELS` — the node labels those edges connect.
+# Only the subset actually present in the DB is projected: `gds.graph.project`
+# validates every label / type against the token store and throws on one with
+# zero instances (a plain-Python / pre-v0.7.0 DB projects just `CALLS`/`IMPORTS`).
 
 _PRESENT_TYPES = (
     "CALL db.relationshipTypes() YIELD relationshipType RETURN collect(relationshipType) AS types"
@@ -94,17 +77,19 @@ class CentralityAnalyzer:
         """
         with self._driver.session() as session:
             present_types = set(session.run(cast(LiteralString, _PRESENT_TYPES)).single()["types"])
-            if not any(direct in present_types for direct in _DIRECT_TYPES):
+            if not any(direct in present_types for direct in DIRECT_RELATIONSHIP_TYPES):
                 return 0
             present_labels = set(
                 session.run(cast(LiteralString, _PRESENT_LABELS)).single()["labels"]
             )
-            labels = [label for label in _NODE_LABELS if label in present_labels]
+            labels = [label for label in FRAMEWORK_NODE_LABELS if label in present_labels]
             relationships = {
                 rel_type: {
-                    "orientation": "UNDIRECTED" if rel_type in _FRAMEWORK_TYPES else "NATURAL"
+                    "orientation": "UNDIRECTED"
+                    if rel_type in FRAMEWORK_RELATIONSHIP_TYPES
+                    else "NATURAL"
                 }
-                for rel_type in (*_DIRECT_TYPES, *_FRAMEWORK_TYPES)
+                for rel_type in (*DIRECT_RELATIONSHIP_TYPES, *FRAMEWORK_RELATIONSHIP_TYPES)
                 if rel_type in present_types
             }
             try:

@@ -6,7 +6,7 @@ Neo4j, matching `test_spring_mcp_tools.py`). Plus the centrality projection.
 
 from typing import Any
 
-from graph_rag.graph.centrality_analyzer import _FRAMEWORK_TYPES, _NODE_LABELS
+from graph_rag.graph.schema import FRAMEWORK_NODE_LABELS, FRAMEWORK_RELATIONSHIP_TYPES
 from graph_rag.mcp_server.retriever import _GET_ARCHITECTURE_OUTLINE, _GET_ENDPOINTS, Retriever
 
 
@@ -323,7 +323,7 @@ def test_search_code_without_any_filter_still_skips_the_prefilter() -> None:
 
 def test_pagerank_projection_includes_framework_relationship_types() -> None:
     for relationship in ("INJECTS", "PUBLISHES", "CALLS_SERVICE", "INVOKES", "EXECUTES"):
-        assert relationship in _FRAMEWORK_TYPES
-    assert "HANDLED_BY" in _FRAMEWORK_TYPES
+        assert relationship in FRAMEWORK_RELATIONSHIP_TYPES
+    assert "HANDLED_BY" in FRAMEWORK_RELATIONSHIP_TYPES
     for label in ("Bean", "EventType", "HttpEndpoint", "CamelStep"):
-        assert label in _NODE_LABELS
+        assert label in FRAMEWORK_NODE_LABELS

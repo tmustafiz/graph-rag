@@ -4,6 +4,38 @@ from neo4j import Driver
 
 from graph_rag.settings import settings
 
+# --- Framework graph vocabulary (single source of truth) ---
+# The label / relationship-type names the v0.7.0 framework layer adds on top of
+# the base `CALLS` / `IMPORTS` code graph. `CentralityAnalyzer` projects the
+# subset of these that a given database actually contains; `graph_writer` and
+# the post-ingest resolvers MERGE them. `tests/test_graph_schema.py` fails if a
+# name here is never written by any `graph/` module, or a framework node label
+# here has no uniqueness constraint below — so a rename can't silently leave the
+# PageRank projection stale.
+DIRECT_RELATIONSHIP_TYPES: tuple[str, ...] = ("CALLS", "IMPORTS")
+
+FRAMEWORK_RELATIONSHIP_TYPES: tuple[str, ...] = (
+    "IS_BEAN",
+    "INJECTS",
+    "PUBLISHES",
+    "CONSUMED_BY",
+    "HANDLED_BY",
+    "CALLS_SERVICE",
+    "RESOLVES_TO",
+    "INVOKES",
+    "EXECUTES",
+)
+
+FRAMEWORK_NODE_LABELS: tuple[str, ...] = (
+    "CodeEntity",
+    "Bean",
+    "EventType",
+    "Destination",
+    "HttpEndpoint",
+    "CamelStep",
+    "SqlStatement",
+)
+
 # Uniqueness constraints — one per node type that ingestion upserts on.
 # See docs/ARCHITECTURE.md for the full node/relationship taxonomy.
 CONSTRAINTS: list[str] = [
