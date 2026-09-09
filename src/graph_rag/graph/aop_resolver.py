@@ -1,10 +1,9 @@
-import logging
 import re
 from typing import Any, LiteralString, NamedTuple, cast
 
-from neo4j import Driver, ManagedTransaction
+from neo4j import ManagedTransaction
 
-logger = logging.getLogger(__name__)
+from .graph_resolver import GraphResolver
 
 _ADVICE_NODES = """
 MATCH (ad:Advice)
@@ -48,7 +47,7 @@ class _Assembled(NamedTuple):
     reasons: list[dict[str, str | None]]
 
 
-class AopResolver:
+class AopResolver(GraphResolver):
     """Post-ingest pass that resolves every `@Aspect` advice's pointcut against
     the ingested `CodeEntity`s it advises.
 
@@ -67,14 +66,7 @@ class AopResolver:
     records `Advice.unresolved_reason` (cleared to null when it now resolves).
     """
 
-    def __init__(self, driver: Driver) -> None:
-        self._driver = driver
-
-    def resolve(self) -> dict[str, int]:
-        with self._driver.session() as session:
-            result = session.execute_write(self._rebuild)
-        logger.info("aop graph resolved: %s", result)
-        return result
+    _log_label = "aop"
 
     @classmethod
     def _rebuild(cls, tx: ManagedTransaction) -> dict[str, int]:

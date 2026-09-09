@@ -1,11 +1,10 @@
 import json
-import logging
 import os
 from typing import Any, LiteralString, NamedTuple, cast
 
-from neo4j import Driver, ManagedTransaction
+from neo4j import ManagedTransaction
 
-logger = logging.getLogger(__name__)
+from .graph_resolver import GraphResolver
 
 # Every `:Bean` the previous `SpringBeanResolver` pass built has already been
 # wiped and rebuilt by the time this runs, so the only `defined_in = 'xml'`
@@ -90,7 +89,7 @@ class _Assembled(NamedTuple):
     imports_context: list[dict[str, str]]
 
 
-class SpringXmlResolver:
+class SpringXmlResolver(GraphResolver):
     """Third post-directory-ingest pass (after `ProjectModelResolver` and
     `SpringBeanResolver`). Projects the `:SpringXmlBean` intermediate nodes that
     `SpringXmlParser` wrote into the **same** `(:Bean)` graph the annotation
@@ -114,14 +113,7 @@ class SpringXmlResolver:
     `IMPORTS_CONTEXT` edge is dropped first), so it is idempotent.
     """
 
-    def __init__(self, driver: Driver) -> None:
-        self._driver = driver
-
-    def resolve(self) -> dict[str, int]:
-        with self._driver.session() as session:
-            result = session.execute_write(self._rebuild)
-        logger.info("spring xml bean graph resolved: %s", result)
-        return result
+    _log_label = "spring xml bean"
 
     @classmethod
     def _rebuild(cls, tx: ManagedTransaction) -> dict[str, int]:

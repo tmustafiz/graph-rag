@@ -1,9 +1,8 @@
-import logging
 from typing import Any, LiteralString, NamedTuple, cast
 
-from neo4j import Driver, ManagedTransaction
+from neo4j import ManagedTransaction
 
-logger = logging.getLogger(__name__)
+from .graph_resolver import GraphResolver
 
 # XML-derived statements only — the annotation form already carries its method.
 # All of them: the EXECUTES edges below are cleared and rebuilt every run (like
@@ -37,7 +36,7 @@ class _Assembled(NamedTuple):
     executes: list[dict[str, str]]
 
 
-class MyBatisResolver:
+class MyBatisResolver(GraphResolver):
     """Binds each XML-derived `SqlStatement` to the `@Mapper` interface method
     it implements — `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)` — by matching
     the mapper `namespace` + statement `id` to a method whose declaring type is
@@ -45,14 +44,7 @@ class MyBatisResolver:
     An ambiguous or missing match is left unbound.
     """
 
-    def __init__(self, driver: Driver) -> None:
-        self._driver = driver
-
-    def resolve(self) -> dict[str, int]:
-        with self._driver.session() as session:
-            result = session.execute_write(self._rebuild)
-        logger.info("mybatis graph resolved: %s", result)
-        return result
+    _log_label = "mybatis"
 
     @classmethod
     def _rebuild(cls, tx: ManagedTransaction) -> dict[str, int]:

@@ -1,10 +1,9 @@
 import json
-import logging
 from typing import Any, LiteralString, NamedTuple, cast
 
-from neo4j import Driver, ManagedTransaction
+from neo4j import ManagedTransaction
 
-logger = logging.getLogger(__name__)
+from .graph_resolver import GraphResolver
 
 # Every Spring Data repository interface is a bean, even without `@Repository`.
 _REPO_DEFS = "MATCH (d:SpringDataRepoDef) RETURN d.qualified_name AS qn"
@@ -60,7 +59,7 @@ class _Assembled(NamedTuple):
     unresolved_updates: list[dict[str, str]]
 
 
-class SpringInjectionResolver:
+class SpringInjectionResolver(GraphResolver):
     """Final Spring pass, after `SpringBeanResolver` / `SpringXmlResolver` /
     `SpringDataResolver`. Two jobs the earlier single-pass wiring can't do:
 
@@ -81,14 +80,7 @@ class SpringInjectionResolver:
     rebuilds every `:Bean` at the start of the chain, so this stays idempotent.
     """
 
-    def __init__(self, driver: Driver) -> None:
-        self._driver = driver
-
-    def resolve(self) -> dict[str, int]:
-        with self._driver.session() as session:
-            result = session.execute_write(self._rebuild)
-        logger.info("spring injection graph resolved: %s", result)
-        return result
+    _log_label = "spring injection"
 
     @classmethod
     def _rebuild(cls, tx: ManagedTransaction) -> dict[str, int]:

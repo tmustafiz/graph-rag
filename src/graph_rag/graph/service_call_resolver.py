@@ -1,10 +1,9 @@
-import logging
 import re
 from typing import Any, LiteralString, NamedTuple, cast
 
-from neo4j import Driver, ManagedTransaction
+from neo4j import ManagedTransaction
 
-logger = logging.getLogger(__name__)
+from .graph_resolver import GraphResolver
 
 _OUTBOUND = """
 MATCH (h:HttpEndpoint)
@@ -34,7 +33,7 @@ class _Assembled(NamedTuple):
     resolves_to: list[dict[str, str]]
 
 
-class ServiceCallResolver:
+class ServiceCallResolver(GraphResolver):
     """Post-ingest pass that links a declarative HTTP client's outbound
     `HttpEndpoint` to the ingested `@RestController` route it actually calls —
     `(:HttpEndpoint {outbound:true})-[:RESOLVES_TO]->(:HttpEndpoint inbound)` —
@@ -46,14 +45,7 @@ class ServiceCallResolver:
     inbound matches is left standalone (no edge).
     """
 
-    def __init__(self, driver: Driver) -> None:
-        self._driver = driver
-
-    def resolve(self) -> dict[str, int]:
-        with self._driver.session() as session:
-            result = session.execute_write(self._rebuild)
-        logger.info("service-call graph resolved: %s", result)
-        return result
+    _log_label = "service-call"
 
     @classmethod
     def _rebuild(cls, tx: ManagedTransaction) -> dict[str, int]:

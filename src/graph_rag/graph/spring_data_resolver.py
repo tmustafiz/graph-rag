@@ -1,9 +1,8 @@
-import logging
 from typing import Any, LiteralString, NamedTuple, cast
 
-from neo4j import Driver, ManagedTransaction
+from neo4j import ManagedTransaction
 
-logger = logging.getLogger(__name__)
+from .graph_resolver import GraphResolver
 
 _CLEAR_LABELS = """
 MATCH (n:CodeEntity)
@@ -87,7 +86,7 @@ class _Assembled(NamedTuple):
     relates_to: list[dict[str, str]]
 
 
-class SpringDataResolver:
+class SpringDataResolver(GraphResolver):
     """Fourth post-directory-ingest pass (after `SpringXmlResolver`). Projects
     the `SpringDataRepoDef` / `JpaEntityDef` intermediate nodes that
     `SpringDataExtractor` wrote onto the `CodeEntity` graph.
@@ -110,14 +109,7 @@ class SpringDataResolver:
     idempotent.
     """
 
-    def __init__(self, driver: Driver) -> None:
-        self._driver = driver
-
-    def resolve(self) -> dict[str, int]:
-        with self._driver.session() as session:
-            result = session.execute_write(self._rebuild)
-        logger.info("spring data / jpa graph resolved: %s", result)
-        return result
+    _log_label = "spring data / jpa"
 
     @classmethod
     def _rebuild(cls, tx: ManagedTransaction) -> dict[str, int]:
