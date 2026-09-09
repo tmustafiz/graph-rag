@@ -7,19 +7,11 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .eval.eval_case_result import EvalCaseResult
 from .eval.retrieval_evaluator import EVAL_CORPUS_DIR, RetrievalEvaluator
-from .graph.aop_resolver import AopResolver
-from .graph.camel_resolver import CamelResolver
 from .graph.centrality_analyzer import CentralityAnalyzer
 from .graph.client import check_connectivity, driver_session
+from .graph.default_resolvers import build_default_resolvers
 from .graph.graph_writer import GraphWriter
-from .graph.mybatis_resolver import MyBatisResolver
-from .graph.project_model_resolver import ProjectModelResolver
 from .graph.schema import apply_schema
-from .graph.service_call_resolver import ServiceCallResolver
-from .graph.spring_bean_resolver import SpringBeanResolver
-from .graph.spring_data_resolver import SpringDataResolver
-from .graph.spring_injection_resolver import SpringInjectionResolver
-from .graph.spring_xml_resolver import SpringXmlResolver
 from .http_app import build_http_app
 from .ingest.embedders import build_embedder
 from .ingest.parser_registry import ParserRegistry
@@ -122,17 +114,7 @@ def ingest(
             ParserRegistry(),
             build_embedder(),
             GraphWriter(driver),
-            [
-                ProjectModelResolver(driver),
-                SpringBeanResolver(driver),
-                SpringXmlResolver(driver),
-                SpringDataResolver(driver),
-                SpringInjectionResolver(driver),
-                AopResolver(driver),
-                ServiceCallResolver(driver),
-                MyBatisResolver(driver),
-                CamelResolver(driver),
-            ],
+            build_default_resolvers(driver),
         )
         try:
             results = pipeline.run(path, dry_run=dry_run)
@@ -310,17 +292,7 @@ def eval_retrieval(
             ParserRegistry(),
             embedder,
             GraphWriter(driver),
-            [
-                ProjectModelResolver(driver),
-                SpringBeanResolver(driver),
-                SpringXmlResolver(driver),
-                SpringDataResolver(driver),
-                SpringInjectionResolver(driver),
-                AopResolver(driver),
-                ServiceCallResolver(driver),
-                MyBatisResolver(driver),
-                CamelResolver(driver),
-            ],
+            build_default_resolvers(driver),
         )
         pipeline.run(EVAL_CORPUS_DIR)
         baseline = RetrievalEvaluator(Retriever(driver, embedder)).run(cases)
@@ -407,17 +379,7 @@ def serve_mcp(
                 ParserRegistry(),
                 embedder,
                 writer,
-                [
-                    ProjectModelResolver(driver),
-                    SpringBeanResolver(driver),
-                    SpringXmlResolver(driver),
-                    SpringDataResolver(driver),
-                    SpringInjectionResolver(driver),
-                    AopResolver(driver),
-                    ServiceCallResolver(driver),
-                    MyBatisResolver(driver),
-                    CamelResolver(driver),
-                ],
+                build_default_resolvers(driver),
             )
         if role in (McpRole.MEMORY, McpRole.ALL):
             memory_writer = MemoryWriter(driver, embedder)
