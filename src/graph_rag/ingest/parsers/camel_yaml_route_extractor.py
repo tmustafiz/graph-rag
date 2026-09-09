@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any
 
+from ..dedupe import dedupe
 from ..models import CamelRoute
 
 _URI_STEPS = {"to", "toD", "wireTap", "enrich", "pollEnrich", "recipientList"}
@@ -87,7 +88,7 @@ class CamelYamlRouteExtractor:
             from_uri=from_uri,
             source_path=source_path,
             ordinal=ordinal,
-            to_uris=_dedupe(to_uris),
+            to_uris=dedupe(to_uris),
             steps=steps,
             embed_text=embed_text,
         )
@@ -187,11 +188,3 @@ class CamelYamlRouteExtractor:
             if option.startswith("method="):
                 return f"{name}.{option[len('method=') :]}"
         return name
-
-
-def _dedupe(items: list[str]) -> list[str]:
-    seen: dict[str, None] = {}
-    for item in items:
-        if item:
-            seen.setdefault(item, None)
-    return list(seen)

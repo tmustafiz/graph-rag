@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..dedupe import dedupe
 from ..models import Annotation, CamelRoute, CodeEntity, ParsedDocument, Source
 from .aop_extractor import AopExtractor
 from .camel_annotation_extractor import CamelAnnotationExtractor
@@ -20,14 +21,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _WHITESPACE_RE = re.compile(r"\s+")
-
-
-def _dedupe_str(items: list[str]) -> list[str]:
-    seen: dict[str, None] = {}
-    for item in items:
-        if item:
-            seen.setdefault(item, None)
-    return list(seen)
 
 
 _ANNOTATION_NODE_TYPES = ("marker_annotation", "annotation")
@@ -1271,7 +1264,7 @@ class JavaParser:
                 route = cls._camel_route_from_chain(
                     chain, content, source_path, ordinal, imported_types, same_file_types
                 )
-                route.on_exception = _dedupe_str(on_exception)
+                route.on_exception = dedupe(on_exception)
                 routes.append(route)
                 ordinal += 1
         return routes
@@ -1375,7 +1368,7 @@ class JavaParser:
             from_uri=from_uri,
             source_path=source_path,
             ordinal=ordinal,
-            to_uris=_dedupe_str(to_uris),
+            to_uris=dedupe(to_uris),
             steps=steps,
             embed_text=embed_text,
         )

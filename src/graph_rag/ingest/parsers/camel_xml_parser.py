@@ -6,6 +6,8 @@ from xml.etree import ElementTree
 
 from ..models import ParsedDocument, Source
 from .camel_xml_route_extractor import CamelXmlRouteExtractor
+from .xml_namespace import local_name as _local
+from .xml_namespace import namespace as _namespace
 
 logger = logging.getLogger(__name__)
 
@@ -14,14 +16,6 @@ logger = logging.getLogger(__name__)
 # one exception: it's claimed when it *embeds* a `<camelContext>` (below).
 _CAMEL_ROOT_TAGS = {"camelContext", "routes", "route", "routeTemplate"}
 _CAMEL_NS_PREFIX = "http://camel.apache.org/schema/"
-
-
-def _local(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
-
-
-def _namespace(tag: str) -> str:
-    return tag[1 : tag.index("}")] if tag.startswith("{") else ""
 
 
 def _is_camel_tag(tag: str) -> bool:

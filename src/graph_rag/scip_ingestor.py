@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .graph.graph_writer import GraphWriter
+from .ingest.dedupe import dedupe
 from .ingest.embedders import Embedder
 from .ingest.enricher import Enricher
 from .ingest.models import CodeEntity, ParsedDocument, Source
@@ -179,9 +180,9 @@ class ScipIngestor:
             file_path=file_path,
             docstring=docstring,
             parent_qualified_name=parent if parent in qn_by_symbol.values() else None,
-            calls=_dedupe(calls),
-            imports=_dedupe(imports),
-            implements_types=_dedupe(implements),
+            calls=dedupe(calls),
+            imports=dedupe(imports),
+            implements_types=dedupe(implements),
             resolution="scip",
         )
 
@@ -255,11 +256,3 @@ class ScipIngestor:
         except OSError:
             seed = (scip_document.relative_path + "|scip").encode("utf-8")
             return hashlib.sha256(seed).hexdigest()
-
-
-def _dedupe(items: list[str]) -> list[str]:
-    seen: dict[str, None] = {}
-    for item in items:
-        if item:
-            seen.setdefault(item, None)
-    return list(seen)

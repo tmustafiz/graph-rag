@@ -7,15 +7,12 @@ from xml.etree import ElementTree
 
 from ..models import ParsedDocument, Source, SqlStatement
 from .sql_table_scanner import SqlTableScanner
+from .xml_namespace import local_name as _local
 
 logger = logging.getLogger(__name__)
 
 _STATEMENT_TAGS = {"select", "insert", "update", "delete"}
 _WS = re.compile(r"\s+")
-
-
-def _local(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
 class MyBatisMapperParser:
