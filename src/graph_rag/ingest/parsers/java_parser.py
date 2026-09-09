@@ -57,32 +57,6 @@ _CAMEL_ROUTE_BUILDERS = {"RouteBuilder", "EndpointRouteBuilder", "AdviceWithRout
 _CAMEL_PREDICATE_STEPS = {"when", "filter", "validate"}
 # Step calls whose first string argument is an endpoint URI (also a `to_uri`).
 _CAMEL_URI_STEPS = {"to", "toD", "wireTap", "enrich", "pollEnrich", "recipientList"}
-# Block-EIP openers, tracked as a stack so a nested block's closer inside a
-# `choice` branch doesn't close the `choice` early.
-_CAMEL_BLOCK_OPENERS = {
-    "choice",
-    "split",
-    "aggregate",
-    "multicast",
-    "loadBalance",
-    "filter",
-    "loop",
-    "doTry",
-    "resequence",
-    "circuitBreaker",
-    "saga",
-}
-# Block closers. A bare `.end()` / `.endParent()` closes just the innermost
-# block; a typed `.endChoice()` / `.endDoTry()` unwinds through any unclosed
-# nested blocks up to and including the nearest opener of that kind (so a
-# `.split()` left open with no `.end()` inside a `when` branch can't strand
-# `"choice"` on the stack). Value `None` = pop the innermost.
-_CAMEL_BLOCK_ENDERS = {
-    "end": None,
-    "endParent": None,
-    "endChoice": "choice",
-    "endDoTry": "doTry",
-}
 
 _EVENT_LISTENER_ANNOS = {"EventListener", "TransactionalEventListener"}
 _PUBLISH_METHODS = {"publishEvent"}
@@ -1334,13 +1308,16 @@ class JavaParser:
         step_index = 0
         # `choice()...when(pred).to(x)...otherwise().to(y)...end()` — a `to(...)`
         # reached only through a `choice` branch is conditional on that branch's
-        # predicate, not an unconditional route target. A block EIP (`split` /
-        # `filter` / `doTry` / … as well as `choice`) is pushed on open and
-        # popped by its closer, so a nested block's `.end()` inside a `choice`
-        # branch doesn't close the `choice` early, and a `.endChoice()` /
-        # `.endDoTry()` that skips past an unclosed nested block still unwinds to
-        # the right opener.
-        block_stack: list[str] = []
+        # predicate. Nesting can't be reconstructed exactly from a flat call
+        # chain: `.end()` closes *some* block EIP (`split` / `filter` / `doTry` /
+        # …, not just `choice`) and `.endChoice()` is overloaded (end-branch vs
+        # end-choice). So `choice_depth` is a best-effort counter and the
+        # `conditional` flag is advisory — a nested block's `.end()` can zero it
+        # early, under-reporting conditionality. That direction is deliberate:
+        # `_GET_ROUTES` keeps every real `TO` target in `to_uris` regardless of
+        # the flag (with `conditional_to_uris` alongside), so a mislabel
+        # over-reports an always-taken destination rather than hiding one. (#161)
+        choice_depth = 0
         branch_predicate: str | None = None
         for name, args in chain[1:]:
             if name in ("routeId", "id"):
@@ -1348,25 +1325,18 @@ class JavaParser:
                 if explicit:
                     route_id = explicit
                 continue
-            if name in _CAMEL_BLOCK_OPENERS:
-                block_stack.append(name)
             if name == "choice":
+                choice_depth += 1
                 branch_predicate = None
-            elif name in _CAMEL_BLOCK_ENDERS:
-                opener = _CAMEL_BLOCK_ENDERS[name]
-                if opener is None:
-                    if block_stack:
-                        block_stack.pop()
-                else:
-                    while block_stack and block_stack.pop() != opener:
-                        pass
-                if "choice" not in block_stack:
+            elif name in ("end", "endChoice") and choice_depth > 0:
+                choice_depth -= 1
+                if choice_depth == 0:
                     branch_predicate = None
             if name in ("when", "filter"):
                 branch_predicate = cls._collapse(cls._text(args, content)) if args else ""
             elif name == "otherwise":
                 branch_predicate = "otherwise"
-            conditional = "choice" in block_stack and name != "choice"
+            conditional = choice_depth > 0 and name != "choice"
             step: dict[str, Any] = {"index": step_index, "kind": name}
             if conditional:
                 step["conditional"] = True

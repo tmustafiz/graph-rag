@@ -274,12 +274,15 @@ OPTIONAL MATCH (step)-[:INVOKES]->(inv:CodeEntity)
 OPTIONAL MATCH (rs:Source)-[:DEFINES]->(r)
 OPTIONAL MATCH (rs)-[:IN_MODULE]->(mod:Module)
 WITH r, rs, mod,
-     collect(DISTINCT CASE WHEN NOT coalesce(t_to.conditional, false) THEN toe.uri END) AS to_uris,
+     collect(DISTINCT toe.uri) AS to_uris,
+     collect(DISTINCT CASE WHEN coalesce(t_to.conditional, false) THEN toe.uri END)
+       AS conditional_to_uris,
      collect(DISTINCT inv.qualified_name) AS invokes,
      collect(DISTINCT {i: step.index, k: step.kind, u: step.uri}) AS raw_steps
 WHERE $module IS NULL OR mod.artifact = $module OR mod.path ENDS WITH ('/' + $module)
 RETURN r.route_id AS route_id, r.from_uri AS from_uri, r.on_exception AS on_exception,
        [u IN to_uris WHERE u IS NOT NULL] AS to_uris,
+       [u IN conditional_to_uris WHERE u IS NOT NULL] AS conditional_to_uris,
        [q IN invokes WHERE q IS NOT NULL] AS invokes,
        [s IN raw_steps WHERE s.k IS NOT NULL] AS raw_steps,
        mod.artifact AS module, rs.path AS source_path
@@ -768,6 +771,7 @@ class Retriever:
                 route_id=row["route_id"],
                 from_uri=row["from_uri"],
                 to_uris=row["to_uris"],
+                conditional_to_uris=row["conditional_to_uris"],
                 steps=[
                     step["k"] + (f"({step['u']})" if step["u"] else "")
                     # This writer guarantees `CamelStep.index`, but a graph left by

@@ -69,7 +69,8 @@ def test_get_routes_shapes_steps_and_invokes_and_passes_the_uri_regex() -> None:
                 "route_id": "order-intake",
                 "from_uri": "jms:queue:orders",
                 "on_exception": ["java.io.IOException"],
-                "to_uris": ["direct:priority", "bean:audit"],
+                "to_uris": ["direct:priority", "direct:standard", "bean:audit"],
+                "conditional_to_uris": ["direct:priority", "direct:standard"],
                 "invokes": ["com.acme.OrderService.enrich(Order)"],
                 "raw_steps": [
                     {"i": 1, "k": "bean", "u": None},
@@ -89,6 +90,20 @@ def test_get_routes_shapes_steps_and_invokes_and_passes_the_uri_regex() -> None:
     assert route.steps == ["process", "bean", "to(direct:priority)"]  # re-ordered by index
     assert route.invokes == ["com.acme.OrderService.enrich(Order)"]
     assert route.on_exception == ["java.io.IOException"]
+    # #161 round 3 — a conditional branch target is still a real destination:
+    # kept in `to_uris`, and also surfaced in `conditional_to_uris`.
+    assert route.to_uris == ["direct:priority", "direct:standard", "bean:audit"]
+    assert route.conditional_to_uris == ["direct:priority", "direct:standard"]
+
+
+def test_get_routes_query_keeps_conditional_targets_in_to_uris() -> None:
+    """#161 round 3 — `_GET_ROUTES` no longer filters `TO` edges by
+    `conditional`; a mislabelled branch step can't hide a real destination."""
+    from graph_rag.mcp_server.retriever import _GET_ROUTES
+
+    assert "collect(DISTINCT toe.uri) AS to_uris" in _GET_ROUTES
+    assert "WHEN NOT coalesce(t_to.conditional, false)" not in _GET_ROUTES
+    assert "AS conditional_to_uris" in _GET_ROUTES
 
 
 def test_camel_step_rows_guarantee_a_non_null_index() -> None:

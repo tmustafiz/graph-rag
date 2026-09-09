@@ -56,15 +56,22 @@ class CamelXmlParser:
         except (ElementTree.ParseError, OSError):
             return False
         if _local(root.tag) in _CAMEL_ROOT_TAGS:
+            # A bare (namespace-free) root is fine here — hand-written snippet /
+            # fixture — as well as the Camel-namespaced form.
             return _is_camel_tag(root.tag)
         # A non-Camel wrapper that embeds a `<camelContext>` — an Apache Karaf /
         # ServiceMix / Fuse OSGi `<blueprint>`, a ServiceMix `<xbean>`, … The
         # route extractor scopes to the `<camelContext>` subtree. `<beans>` is
         # left out: SpringXmlParser claims those (and runs the extractor itself).
+        # Under an unknown wrapper the `<camelContext>` must be *namespaced* into
+        # the Camel schema: real Blueprint / Spring Camel files always are, and
+        # requiring it keeps a custom-schema doc that merely has a bare element
+        # named `camelContext` out of this parser (that was the original #162).
         if _local(root.tag) == "beans":
             return False
         return any(
-            _local(element.tag) == "camelContext" and _is_camel_tag(element.tag)
+            _local(element.tag) == "camelContext"
+            and _namespace(element.tag).startswith(_CAMEL_NS_PREFIX)
             for element in root.iter()
         )
 
