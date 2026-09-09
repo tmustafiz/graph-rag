@@ -770,8 +770,12 @@ class Retriever:
                 to_uris=row["to_uris"],
                 steps=[
                     step["k"] + (f"({step['u']})" if step["u"] else "")
-                    # `CamelStep.index` is guaranteed non-null by the writer.
-                    for step in sorted(row["raw_steps"], key=lambda step: step["i"])
+                    # This writer guarantees `CamelStep.index`, but a graph left by
+                    # an older build can still hold a null-index step — sort those
+                    # last instead of raising and aborting the whole call.
+                    for step in sorted(
+                        row["raw_steps"], key=lambda step: (step["i"] is None, step["i"] or 0)
+                    )
                 ],
                 invokes=row["invokes"],
                 on_exception=row["on_exception"] or [],

@@ -174,12 +174,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sniff skips `local` symbols; the bare/FQN `EventType` fold only applies when
   the simple name resolves to exactly one sibling (an ambiguous name is left
   alone rather than wired non-deterministically); the Camel Java-DSL branch
-  tracker is block-aware, so a nested `split` / `filter` / `doTry` `.end()`
-  inside a `choice` branch no longer clears the branch predicate; an OSGi
-  `<blueprint>` wrapping a `<camelContext>` is parsed again; `SqlTableScanner`
-  also strips MySQL `\'` escapes and `#` comments; a full-URL
+  tracker is block-aware and unwinds the whole `end*` family (`.endChoice()`,
+  `.endDoTry()`, …) to the right opener, so neither a nested block left open in
+  a `choice` branch nor an `.endChoice()`-terminated `choice` mislabels the
+  following steps; an OSGi `<blueprint>` wrapping a `<camelContext>` is parsed
+  again; `SqlTableScanner` treats `#` as a line comment only when it is not a
+  MyBatis `#{param}` bind or a T-SQL `#temp` name, and keeps standard `''`
+  quoting (no `\` escape, which broke Postgres/ANSI literals); a full-URL
   `@HttpExchange(url="https://svc")` base populates only `target_service`, not
-  the endpoint path; `CamelStep.index` is guaranteed non-null at write time.
+  the endpoint path; `CamelStep.index` is guaranteed non-null at write time and
+  `get_routes` sorts a legacy null-index step last instead of raising.
   ([#154](https://github.com/tmustafiz/graph-rag/issues/154),
   [#156](https://github.com/tmustafiz/graph-rag/issues/156),
   [#161](https://github.com/tmustafiz/graph-rag/issues/161),

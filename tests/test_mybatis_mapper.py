@@ -171,10 +171,30 @@ def test_table_scanner_still_sees_a_real_join_and_write() -> None:
     assert modes == {"orders": "write", "staging": "read", "customer": "read"}
 
 
-def test_table_scanner_handles_mysql_backslash_escapes_and_hash_comments() -> None:
-    """#164 residual — MySQL `\\'` string escapes and `#` line comments."""
-    sql = (
-        "SELECT * FROM orders o  # join audit_log\n"
-        "WHERE o.note = 'can\\'t ship from warehouse' AND o.tag = 'from ops'"
+def test_table_scanner_strips_hash_comments_without_eating_bind_or_temp_names() -> None:
+    """#164 residual — a `#` line comment is stripped, but `#{param}` MyBatis
+    binds and a T-SQL `#temp` table name (no space after `#`) are left intact,
+    so `FROM`/`JOIN` after them is still scanned.
+    """
+    hash_comment = "SELECT * FROM orders o  # join audit_log\nWHERE o.id = #{id}"
+    assert SqlTableScanner.scan(hash_comment) == [{"name": "orders", "mode": "read"}]
+
+    bind_placeholder = (
+        "SELECT * FROM orders WHERE status = #{status} "
+        "AND customer_id IN (SELECT id FROM customers WHERE region = #{region})"
     )
-    assert SqlTableScanner.scan(sql) == [{"name": "orders", "mode": "read"}]
+    modes = {row["name"]: row["mode"] for row in SqlTableScanner.scan(bind_placeholder)}
+    assert modes == {"orders": "read", "customers": "read"}
+
+    tsql_temp = "SELECT * FROM orders o JOIN #stage s ON s.id = o.id JOIN audit a ON a.oid = o.id"
+    modes = {row["name"]: row["mode"] for row in SqlTableScanner.scan(tsql_temp)}
+    assert modes == {"orders": "read", "audit": "read"}
+
+
+def test_table_scanner_does_not_treat_backslash_as_a_quote_escape() -> None:
+    """#164 residual — `\\` is not assumed to escape a quote; a standard/Postgres
+    literal ending `\\'` is matched correctly and a real table in a following
+    subquery is still seen (not a phantom from a runaway match)."""
+    sql = "UPDATE t SET path = 'C:\\' WHERE id IN (SELECT id FROM staging_table)"
+    modes = {row["name"]: row["mode"] for row in SqlTableScanner.scan(sql)}
+    assert modes == {"t": "write", "staging_table": "read"}

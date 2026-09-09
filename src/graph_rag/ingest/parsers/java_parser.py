@@ -57,9 +57,8 @@ _CAMEL_ROUTE_BUILDERS = {"RouteBuilder", "EndpointRouteBuilder", "AdviceWithRout
 _CAMEL_PREDICATE_STEPS = {"when", "filter", "validate"}
 # Step calls whose first string argument is an endpoint URI (also a `to_uri`).
 _CAMEL_URI_STEPS = {"to", "toD", "wireTap", "enrich", "pollEnrich", "recipientList"}
-# Block-EIP openers — each is closed by a matching `.end()` (NOT `.endChoice()`,
-# which only ends a `choice` branch). Tracked as a stack so a nested block's
-# `.end()` inside a `choice` branch doesn't close the `choice` early.
+# Block-EIP openers, tracked as a stack so a nested block's closer inside a
+# `choice` branch doesn't close the `choice` early.
 _CAMEL_BLOCK_OPENERS = {
     "choice",
     "split",
@@ -72,6 +71,17 @@ _CAMEL_BLOCK_OPENERS = {
     "resequence",
     "circuitBreaker",
     "saga",
+}
+# Block closers. A bare `.end()` / `.endParent()` closes just the innermost
+# block; a typed `.endChoice()` / `.endDoTry()` unwinds through any unclosed
+# nested blocks up to and including the nearest opener of that kind (so a
+# `.split()` left open with no `.end()` inside a `when` branch can't strand
+# `"choice"` on the stack). Value `None` = pop the innermost.
+_CAMEL_BLOCK_ENDERS = {
+    "end": None,
+    "endParent": None,
+    "endChoice": "choice",
+    "endDoTry": "doTry",
 }
 
 _EVENT_LISTENER_ANNOS = {"EventListener", "TransactionalEventListener"}
@@ -1324,10 +1334,12 @@ class JavaParser:
         step_index = 0
         # `choice()...when(pred).to(x)...otherwise().to(y)...end()` — a `to(...)`
         # reached only through a `choice` branch is conditional on that branch's
-        # predicate, not an unconditional route target. `.end()` closes whatever
-        # block EIP is open (`split` / `filter` / `doTry` / … as well as
-        # `choice`), so a stack is tracked; `.endChoice()` resets the branch
-        # inside an open `choice` without closing it.
+        # predicate, not an unconditional route target. A block EIP (`split` /
+        # `filter` / `doTry` / … as well as `choice`) is pushed on open and
+        # popped by its closer, so a nested block's `.end()` inside a `choice`
+        # branch doesn't close the `choice` early, and a `.endChoice()` /
+        # `.endDoTry()` that skips past an unclosed nested block still unwinds to
+        # the right opener.
         block_stack: list[str] = []
         branch_predicate: str | None = None
         for name, args in chain[1:]:
@@ -1340,10 +1352,15 @@ class JavaParser:
                 block_stack.append(name)
             if name == "choice":
                 branch_predicate = None
-            elif name == "endChoice":
-                branch_predicate = None
-            elif name == "end" and block_stack:
-                if block_stack.pop() == "choice":
+            elif name in _CAMEL_BLOCK_ENDERS:
+                opener = _CAMEL_BLOCK_ENDERS[name]
+                if opener is None:
+                    if block_stack:
+                        block_stack.pop()
+                else:
+                    while block_stack and block_stack.pop() != opener:
+                        pass
+                if "choice" not in block_stack:
                     branch_predicate = None
             if name in ("when", "filter"):
                 branch_predicate = cls._collapse(cls._text(args, content)) if args else ""

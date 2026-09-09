@@ -171,6 +171,77 @@ def test_nested_end_inside_a_choice_branch_does_not_leak_conditional(tmp_path: P
     assert "conditional" not in by_uri["log:audit"]
 
 
+_ENDCHOICE_AND_ENDDOTRY = """\
+package com.acme.routes;
+
+import org.apache.camel.builder.RouteBuilder;
+
+public class MixedEndRoutes extends RouteBuilder {
+
+    @Override
+    public void configure() throws Exception {
+        from("jms:queue:a")
+            .routeId("ends-with-endchoice")
+            .choice()
+                .when(header("vip").isEqualTo("yes"))
+                    .to("direct:vip")
+                .otherwise()
+                    .to("direct:normal")
+            .endChoice()
+            .to("direct:after-a")
+            .to("log:done-a");
+
+        from("jms:queue:b")
+            .routeId("dotry-in-branch")
+            .choice()
+                .when(header("vip").isEqualTo("yes"))
+                    .doTry()
+                        .to("direct:risky")
+                    .doCatch(java.io.IOException.class)
+                        .to("direct:recover")
+                    .endDoTry()
+                    .to("direct:after-try")
+                .otherwise()
+                    .to("direct:normal-b")
+            .end()
+            .to("direct:done-b");
+    }
+}
+"""
+
+
+def test_endchoice_closes_the_choice_and_following_steps_are_unconditional(tmp_path: Path) -> None:
+    """#161 residual — `.endChoice()` closes the `choice`; `.to(...)` after it is
+    a real (unconditional) target, not a dropped conditional one."""
+    package_dir = tmp_path / "com" / "acme" / "routes"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    path = package_dir / "MixedEndRoutes.java"
+    path.write_text(_ENDCHOICE_AND_ENDDOTRY)
+
+    routes = {route.route_id: route for route in JavaParser().parse(path).camel_routes}
+
+    ends_with_endchoice = routes["ends-with-endchoice"]
+    by_uri = {step["uri"]: step for step in ends_with_endchoice.steps if step.get("uri")}
+    assert by_uri["direct:vip"]["conditional"] is True
+    assert by_uri["direct:normal"]["conditional"] is True
+    assert "conditional" not in by_uri["direct:after-a"]
+    assert "conditional" not in by_uri["log:done-a"]
+    assert "direct:after-a" in ends_with_endchoice.to_uris
+    assert "log:done-a" in ends_with_endchoice.to_uris
+
+    # `.endDoTry()` closes only the `doTry`; the rest of the `when` branch and the
+    # `otherwise` stay conditional, and the step after the `choice`'s `.end()` is
+    # a real target.
+    dotry = routes["dotry-in-branch"]
+    by_uri = {step["uri"]: step for step in dotry.steps if step.get("uri")}
+    assert by_uri["direct:risky"]["conditional"] is True
+    assert by_uri["direct:recover"]["conditional"] is True
+    assert by_uri["direct:after-try"]["conditional"] is True
+    assert by_uri["direct:normal-b"]["conditional"] is True
+    assert "conditional" not in by_uri["direct:done-b"]
+    assert "direct:done-b" in dotry.to_uris
+
+
 _NESTED_ROUTE_BUILDER = """\
 package com.acme.routes;
 
