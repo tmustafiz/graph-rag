@@ -1,10 +1,9 @@
 from pathlib import Path
 from typing import Any
 
-from ..dedupe import dedupe
 from ..models import CamelRoute
+from .camel_route_builder import CAMEL_URI_STEPS, CamelStepList
 
-_URI_STEPS = {"to", "toD", "wireTap", "enrich", "pollEnrich", "recipientList"}
 _PASSTHROUGH_STEPS = {
     "process",
     "split",
@@ -33,7 +32,7 @@ class CamelYamlRouteExtractor:
     Handles the `- route:` list form and the flat `- from:` / `steps:` form; a
     step is `{to: "uri"}` or `{to: {uri: "uri"}}`. Nested `choice` / `when` /
     `otherwise` are flattened to the same step list the XML / Java extractors
-    produce.
+    produce (via the shared `CamelStepList`).
     """
 
     @classmethod
@@ -71,35 +70,19 @@ class CamelYamlRouteExtractor:
             from_uri = str(from_spec or "unknown")
             raw_steps = spec.get("steps") or []
 
-        steps: list[dict[str, Any]] = []
-        to_uris: list[str] = []
-        counter = [0]
+        builder = CamelStepList()
         for raw_step in raw_steps if isinstance(raw_steps, list) else []:
-            cls._walk_step(raw_step, steps, to_uris, counter, conditional=False, predicate=None)
+            cls._walk_step(raw_step, builder, conditional=False, predicate=None)
 
-        summary = " -> ".join(
-            step["kind"] + (f"({step['uri']})" if step.get("uri") else "") for step in steps
-        )
-        embed_text = f"Camel route {route_id}: from({from_uri})" + (
-            f" -> {summary}" if summary else ""
-        )
-        return CamelRoute(
-            route_id=route_id,
-            from_uri=from_uri,
-            source_path=source_path,
-            ordinal=ordinal,
-            to_uris=dedupe(to_uris),
-            steps=steps,
-            embed_text=embed_text,
+        return builder.finish(
+            route_id=route_id, from_uri=from_uri, source_path=source_path, ordinal=ordinal
         )
 
     @classmethod
     def _walk_step(
         cls,
         raw_step: Any,
-        steps: list[dict[str, Any]],
-        to_uris: list[str],
-        counter: list[int],
+        builder: CamelStepList,
         *,
         conditional: bool,
         predicate: str | None,
@@ -108,65 +91,53 @@ class CamelYamlRouteExtractor:
             return
         kind, body = next(iter(raw_step.items()))
 
-        def add(step_kind: str, **extra: Any) -> None:
-            step: dict[str, Any] = {"index": counter[0], "kind": step_kind, **extra}
-            if conditional:
-                step["conditional"] = True
-                if predicate is not None and "predicate" not in step:
-                    step["predicate"] = predicate
-            steps.append(step)
-            counter[0] += 1
-
-        if kind in _URI_STEPS:
+        if kind in CAMEL_URI_STEPS:
             uri = body if isinstance(body, str) else (body or {}).get("uri")
-            uri_extra: dict[str, Any] = {}
-            if uri:
-                uri_extra["uri"] = str(uri)
-                to_uris.append(str(uri))
-                if str(uri).startswith("bean:"):
-                    uri_extra["ref"] = cls._bean_uri_ref(str(uri))
-            add(kind, **uri_extra)
+            builder.add_uri_step(
+                kind, str(uri) if uri else None, conditional=conditional, parent_predicate=predicate
+            )
         elif kind == "bean":
             spec = body if isinstance(body, dict) else {}
             ref = spec.get("ref") or spec.get("beanType") or spec.get("method")
             method = spec.get("method")
             name = spec.get("ref") or spec.get("beanType")
-            add("bean", ref=f"{name}.{method}" if name and method else (ref or None))
+            builder.add(
+                "bean",
+                conditional=conditional,
+                parent_predicate=predicate,
+                ref=f"{name}.{method}" if name and method else (ref or None),
+            )
         elif kind == "process":
             spec = body if isinstance(body, dict) else {}
-            add("process", ref=spec.get("ref"))
+            builder.add(
+                "process", conditional=conditional, parent_predicate=predicate, ref=spec.get("ref")
+            )
         elif kind == "choice":
-            add("choice")
+            builder.add("choice", conditional=conditional, parent_predicate=predicate)
             spec = body if isinstance(body, dict) else {}
             for when in spec.get("when") or []:
                 branch_predicate = cls._predicate(when)
-                add("when", predicate=branch_predicate)
+                builder.add(
+                    "when",
+                    conditional=conditional,
+                    parent_predicate=predicate,
+                    predicate=branch_predicate,
+                )
                 for child in (when or {}).get("steps") or []:
-                    cls._walk_step(
-                        child, steps, to_uris, counter, conditional=True, predicate=branch_predicate
-                    )
+                    cls._walk_step(child, builder, conditional=True, predicate=branch_predicate)
             otherwise = spec.get("otherwise")
             if otherwise is not None:
-                add("otherwise")
+                builder.add("otherwise", conditional=conditional, parent_predicate=predicate)
                 for child in (otherwise or {}).get("steps") or []:
-                    cls._walk_step(
-                        child, steps, to_uris, counter, conditional=True, predicate="otherwise"
-                    )
-            add("end")
+                    cls._walk_step(child, builder, conditional=True, predicate="otherwise")
+            builder.add("end", conditional=conditional, parent_predicate=predicate)
         elif kind in _PASSTHROUGH_STEPS:
             spec = body if isinstance(body, dict) else {}
             extra = {"name": spec["name"]} if isinstance(spec, dict) and spec.get("name") else {}
-            add(kind, **extra)
+            builder.add(kind, conditional=conditional, parent_predicate=predicate, **extra)
             if isinstance(spec, dict):
                 for child in spec.get("steps") or []:
-                    cls._walk_step(
-                        child,
-                        steps,
-                        to_uris,
-                        counter,
-                        conditional=conditional,
-                        predicate=predicate,
-                    )
+                    cls._walk_step(child, builder, conditional=conditional, predicate=predicate)
 
     @staticmethod
     def _predicate(when: Any) -> str:
@@ -179,12 +150,3 @@ class CamelYamlRouteExtractor:
             if isinstance(value, dict) and isinstance(value.get("expression"), str):
                 return value["expression"].strip()
         return ""
-
-    @staticmethod
-    def _bean_uri_ref(uri: str) -> str:
-        body = uri[len("bean:") :]
-        name, _, query = body.partition("?")
-        for option in query.split("&"):
-            if option.startswith("method="):
-                return f"{name}.{option[len('method=') :]}"
-        return name
