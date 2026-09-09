@@ -31,11 +31,18 @@ class ScipIngestor:
     """Consumes a SCIP index (`grag-mcp ingest --scip`) into the same graph as
     static parsing.
 
+    **Additive layer.** `--scip` refines `CodeEntity` / `CALLS` / `IMPORTS` /
+    `IMPLEMENTS` for the `.java` files the index covers (SCIP wins on overlap);
+    it does **not** touch the framework graph a prior static ingest produced —
+    annotations, behavior markers, AOP advice, HTTP endpoints, SQL statements,
+    Camel routes, JPA / Spring Data defs, config properties, Spring XML beans,
+    modules, message-flow edges are left intact (`GraphWriter.write` is called
+    with `reconcile_frameworks=False`). Run a static ingest first, then `--scip`
+    on top.
+
     Each SCIP `Document` becomes a `ParsedDocument` whose `CodeEntity`s carry
-    `resolution="scip"`; `GraphWriter`'s per-`Source` reconcile then replaces
-    any static entities for that file — SCIP wins on overlap. `SymbolInformation`
-    → `CodeEntity` (kind from `Kind` else the symbol descriptor);
-    `Relationship(is_implementation)` → `IMPLEMENTS`,
+    `resolution="scip"`. `SymbolInformation` → `CodeEntity` (kind from `Kind`
+    else the symbol descriptor); `Relationship(is_implementation)` → `IMPLEMENTS`,
     `Relationship(is_reference|is_type_definition)` on a type → `IMPORTS`;
     a reference `Occurrence` with an `enclosing_range` whose enclosing symbol is
     a method → `CALLS`.
@@ -50,7 +57,7 @@ class ScipIngestor:
         parsed = self._build_documents(scip_documents, root)
         if not dry_run:
             for document in parsed:
-                self._writer.write(self._enricher.enrich(document))
+                self._writer.write(self._enricher.enrich(document), reconcile_frameworks=False)
         logger.info(
             "scip ingest: %d documents, %d code entities",
             len(parsed),
@@ -82,6 +89,7 @@ class ScipIngestor:
             ingested_at=datetime.now(UTC),
         )
 
+        language = cls._language(scip_document)
         qn_by_symbol: dict[str, str] = {}
         parsed_by_symbol: dict[str, tuple[str, str, str]] = {}
         for scip_symbol in scip_document.symbols:
@@ -91,17 +99,21 @@ class ScipIngestor:
             qn_by_symbol[scip_symbol.symbol] = parsed[0]
             parsed_by_symbol[scip_symbol.symbol] = parsed
 
-        # method symbol → start line of its definition occurrence, for CALLS.
-        def_line: dict[int, str] = {
-            occurrence.range[0]: occurrence.symbol
+        # definition-identifier spans `(line, column)` → symbol, for CALLS
+        # attribution. A reference's `enclosing_range` (the whole enclosing decl,
+        # which starts at any annotation / Javadoc above the signature) is matched
+        # to the definition whose identifier token it contains — not by an exact
+        # start-line equality, which only holds for single-line signatures.
+        definition_spans: list[tuple[tuple[int, int], str]] = [
+            ((occurrence.range[0], occurrence.range[1]), occurrence.symbol)
             for occurrence in scip_document.occurrences
-            if occurrence.is_definition and occurrence.range
-        }
+            if occurrence.is_definition and len(occurrence.range) >= 2 and occurrence.symbol
+        ]
         calls_by_symbol: dict[str, list[str]] = {}
         for occurrence in scip_document.occurrences:
             if occurrence.is_definition or not occurrence.enclosing_range:
                 continue
-            enclosing = def_line.get(occurrence.enclosing_range[0])
+            enclosing = cls._enclosing_symbol(occurrence.enclosing_range, definition_spans)
             target_qn = qn_by_symbol.get(occurrence.symbol) or cls._external_qn(occurrence.symbol)
             if enclosing is None or target_qn is None:
                 continue
@@ -122,6 +134,7 @@ class ScipIngestor:
                 qn_by_symbol,
                 calls_by_symbol.get(scip_symbol.symbol, []),
                 str(path),
+                language,
             )
             for scip_symbol in scip_document.symbols
             if scip_symbol.symbol in parsed_by_symbol
@@ -136,6 +149,7 @@ class ScipIngestor:
         qn_by_symbol: dict[str, str],
         calls: list[str],
         file_path: str,
+        language: str,
     ) -> CodeEntity:
         qualified_name, _suffix_kind, name = parsed
         kind = cls._entity_kind(scip_symbol, parsed)
@@ -160,7 +174,7 @@ class ScipIngestor:
             qualified_name=qualified_name,
             name=name or qualified_name.rsplit(".", 1)[-1],
             kind=kind,
-            language="java" if "scip-java" in scip_symbol.symbol else "scip",
+            language=language,
             embed_text=docstring or f"{kind} {qualified_name}",
             file_path=file_path,
             docstring=docstring,
@@ -185,6 +199,42 @@ class ScipIngestor:
     def _external_qn(symbol: str) -> str | None:
         parsed = ScipSymbolParser.parse(symbol)
         return parsed[0] if parsed else None
+
+    @staticmethod
+    def _enclosing_symbol(
+        enclosing_range: list[int],
+        definition_spans: list[tuple[tuple[int, int], str]],
+    ) -> str | None:
+        if len(enclosing_range) < 4:
+            return None
+        start = (enclosing_range[0], enclosing_range[1])
+        end = (enclosing_range[2], enclosing_range[3])
+        contained = [
+            (identifier_start, symbol)
+            for identifier_start, symbol in definition_spans
+            if start <= identifier_start <= end
+        ]
+        if not contained:
+            return None
+        # the topmost definition identifier inside the span is the decl itself.
+        return min(contained)[1]
+
+    @staticmethod
+    def _language(scip_document: ScipDocument) -> str:
+        # `Document.language` is authoritative; fall back to the symbol scheme
+        # token (scip-java historically emits scheme `semanticdb`).
+        if scip_document.language:
+            return scip_document.language.lower()
+        scheme = next(
+            (symbol.symbol.split(" ", 1)[0] for symbol in scip_document.symbols if symbol.symbol),
+            "",
+        )
+        return {
+            "scip-java": "java",
+            "semanticdb": "java",
+            "scip-typescript": "typescript",
+            "scip-python": "python",
+        }.get(scheme, "scip")
 
     @staticmethod
     def _content_hash(path: Path, scip_document: ScipDocument) -> str:

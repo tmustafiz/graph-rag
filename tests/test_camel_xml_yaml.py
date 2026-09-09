@@ -4,6 +4,7 @@
 
 from pathlib import Path
 
+from graph_rag.ingest.parser_registry import ParserRegistry
 from graph_rag.ingest.parsers.camel_xml_parser import CamelXmlParser
 from graph_rag.ingest.parsers.camel_yaml_parser import CamelYamlParser
 from graph_rag.ingest.parsers.java_parser import JavaParser
@@ -77,6 +78,13 @@ def test_xml_route_with_choice_when(tmp_path: Path) -> None:
     assert "priority" in when["predicate"]
     assert next(s for s in route.steps if s["kind"] == "bean")["ref"] == "auditService.record"
 
+    # #161 — branch `to` steps are conditional, the trailing bean step is not
+    by_uri = {step["uri"]: step for step in route.steps if step.get("uri")}
+    assert by_uri["direct:shared"]["conditional"] is True
+    assert "priority" in by_uri["direct:shared"]["predicate"]
+    assert by_uri["direct:standard"]["predicate"] == "otherwise"
+    assert route.to_uris == ["direct:shared", "direct:standard"]
+
 
 def test_yaml_route(tmp_path: Path) -> None:
     path = tmp_path / "camel-routes.yaml"
@@ -89,6 +97,35 @@ def test_yaml_route(tmp_path: Path) -> None:
     assert route.route_id == "yaml-handler"
     assert route.from_uri == "direct:shared"
     assert route.to_uris == ["log:handled", "jms:queue:out"]
+
+
+_GENERIC_ROUTE_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<gateway xmlns="urn:acme:gateway">
+    <route id="north" path="/north"/>
+    <route id="south" path="/south"/>
+</gateway>
+"""
+
+_NOTIFICATION_YAML = "from: no-reply@example.com\nsubject: Welcome\n"
+
+
+def test_generic_xml_with_a_route_element_is_not_claimed_as_camel(tmp_path: Path) -> None:
+    """#162 — dispatch on the root tag + Camel namespace, not any `<route>`."""
+    path = tmp_path / "gateway.xml"
+    path.write_text(_GENERIC_ROUTE_XML)
+
+    assert CamelXmlParser.can_handle(path) is False
+    assert not isinstance(ParserRegistry().for_path(path), CamelXmlParser)
+
+
+def test_yaml_with_a_lone_from_key_is_not_claimed_as_camel(tmp_path: Path) -> None:
+    """#162 — a `notification.yml` with `from: <address>` is config, not a route."""
+    path = tmp_path / "notification.yml"
+    path.write_text(_NOTIFICATION_YAML)
+
+    assert CamelYamlParser.can_handle(path) is False
+    assert not isinstance(ParserRegistry().for_path(path), CamelYamlParser)
 
 
 def test_consume_annotation_becomes_a_route(tmp_path: Path) -> None:

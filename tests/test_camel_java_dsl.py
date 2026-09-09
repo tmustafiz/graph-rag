@@ -104,6 +104,72 @@ def test_on_exception_types_are_captured_on_every_route(tmp_path: Path) -> None:
         assert "IllegalStateException" in route.on_exception
 
 
+def test_choice_branch_to_steps_are_conditional_with_their_predicate(tmp_path: Path) -> None:
+    """#161 — a `to(...)` inside `choice()...end()` is conditional, not an
+    unconditional route target."""
+    routes = _routes(tmp_path)
+    steps = routes["order-intake"].steps
+    by_uri = {step["uri"]: step for step in steps if step.get("uri")}
+
+    assert by_uri["direct:priority"]["conditional"] is True
+    assert "priority" in by_uri["direct:priority"]["predicate"]
+    assert by_uri["direct:standard"]["conditional"] is True
+    assert by_uri["direct:standard"]["predicate"] == "otherwise"
+    # the `.to("bean:auditService?method=record")` after `.end()` is main-path
+    assert "conditional" not in by_uri["bean:auditService?method=record"]
+
+
+_NESTED_ROUTE_BUILDER = """\
+package com.acme.routes;
+
+import org.apache.camel.builder.RouteBuilder;
+
+public class RouteConfig {
+
+    static class OrderRoutes extends RouteBuilder {
+        @Override
+        public void configure() {
+            from("jms:orders").to("bean:orderService");
+        }
+    }
+}
+"""
+
+
+def test_nested_static_inner_route_builder_is_walked(tmp_path: Path) -> None:
+    """#159 — a `RouteBuilder` nested in a `@Configuration` class."""
+    package_dir = tmp_path / "com" / "acme" / "routes"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    path = package_dir / "RouteConfig.java"
+    path.write_text(_NESTED_ROUTE_BUILDER)
+
+    routes = JavaParser().parse(path).camel_routes
+    assert [route.from_uri for route in routes] == ["jms:orders"]
+    assert routes[0].to_uris == ["bean:orderService"]
+
+
+def test_one_failing_framework_extractor_does_not_drop_the_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """#160 — a grammar edge case in one extractor must not lose CodeEntity data."""
+    from graph_rag.ingest.parsers import java_parser
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated grammar edge case")
+
+    monkeypatch.setattr(java_parser.AopExtractor, "extract", _boom)
+    package_dir = tmp_path / "com" / "acme" / "routes"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    path = package_dir / "OrderRoutes.java"
+    path.write_text(_ROUTES)
+
+    document = JavaParser().parse(path)
+    assert any(entity.kind == "class" for entity in document.code_entities)
+    assert document.behavior_markers == []
+    # other extractors still ran
+    assert document.camel_routes
+
+
 # -- CamelResolver._assemble --
 
 

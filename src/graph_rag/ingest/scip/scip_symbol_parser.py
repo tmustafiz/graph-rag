@@ -3,13 +3,20 @@ import re
 # A SCIP symbol string is: `<scheme> <manager> <package> <version> <descriptors>`
 # (space-separated, spaces inside a field escaped as `  `). The descriptors are a
 # run of: `name/` (namespace), `name#` (type), `name.` (term), `name().` (method),
-# `(name)` (parameter), `[name]` (type parameter), `:name` (meta).
+# `(name)` (parameter), `[name]` (type parameter), `:name` (meta). scip-java
+# disambiguates overloads past the first with a token between the method parens
+# (`submit(+1).`, `submit(String).`), so the method branch accepts any run of
+# non-`)` characters there and keeps it as part of the name.
 _DESCRIPTOR = re.compile(
     r"""
     (?P<name>
         (?:[^\s./#()\[\]:`]+ | `[^`]+`)
     )
-    (?P<suffix> \(\)\. | [.#/] )
+    (?:
+        \( (?P<disambiguator>[^)]*) \) (?P<method>\.)
+        |
+        (?P<suffix> [.#/] )
+    )
     |
     \( (?P<param>[^)]*) \)
     |
@@ -41,8 +48,15 @@ class ScipSymbolParser:
         parts: list[str] = []
         last_suffix = ""
         for match in _DESCRIPTOR.finditer(descriptors):
-            if match.group("name") is not None:
-                parts.append(match.group("name").strip("`"))
+            if match.group("name") is None:
+                continue
+            name = match.group("name").strip("`")
+            if match.group("method") is not None:
+                disambiguator = match.group("disambiguator") or ""
+                parts.append(f"{name}({disambiguator})" if disambiguator else name)
+                last_suffix = "()."
+            else:
+                parts.append(name)
                 last_suffix = match.group("suffix")
         if not parts:
             return None

@@ -265,7 +265,10 @@ class HttpEndpointExtractor:
             if annotation.name == "HttpExchange":
                 return {
                     "framework": "spring-http-interface",
-                    "target_service": annotation.attributes.get("url"),
+                    # `@HttpExchange` uses `url` and `value` as aliases for the
+                    # base URI — accept either.
+                    "target_service": annotation.attributes.get("url")
+                    or annotation.attributes.get("value"),
                     "base_paths": cls._all_paths([annotation], ("HttpExchange",)),
                 }
         has_exchange_method = any(
@@ -358,13 +361,13 @@ class HttpEndpointExtractor:
         """Every path a `@RequestMapping` / `@GetMapping` / `@Path` declares —
         `@GetMapping({"/a", "/b"})` maps to two routes, not one. `[""]` when the
         annotation carries no path, so the class×method cartesian product still
-        runs once.
+        runs once. `@HttpExchange` / `@GetExchange` name their sub-path `url`.
         """
         paths: list[str] = []
         for annotation in annos:
             if annotation.name not in anno_names:
                 continue
-            for key in ("value", "path"):
+            for key in ("value", "path", "url"):
                 raw = annotation.attributes.get(key)
                 if raw is None:
                     continue

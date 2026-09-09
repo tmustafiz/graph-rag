@@ -69,6 +69,32 @@ def test_http_exchange_interface_client(tmp_path: Path) -> None:
     assert quote.framework == "spring-http-interface"
 
 
+_HTTP_EXCHANGE_URL = """\
+package com.acme.orders.client;
+
+import org.springframework.web.service.annotation.*;
+
+@HttpExchange(url = "/api/persons")
+public interface PersonClient {
+
+    @GetExchange(url = "/{id}")
+    Person get(@PathVariable String id);
+
+    @PostExchange(url = "/")
+    Person create(@RequestBody Person body);
+}
+"""
+
+
+def test_http_exchange_url_attribute_supplies_base_and_method_paths(tmp_path: Path) -> None:
+    """#165.5 — `@HttpExchange(url=)` / `@GetExchange(url=)` must not drop the path."""
+    endpoints = _endpoints(tmp_path, "PersonClient.java", _HTTP_EXCHANGE_URL)
+
+    assert ("GET", "/api/persons/{id}") in endpoints
+    assert ("POST", "/api/persons") in endpoints
+    assert endpoints[("GET", "/api/persons/{id}")].target_service == "/api/persons"
+
+
 # -- ServiceCallResolver._assemble --
 
 

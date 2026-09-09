@@ -11,12 +11,15 @@ class CamelRoute(BaseModel):
     The fluent builder chain is exactly what the generic `CALLS` resolver skips
     (every step is a call on the previous call's result), so `JavaParser`
     resolves it here. `steps` is the ordered step list, each
-    `{index, kind, uri?, ref?, predicate?}` — materialized by the graph writer
-    into `(:Route)-[:STEP {index, kind, predicate?}]->(:CamelStep)` with
+    `{index, kind, uri?, ref?, predicate?, conditional?}` — materialized by the
+    graph writer into
+    `(:Route)-[:STEP {index, kind, predicate?, conditional}]->(:CamelStep)` with
     `(:CamelStep)-[:INVOKES]->(:CodeEntity)` for `process` / `bean` steps
-    (wired by `CamelResolver`). `to_uris` also feed
-    `(:Route)-[:TO]->(:CamelEndpoint)`; `on_exception` are the exception FQNs
-    from the builder's `onException(...)`.
+    (wired by `CamelResolver`). A step inside a `choice` branch is `conditional`
+    and carries its branch `predicate`; its endpoint gets a
+    `(:Route)-[:TO {conditional: true}]->(:CamelEndpoint)` edge, so `get_routes`'
+    `to_uris` (unconditional targets) excludes it. `on_exception` are the
+    exception FQNs from the builder's `onException(...)`.
 
     `route_id` is the explicit `.routeId(...)` / `.id(...)` or, absent that,
     `<file-stem>:<ordinal>`. `id` (the graph key) is a hash of the source path +

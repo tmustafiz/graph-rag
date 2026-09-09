@@ -112,6 +112,10 @@ class ScipReader:
                 yield field_number, wire_type, value
             elif wire_type == _WIRE_LEN:
                 size, position = cls._read_varint(data, position)
+                if position + size > length:
+                    raise ValueError(
+                        "SCIP index truncated: length-delimited field runs past end of buffer"
+                    )
                 yield field_number, wire_type, data[position : position + size]
                 position += size
             elif wire_type == _WIRE_I64:
@@ -141,6 +145,8 @@ class ScipReader:
             position += 1
             result |= (byte & 0x7F) << shift
             if not byte & 0x80:
-                break
+                return result, position
             shift += 7
-        return result, position
+            if shift >= 64:
+                raise ValueError("SCIP varint exceeds 64 bits (corrupt index)")
+        raise ValueError("SCIP index truncated mid-varint")

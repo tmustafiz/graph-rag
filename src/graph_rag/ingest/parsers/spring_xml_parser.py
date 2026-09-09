@@ -156,8 +156,14 @@ class SpringXmlParser:
             chunks=chunks,
             config_files=[config_file],
             spring_xml_beans=beans,
-            # a `<beans>` file may also embed a `<camelContext>` with routes.
-            camel_routes=CamelXmlRouteExtractor.extract(root, source.path),
+            # a `<beans>` file may also embed a `<camelContext>` with routes —
+            # only run the route extractor when one is actually present, so a
+            # plain `<beans>` never gets spurious Route / CamelStep nodes.
+            camel_routes=(
+                CamelXmlRouteExtractor.extract(root, source.path)
+                if any(_local(element.tag) == "camelContext" for element in root.iter())
+                else []
+            ),
         )
 
     # -- <beans> container walk (recurses into nested <beans profile="...">) --
