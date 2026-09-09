@@ -178,9 +178,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilt exactly from a flat Java-DSL call chain), and `get_routes` now keeps
   **every** `TO` target in `to_uris` regardless of that flag — with a
   `conditional_to_uris` subset alongside — so a mislabel can never hide a real
-  route destination; an OSGi `<blueprint>` wrapping a *namespaced*
-  `<camelContext>` is parsed again, while an unknown wrapper with only a
-  bare-tag `camelContext` descendant is left to the generic parsers;
+  route destination; the branch `predicate` on a step is cleared on every
+  `end` / `endChoice`, so a step after a nested `choice` closes carries no
+  label rather than the inner branch's stale one, and the `CamelRoute` model
+  docstring matches the new `to_uris` semantics; an OSGi `<blueprint>` wrapping
+  a *namespaced* `<camelContext>` is parsed again, while an unknown wrapper with
+  only a bare-tag `camelContext` descendant is left to the generic parsers;
   `SqlTableScanner` treats `#` as a line comment only when it is not a MyBatis
   `#{param}` bind or a T-SQL `#temp` name, and keeps standard `''` quoting (no
   `\` escape, which broke Postgres/ANSI literals); a full-URL

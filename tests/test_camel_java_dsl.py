@@ -176,6 +176,57 @@ def test_nested_block_in_a_choice_branch_never_drops_a_route_target(tmp_path: Pa
     assert "conditional" not in by_uri["log:audit"]
 
 
+_NESTED_CHOICE_PREDICATE = """\
+package com.acme.routes;
+
+import org.apache.camel.builder.RouteBuilder;
+
+public class NestedChoiceRoutes extends RouteBuilder {
+
+    @Override
+    public void configure() throws Exception {
+        from("jms:queue:orders")
+            .routeId("nested-choice")
+            .choice()
+                .when(header("region").isEqualTo("EU"))
+                    .choice()
+                        .when(header("tier").isEqualTo("gold"))
+                            .to("direct:eu-gold")
+                    .end()
+                    .to("direct:eu-any")
+            .end()
+            .to("log:audit");
+    }
+}
+"""
+
+
+def test_nested_choice_end_does_not_leave_a_stale_predicate_on_outer_branch(
+    tmp_path: Path,
+) -> None:
+    """#161 round 4 — after an inner `choice().when(B)...end()` closes, a later
+    step still inside the outer `when(A)` branch must not inherit predicate `B`.
+    `branch_predicate` is reset on every `end`/`endChoice`, so the outer-branch
+    step is still `conditional` but carries no (wrong) label."""
+    package_dir = tmp_path / "com" / "acme" / "routes"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    path = package_dir / "NestedChoiceRoutes.java"
+    path.write_text(_NESTED_CHOICE_PREDICATE)
+
+    route = next(r for r in JavaParser().parse(path).camel_routes if r.route_id == "nested-choice")
+
+    assert set(route.to_uris) == {"direct:eu-gold", "direct:eu-any", "log:audit"}
+
+    by_uri = {step["uri"]: step for step in route.steps if step.get("uri")}
+    assert by_uri["direct:eu-gold"]["conditional"] is True
+    assert "tier" in by_uri["direct:eu-gold"]["predicate"]
+    # still inside the outer branch, so conditional — but not mislabelled "tier"
+    assert by_uri["direct:eu-any"]["conditional"] is True
+    assert "predicate" not in by_uri["direct:eu-any"]
+    # after the outer `choice`'s own `.end()` — a plain target
+    assert "conditional" not in by_uri["log:audit"]
+
+
 _ENDCHOICE_AND_ENDDOTRY = """\
 package com.acme.routes;
 

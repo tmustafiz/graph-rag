@@ -1330,8 +1330,10 @@ class JavaParser:
                 branch_predicate = None
             elif name in ("end", "endChoice") and choice_depth > 0:
                 choice_depth -= 1
-                if choice_depth == 0:
-                    branch_predicate = None
+                # Reset on every decrement, not just at depth 0. A fully-correct
+                # predicate for an outer branch after a nested `choice` closes
+                # would need a predicate stack; "no label" beats the wrong one.
+                branch_predicate = None
             if name in ("when", "filter"):
                 branch_predicate = cls._collapse(cls._text(args, content)) if args else ""
             elif name == "otherwise":

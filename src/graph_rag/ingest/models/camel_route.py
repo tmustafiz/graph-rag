@@ -16,10 +16,12 @@ class CamelRoute(BaseModel):
     `(:Route)-[:STEP {index, kind, predicate?, conditional}]->(:CamelStep)` with
     `(:CamelStep)-[:INVOKES]->(:CodeEntity)` for `process` / `bean` steps
     (wired by `CamelResolver`). A step inside a `choice` branch is `conditional`
-    and carries its branch `predicate`; its endpoint gets a
-    `(:Route)-[:TO {conditional: true}]->(:CamelEndpoint)` edge, so `get_routes`'
-    `to_uris` (unconditional targets) excludes it. `on_exception` are the
-    exception FQNs from the builder's `onException(...)`.
+    (best-effort — see `JavaParser._camel_route_from_chain`) and carries its
+    branch `predicate`; its endpoint still gets a
+    `(:Route)-[:TO {conditional: true}]->(:CamelEndpoint)` edge, but `get_routes`'
+    `to_uris` holds *every* target and `conditional_to_uris` is the branch-only
+    subset. `on_exception` are the exception FQNs from the builder's
+    `onException(...)`.
 
     `route_id` is the explicit `.routeId(...)` / `.id(...)` or, absent that,
     `<file-stem>:<ordinal>`. `id` (the graph key) is a hash of the source path +
