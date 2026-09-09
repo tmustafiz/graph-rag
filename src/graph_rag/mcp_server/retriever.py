@@ -268,13 +268,13 @@ MATCH (r:Route)
 OPTIONAL MATCH (r)-[:FROM|TO]->(ep:CamelEndpoint)
 WITH r, collect(DISTINCT ep.uri) AS all_uris
 WHERE $uri_regex IS NULL OR any(u IN all_uris WHERE u =~ $uri_regex)
-OPTIONAL MATCH (r)-[:TO]->(toe:CamelEndpoint)
+OPTIONAL MATCH (r)-[t_to:TO]->(toe:CamelEndpoint)
 OPTIONAL MATCH (r)-[:STEP]->(step:CamelStep)
 OPTIONAL MATCH (step)-[:INVOKES]->(inv:CodeEntity)
 OPTIONAL MATCH (rs:Source)-[:DEFINES]->(r)
 OPTIONAL MATCH (rs)-[:IN_MODULE]->(mod:Module)
 WITH r, rs, mod,
-     collect(DISTINCT toe.uri) AS to_uris,
+     collect(DISTINCT CASE WHEN NOT coalesce(t_to.conditional, false) THEN toe.uri END) AS to_uris,
      collect(DISTINCT inv.qualified_name) AS invokes,
      collect(DISTINCT {i: step.index, k: step.kind, u: step.uri}) AS raw_steps
 WHERE $module IS NULL OR mod.artifact = $module OR mod.path ENDS WITH ('/' + $module)

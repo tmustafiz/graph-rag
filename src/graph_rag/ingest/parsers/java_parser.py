@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,8 @@ from .spring_data_extractor import REACTIVE_BASES, SPRING_DATA_BASES, SpringData
 
 if TYPE_CHECKING:
     from tree_sitter import Node
+
+logger = logging.getLogger(__name__)
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -151,18 +154,51 @@ class JavaParser:
         jpa_entities, spring_data_repositories = SpringDataExtractor.extract(
             entities, annotations, repo_bindings
         )
-        behavior_markers, aop_advice = AopExtractor.extract(entities, annotations)
-        message_sites = self._collect_message_sites(
-            type_nodes, content, imported_types, same_file_types, package
+
+        # Each framework extractor is a heuristic walk over the tree-sitter tree;
+        # a grammar edge case in one must degrade to "no data for that concern",
+        # not drop the whole `.java` file (which `IngestionPipeline` would record
+        # as a failed ingest, losing all CodeEntity / CALLS / annotation data).
+        def _safe(concern: str, produce, fallback):  # noqa: ANN001, ANN202
+            try:
+                return produce()
+            except Exception:
+                logger.warning(
+                    "java parser: %s extraction failed for %s — skipping that concern",
+                    concern,
+                    path,
+                    exc_info=True,
+                )
+                return fallback
+
+        behavior_markers, aop_advice = _safe(
+            "aop", lambda: AopExtractor.extract(entities, annotations), ([], [])
         )
-        event_types, destinations = MessageFlowExtractor.extract(
-            entities, annotations, message_sites
+        message_sites = _safe(
+            "message sites",
+            lambda: self._collect_message_sites(
+                type_nodes, content, imported_types, same_file_types, package
+            ),
+            [],
         )
-        camel_routes = self._collect_camel_routes(
-            type_nodes, content, imported_types, same_file_types, package, str(path)
+        event_types, destinations = _safe(
+            "message flow",
+            lambda: MessageFlowExtractor.extract(entities, annotations, message_sites),
+            ([], []),
         )
-        consume_routes, camel_produce_endpoints = CamelAnnotationExtractor.extract(
-            entities, annotations, len(camel_routes), str(path)
+        camel_routes = _safe(
+            "camel routes",
+            lambda: self._collect_camel_routes(
+                type_nodes, content, imported_types, same_file_types, package, str(path)
+            ),
+            [],
+        )
+        consume_routes, camel_produce_endpoints = _safe(
+            "camel annotations",
+            lambda: CamelAnnotationExtractor.extract(
+                entities, annotations, len(camel_routes), str(path)
+            ),
+            ([], []),
         )
 
         return ParsedDocument(
@@ -176,7 +212,9 @@ class JavaParser:
             camel_routes=camel_routes + consume_routes,
             camel_produce_endpoints=camel_produce_endpoints,
             http_endpoints=HttpEndpointExtractor.extract(entities, annotations),
-            sql_statements=MyBatisExtractor.extract(entities, annotations),
+            sql_statements=_safe(
+                "mybatis", lambda: MyBatisExtractor.extract(entities, annotations), []
+            ),
             jpa_entities=jpa_entities,
             spring_data_repositories=spring_data_repositories,
         )
@@ -1149,6 +1187,26 @@ class JavaParser:
     # -- Apache Camel Java DSL routes ------------------------------
 
     @classmethod
+    def _all_type_declarations(cls, type_nodes: list["Node"]) -> list["Node"]:
+        """`type_nodes` plus every nested / static-inner type, depth-first — a
+        `RouteBuilder` is commonly a `@Component static class` inside a
+        `@Configuration` class."""
+        collected: list[Node] = []
+
+        def walk(node: "Node") -> None:
+            collected.append(node)
+            body = node.child_by_field_name("body")
+            if body is None:
+                return
+            for member in cls._body_members(body):
+                if member.type in _TYPE_KINDS:
+                    walk(member)
+
+        for type_node in type_nodes:
+            walk(type_node)
+        return collected
+
+    @classmethod
     def _collect_camel_routes(
         cls,
         type_nodes: list["Node"],
@@ -1167,7 +1225,7 @@ class JavaParser:
         routes: list[CamelRoute] = []
         ordinal = 0
 
-        for type_node in type_nodes:
+        for type_node in cls._all_type_declarations(type_nodes):
             extends, _implements = cls._supertypes(
                 type_node, content, imported_types, same_file_types
             )
@@ -1248,13 +1306,33 @@ class JavaParser:
         to_uris: list[str] = []
         steps: list[dict[str, Any]] = []
         step_index = 0
+        # `choice()...when(pred).to(x)...otherwise().to(y)...end()` — a `to(...)`
+        # between `choice` and its `end` is conditional on the enclosing branch
+        # predicate, not an unconditional route target.
+        choice_depth = 0
+        branch_predicate: str | None = None
         for name, args in chain[1:]:
             if name in ("routeId", "id"):
                 explicit = cls._camel_first_string(args, content)
                 if explicit:
                     route_id = explicit
                 continue
+            if name == "choice":
+                choice_depth += 1
+                branch_predicate = None
+            elif name in ("end", "endChoice") and choice_depth > 0:
+                choice_depth -= 1
+                branch_predicate = None
+            elif name in ("when", "filter"):
+                branch_predicate = cls._collapse(cls._text(args, content)) if args else ""
+            elif name == "otherwise":
+                branch_predicate = "otherwise"
+            conditional = choice_depth > 0 and name != "choice"
             step: dict[str, Any] = {"index": step_index, "kind": name}
+            if conditional:
+                step["conditional"] = True
+                if branch_predicate is not None and "predicate" not in step:
+                    step["predicate"] = branch_predicate
             if name in _CAMEL_URI_STEPS:
                 uri = cls._camel_first_string(args, content)
                 if uri:

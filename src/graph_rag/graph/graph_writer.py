@@ -234,7 +234,8 @@ UNWIND $pairs AS pair
 MATCH (r:Route {id: pair.route})
 MERGE (ep:CamelEndpoint {uri: pair.uri})
 SET ep.scheme = pair.scheme
-MERGE (r)-[:TO]->(ep)
+MERGE (r)-[t:TO]->(ep)
+SET t.conditional = pair.conditional
 """
 
 _MERGE_CAMEL_STEPS = """
@@ -242,9 +243,11 @@ UNWIND $rows AS row
 MATCH (r:Route {id: row.route})
 MERGE (st:CamelStep {id: row.id})
 SET st.index = row.index, st.kind = row.kind, st.uri = row.uri,
-    st.ref = row.ref, st.predicate = row.predicate
+    st.ref = row.ref, st.predicate = row.predicate,
+    st.conditional = coalesce(row.conditional, false)
 MERGE (r)-[s:STEP {index: row.index}]->(st)
-SET s.kind = row.kind, s.predicate = row.predicate
+SET s.kind = row.kind, s.predicate = row.predicate,
+    s.conditional = coalesce(row.conditional, false)
 """
 
 # `@Produce` / `@EndpointInject` producer field → the endpoint it writes to.
@@ -1559,11 +1562,25 @@ class GraphWriter:
 
     @classmethod
     def _camel_to_pairs(cls, document: ParsedDocument) -> list[dict]:
-        return [
-            {"route": route.id, "uri": uri, "scheme": cls._scheme_of(uri)}
-            for route in document.camel_routes
-            for uri in route.to_uris
-        ]
+        pairs: list[dict] = []
+        for route in document.camel_routes:
+            # a URI reached by any non-`choice`-branch step is an unconditional
+            # target; one reached only inside a `choice` branch is conditional.
+            unconditional = {
+                step["uri"]
+                for step in route.steps
+                if step.get("uri") and not step.get("conditional")
+            }
+            for uri in route.to_uris:
+                pairs.append(
+                    {
+                        "route": route.id,
+                        "uri": uri,
+                        "scheme": cls._scheme_of(uri),
+                        "conditional": uri not in unconditional,
+                    }
+                )
+        return pairs
 
     @staticmethod
     def _camel_step_rows(document: ParsedDocument) -> list[dict]:
@@ -1576,6 +1593,7 @@ class GraphWriter:
                 "uri": step.get("uri"),
                 "ref": step.get("ref"),
                 "predicate": step.get("predicate"),
+                "conditional": bool(step.get("conditional", False)),
             }
             for route in document.camel_routes
             for step in route.steps

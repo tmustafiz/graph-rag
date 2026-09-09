@@ -39,6 +39,56 @@ def test_sql_accesses_merges_on_qualified_name_not_name() -> None:
     assert "real.qualified_name IS NOT NULL" in gw._MERGE_SQL_ACCESSES
 
 
+def test_camel_to_pairs_flags_choice_branch_endpoints_conditional() -> None:
+    """#161 — branch `to(...)` becomes a `(:Route)-[:TO {conditional:true}]->` edge."""
+    from datetime import UTC, datetime
+
+    from graph_rag.ingest.models import CamelRoute, ParsedDocument, Source
+
+    route = CamelRoute(
+        route_id="r",
+        from_uri="direct:in",
+        source_path="Routes.java",
+        ordinal=0,
+        to_uris=["jms:vip", "jms:normal", "log:done"],
+        steps=[
+            {"index": 0, "kind": "choice"},
+            {"index": 1, "kind": "when", "predicate": "vip", "conditional": True},
+            {"index": 2, "kind": "to", "uri": "jms:vip", "conditional": True, "predicate": "vip"},
+            {"index": 3, "kind": "otherwise", "conditional": True},
+            {
+                "index": 4,
+                "kind": "to",
+                "uri": "jms:normal",
+                "conditional": True,
+                "predicate": "otherwise",
+            },
+            {"index": 5, "kind": "end"},
+            {"index": 6, "kind": "to", "uri": "log:done"},
+        ],
+        embed_text="x",
+    )
+    document = ParsedDocument(
+        source=Source(
+            path="Routes.java",
+            source_type="java",
+            content_hash="h",
+            ingested_at=datetime.now(UTC),
+        ),
+        camel_routes=[route],
+    )
+    pairs = {pair["uri"]: pair["conditional"] for pair in gw.GraphWriter._camel_to_pairs(document)}
+    assert pairs == {"jms:vip": True, "jms:normal": True, "log:done": False}
+
+    step_rows = {
+        row["uri"]: row["conditional"] for row in gw.GraphWriter._camel_step_rows(document)
+    }
+    assert step_rows["jms:vip"] is True
+    assert step_rows["log:done"] is False
+    assert "conditional = coalesce(row.conditional, false)" in gw._MERGE_CAMEL_STEPS
+    assert "SET t.conditional = pair.conditional" in gw._MERGE_CAMEL_TO
+
+
 def test_http_endpoint_merge_rebuilds_a_single_direction_edge() -> None:
     """#157 — an endpoint that flips outbound must not keep both edges, and the
     handler match must be OPTIONAL."""

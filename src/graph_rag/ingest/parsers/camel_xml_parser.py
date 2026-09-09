@@ -9,16 +9,26 @@ from .camel_xml_route_extractor import CamelXmlRouteExtractor
 
 logger = logging.getLogger(__name__)
 
-_CAMEL_ROOTS = {"camelContext", "routes", "route", "routeTemplate"}
+# Only these as the document *root* claim the file — not a `<route>` buried in a
+# gateway descriptor / OSGi blueprint / custom-schema config.
+_CAMEL_ROOT_TAGS = {"camelContext", "routes", "route", "routeTemplate"}
+_CAMEL_NS_PREFIX = "http://camel.apache.org/schema/"
 
 
 def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
+def _namespace(tag: str) -> str:
+    return tag[1 : tag.index("}")] if tag.startswith("{") else ""
+
+
 class CamelXmlParser:
-    """Parses a standalone Camel XML DSL file (`<camelContext>` / `<routes>` /
-    `<route>` root, or a `<blueprint>` wrapping one) into `CamelRoute`s.
+    """Parses a standalone Camel XML DSL file — a `<camelContext>` / `<routes>` /
+    `<routeTemplate>` / `<route>` document root — into `CamelRoute`s. A
+    namespaced root must be in the Camel namespace
+    (`http://camel.apache.org/schema/...`); a bare (namespace-free) root is
+    accepted for hand-written snippets / test fixtures.
 
     A Spring `<beans>` file that *embeds* a `<camelContext>` is claimed by
     `SpringXmlParser` (for its beans) — that parser calls
@@ -35,11 +45,10 @@ class CamelXmlParser:
             )
         except (ElementTree.ParseError, OSError):
             return False
-        if _local(root.tag) == "beans":
+        if _local(root.tag) not in _CAMEL_ROOT_TAGS:
             return False
-        if _local(root.tag) in _CAMEL_ROOTS:
-            return True
-        return any(_local(element.tag) in _CAMEL_ROOTS for element in root.iter())
+        namespace = _namespace(root.tag)
+        return namespace == "" or namespace.startswith(_CAMEL_NS_PREFIX)
 
     def parse(self, path: Path) -> ParsedDocument:
         raw = path.read_bytes()

@@ -42,10 +42,13 @@ grag-mcp ingest --scip index.scip
 grag-mcp ingest --scip /path/to/index.scip --root /path/to/repo
 ```
 
-SCIP-derived entities **replace** the static ones for every file the index
-covers (`CodeEntity.resolution` records which pass produced the current set).
-Ingest static first for the framework graph (Spring / Camel / …), then
-`--scip` on top for the precise call graph.
+`--scip` is an **additive layer**: SCIP-derived `CodeEntity` / `CALLS` /
+`IMPORTS` / `IMPLEMENTS` replace the static ones for every file the index
+covers (`CodeEntity.resolution` records which pass produced the current set),
+but the framework graph a prior static ingest built for those files — beans,
+endpoints, routes, AOP advice, MyBatis statements, events, config, modules — is
+left untouched. So ingest static first for the framework graph
+(Spring / Camel / …), then `--scip` on top for the precise call graph.
 
 ## One-command wrapper
 

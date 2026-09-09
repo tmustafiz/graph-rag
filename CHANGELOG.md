@@ -110,6 +110,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recording `Advice.unresolved_reason` for what it can't match.
   ([#83](https://github.com/tmustafiz/graph-rag/issues/83))
 
+### Fixed
+
+- `grag-mcp ingest --scip` is now a true additive layer — it refreshes
+  `CodeEntity` / `CALLS` / `IMPORTS` / `IMPLEMENTS` for covered files without
+  `DETACH DELETE`ing the framework graph (beans, endpoints, routes, AOP,
+  MyBatis, events, config, modules) a prior static ingest built
+  (`GraphWriter.write(reconcile_frameworks=False)`).
+  ([#151](https://github.com/tmustafiz/graph-rag/issues/151))
+- `compute-centrality` no longer throws on a non-Spring / plain-Python /
+  pre-v0.7.0 database: the GDS projection is built from
+  `db.relationshipTypes()` / `db.labels()`, framework edges are projected
+  UNDIRECTED, and the projection call is inside `try/finally`.
+  ([#152](https://github.com/tmustafiz/graph-rag/issues/152))
+- SCIP: overloaded-method symbols (`submit(+1).`) keep the method name and get
+  distinct `qualified_name`s; `CALLS` attribution matches a reference's
+  enclosing range to the definition it contains (annotated / multi-line
+  signatures no longer drop every call in the method); `CodeEntity.language`
+  comes from the SCIP document / scheme, not a blanket `"scip"`; a truncated
+  `.scip` raises instead of decoding to a partial document.
+  ([#153](https://github.com/tmustafiz/graph-rag/issues/153),
+  [#154](https://github.com/tmustafiz/graph-rag/issues/154),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+- `get_endpoints` no longer returns outbound `@FeignClient` / `@HttpExchange`
+  client declarations as served routes; `get_architecture_outline`'s `module`
+  filter also accepts a path suffix, matching the sibling tools; `get_routes`
+  tolerates a `CamelStep` with a null index.
+  ([#155](https://github.com/tmustafiz/graph-rag/issues/155),
+  [#163](https://github.com/tmustafiz/graph-rag/issues/163),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+- Cross-file `EventType` nodes (import-resolved FQN on one side, bare name on
+  the other) are folded together so publisher ↔ listener flows connect;
+  `HttpEndpoint` rebuilds its single direction edge each ingest instead of
+  keeping both `HANDLED_BY` and `CALLS_SERVICE` when `outbound` flips;
+  `_MERGE_SQL_ACCESSES` resolves the bare table name to an ingested `DbTable`'s
+  `qualified_name` (else a synthesized stub) rather than MERGE-ing on `name`;
+  the orphan `EventType` / `Destination` sweeps are label-scoped.
+  ([#156](https://github.com/tmustafiz/graph-rag/issues/156),
+  [#157](https://github.com/tmustafiz/graph-rag/issues/157),
+  [#158](https://github.com/tmustafiz/graph-rag/issues/158),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+- Camel: `_collect_camel_routes` walks nested / static-inner `RouteBuilder`
+  classes; each new `JavaParser` framework extractor is wrapped so one grammar
+  edge case degrades to "no data for that concern" instead of dropping the
+  whole `.java` file; a `to(...)` inside a `choice` branch is recorded
+  `conditional` with its branch predicate and excluded from `get_routes`'
+  unconditional `to_uris`; the Camel XML / YAML parsers dispatch on the root
+  tag + Camel namespace / a list-of-route shape, so ordinary config files are
+  no longer misclassified.
+  ([#159](https://github.com/tmustafiz/graph-rag/issues/159),
+  [#160](https://github.com/tmustafiz/graph-rag/issues/160),
+  [#161](https://github.com/tmustafiz/graph-rag/issues/161),
+  [#162](https://github.com/tmustafiz/graph-rag/issues/162))
+- `SqlTableScanner` strips string literals and comments before scanning, so a
+  `from` / `join` word inside `'...'` or `--` no longer emits a phantom table;
+  `MyBatisResolver` clears XML-derived `EXECUTES` edges before rebuilding, so a
+  renamed `@Mapper` method leaves no stale edge; `@HttpExchange(url=)` /
+  `@GetExchange(url=)` path prefixes and target service are read.
+  ([#164](https://github.com/tmustafiz/graph-rag/issues/164),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+
 ## [0.6.0] - 2026-09-07
 
 ### Added

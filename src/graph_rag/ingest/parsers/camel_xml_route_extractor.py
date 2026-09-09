@@ -98,7 +98,7 @@ class CamelXmlRouteExtractor:
         for child in element:
             if _local(child.tag) in ("from", "description"):
                 continue
-            cls._walk_step(child, steps, to_uris, counter)
+            cls._walk_step(child, steps, to_uris, counter, conditional=False, predicate=None)
 
         summary = " -> ".join(
             step["kind"] + (f"({step['uri']})" if step.get("uri") else "") for step in steps
@@ -123,22 +123,30 @@ class CamelXmlRouteExtractor:
         steps: list[dict[str, Any]],
         to_uris: list[str],
         counter: list[int],
+        *,
+        conditional: bool,
+        predicate: str | None,
     ) -> None:
         tag = _local(element.tag)
 
         def add(kind: str, **extra: Any) -> None:
-            steps.append({"index": counter[0], "kind": kind, **extra})
+            step: dict[str, Any] = {"index": counter[0], "kind": kind, **extra}
+            if conditional:
+                step["conditional"] = True
+                if predicate is not None and "predicate" not in step:
+                    step["predicate"] = predicate
+            steps.append(step)
             counter[0] += 1
 
         if tag in _URI_STEPS:
             uri = element.get("uri")
-            step: dict[str, Any] = {}
+            uri_extra: dict[str, Any] = {}
             if uri:
-                step["uri"] = uri
+                uri_extra["uri"] = uri
                 to_uris.append(uri)
                 if uri.startswith("bean:"):
-                    step["ref"] = cls._bean_uri_ref(uri)
-            add(tag, **step)
+                    uri_extra["ref"] = cls._bean_uri_ref(uri)
+            add(tag, **uri_extra)
         elif tag == "bean":
             ref = element.get("ref") or element.get("beanType") or ""
             method = element.get("method")
@@ -148,24 +156,38 @@ class CamelXmlRouteExtractor:
         elif tag == "choice":
             add("choice")
             for branch in element:
-                cls._walk_step(branch, steps, to_uris, counter)
+                cls._walk_step(
+                    branch, steps, to_uris, counter, conditional=True, predicate=predicate
+                )
             add("end")
         elif tag in ("when", "filter"):
-            add(tag, predicate=cls._predicate(element))
+            branch_predicate = cls._predicate(element)
+            add(tag, predicate=branch_predicate)
             for child in element:
                 if _local(child.tag) not in _PREDICATE_TAGS:
-                    cls._walk_step(child, steps, to_uris, counter)
+                    cls._walk_step(
+                        child, steps, to_uris, counter, conditional=True, predicate=branch_predicate
+                    )
         elif tag == "otherwise":
             add("otherwise")
             for child in element:
-                cls._walk_step(child, steps, to_uris, counter)
+                cls._walk_step(
+                    child, steps, to_uris, counter, conditional=True, predicate="otherwise"
+                )
         elif tag in _PASSTHROUGH_STEPS:
             extra = {"name": element.get("name")} if element.get("name") else {}
             add(tag, **extra)
             if tag in ("split", "multicast", "aggregate", "loadBalance", "loop"):
                 for child in element:
                     if _local(child.tag) not in _PREDICATE_TAGS:
-                        cls._walk_step(child, steps, to_uris, counter)
+                        cls._walk_step(
+                            child,
+                            steps,
+                            to_uris,
+                            counter,
+                            conditional=conditional,
+                            predicate=predicate,
+                        )
 
     @staticmethod
     def _predicate(element: ElementTree.Element) -> str:
