@@ -4,6 +4,38 @@ from neo4j import Driver
 
 from graph_rag.settings import settings
 
+# --- Framework graph vocabulary (single source of truth) ---
+# The label / relationship-type names the v0.7.0 framework layer adds on top of
+# the base `CALLS` / `IMPORTS` code graph. `CentralityAnalyzer` projects the
+# subset of these that a given database actually contains; `graph_writer` and
+# the post-ingest resolvers MERGE them. `tests/test_graph_schema.py` fails if a
+# name here is never written by any `graph/` module, or a framework node label
+# here has no uniqueness constraint below — so a rename can't silently leave the
+# PageRank projection stale.
+DIRECT_RELATIONSHIP_TYPES: tuple[str, ...] = ("CALLS", "IMPORTS")
+
+FRAMEWORK_RELATIONSHIP_TYPES: tuple[str, ...] = (
+    "IS_BEAN",
+    "INJECTS",
+    "PUBLISHES",
+    "CONSUMED_BY",
+    "HANDLED_BY",
+    "CALLS_SERVICE",
+    "RESOLVES_TO",
+    "INVOKES",
+    "EXECUTES",
+)
+
+FRAMEWORK_NODE_LABELS: tuple[str, ...] = (
+    "CodeEntity",
+    "Bean",
+    "EventType",
+    "Destination",
+    "HttpEndpoint",
+    "CamelStep",
+    "SqlStatement",
+)
+
 # Uniqueness constraints — one per node type that ingestion upserts on.
 # See docs/ARCHITECTURE.md for the full node/relationship taxonomy.
 CONSTRAINTS: list[str] = [
@@ -24,6 +56,16 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT db_index_qualified_name IF NOT EXISTS "
     "FOR (n:DbIndex) REQUIRE n.qualified_name IS UNIQUE",
     "CREATE CONSTRAINT annotation_id IF NOT EXISTS FOR (n:Annotation) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT behavior_marker_id IF NOT EXISTS "
+    "FOR (n:BehaviorMarker) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT advice_id IF NOT EXISTS FOR (n:Advice) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT event_type_fqn IF NOT EXISTS FOR (n:EventType) REQUIRE n.fqn IS UNIQUE",
+    "CREATE CONSTRAINT destination_id IF NOT EXISTS FOR (n:Destination) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT sql_statement_id IF NOT EXISTS FOR (n:SqlStatement) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT route_id IF NOT EXISTS FOR (n:Route) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT camel_step_id IF NOT EXISTS FOR (n:CamelStep) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT camel_endpoint_uri IF NOT EXISTS "
+    "FOR (n:CamelEndpoint) REQUIRE n.uri IS UNIQUE",
     "CREATE CONSTRAINT config_file_path IF NOT EXISTS FOR (n:ConfigFile) REQUIRE n.path IS UNIQUE",
     "CREATE CONSTRAINT config_property_id IF NOT EXISTS "
     "FOR (n:ConfigProperty) REQUIRE n.id IS UNIQUE",

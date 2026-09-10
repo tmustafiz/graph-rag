@@ -1,6 +1,9 @@
 from pydantic import BaseModel, Field
 
 from .annotation import Annotation
+from .aop_advice import AopAdvice
+from .behavior_marker import BehaviorMarker
+from .camel_route import CamelRoute
 from .chunk import Chunk
 from .code_entity import CodeEntity
 from .config_file import ConfigFile
@@ -10,6 +13,8 @@ from .db_index import DbIndex
 from .db_reference import DbReference
 from .db_table import DbTable
 from .db_view import DbView
+from .destination import Destination
+from .event_type import EventType
 from .external_artifact import ExternalArtifact
 from .http_endpoint import HttpEndpoint
 from .jpa_entity import JpaEntity
@@ -20,6 +25,7 @@ from .section import Section
 from .source import Source
 from .spring_data_repository import SpringDataRepository
 from .spring_xml_bean import SpringXmlBean
+from .sql_statement import SqlStatement
 
 
 class ParsedDocument(BaseModel):
@@ -36,6 +42,27 @@ class ParsedDocument(BaseModel):
     # Structured annotations on the code entities above, each carrying its
     # `owner_qualified_name`; feeds `(CodeEntity)-[:ANNOTATED_WITH]->(:Annotation)`.
     annotations: list[Annotation] = Field(default_factory=list)
+    # Cross-cutting behavior declared by annotation (`@Transactional`,
+    # `@Scheduled`, `@Async`, `@Cacheable`, `@PreAuthorize`, …); feeds
+    # `(CodeEntity)-[:HAS_BEHAVIOR {marker}]->(:BehaviorMarker)`.
+    behavior_markers: list[BehaviorMarker] = Field(default_factory=list)
+    # `@Aspect` advice / `@Pointcut` methods; feeds
+    # `(CodeEntity)-[:ADVICE_OF]->(:Advice)` and, after the `AopResolver` pass,
+    # `(:Advice)-[:ADVISES]->(:CodeEntity)`.
+    aop_advice: list[AopAdvice] = Field(default_factory=list)
+    # In-process application events + broker destinations, carrying their
+    # publisher / consumer method `qualified_name`s; feed
+    # `(CodeEntity)-[:PUBLISHES]->(:EventType)-[:CONSUMED_BY]->(CodeEntity)` and
+    # `(CodeEntity)-[:PRODUCES_TO]->(:Destination)-[:CONSUMED_BY]->(CodeEntity)`.
+    event_types: list[EventType] = Field(default_factory=list)
+    destinations: list[Destination] = Field(default_factory=list)
+    # Apache Camel routes from a `RouteBuilder.configure()` Java DSL chain;
+    # feed `(:Route)-[:FROM|TO]->(:CamelEndpoint)` and
+    # `(:Route)-[:STEP]->(:CamelStep)-[:INVOKES]->(:CodeEntity)`.
+    camel_routes: list[CamelRoute] = Field(default_factory=list)
+    # `@Produce` / `@EndpointInject` producer endpoints: `[{uri, producer_qn}]`;
+    # feed `(:CodeEntity)-[:PRODUCES_TO]->(:CamelEndpoint)`.
+    camel_produce_endpoints: list[dict[str, str]] = Field(default_factory=list)
     policy_rules: list[PolicyRule] = Field(default_factory=list)
     # Spring / Java application config: one `ConfigFile` per parsed file plus its
     # flattened `ConfigProperty` list; feeds
@@ -62,6 +89,9 @@ class ParsedDocument(BaseModel):
     # Spring MVC / JAX-RS routes, one per (http_method, path); feeds
     # `(:HttpEndpoint)-[:HANDLED_BY]->(:CodeEntity)`.
     http_endpoints: list[HttpEndpoint] = Field(default_factory=list)
+    # MyBatis mapper statements — from a mapper XML or an `@Select` / `@Insert`
+    # annotation; feed `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)-[:ACCESSES {mode}]->(:DbTable)`.
+    sql_statements: list[SqlStatement] = Field(default_factory=list)
     db_tables: list[DbTable] = Field(default_factory=list)
     db_columns: list[DbColumn] = Field(default_factory=list)
     db_views: list[DbView] = Field(default_factory=list)

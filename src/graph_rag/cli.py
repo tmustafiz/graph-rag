@@ -9,13 +9,9 @@ from .eval.eval_case_result import EvalCaseResult
 from .eval.retrieval_evaluator import EVAL_CORPUS_DIR, RetrievalEvaluator
 from .graph.centrality_analyzer import CentralityAnalyzer
 from .graph.client import check_connectivity, driver_session
+from .graph.default_resolvers import build_default_resolvers
 from .graph.graph_writer import GraphWriter
-from .graph.project_model_resolver import ProjectModelResolver
 from .graph.schema import apply_schema
-from .graph.spring_bean_resolver import SpringBeanResolver
-from .graph.spring_data_resolver import SpringDataResolver
-from .graph.spring_injection_resolver import SpringInjectionResolver
-from .graph.spring_xml_resolver import SpringXmlResolver
 from .http_app import build_http_app
 from .ingest.embedders import build_embedder
 from .ingest.parser_registry import ParserRegistry
@@ -31,6 +27,8 @@ from .mcp_server.retriever import Retriever
 from .mcp_server.server import build_server
 from .memory import MemoryPruner, MemoryRecaller, MemoryWriter
 from .memory.memory_pruner import DEFAULT_GRACE_DAYS, DEFAULT_THRESHOLD
+from .scip_ingestor import ScipIngestor
+from .scip_java_runner import ScipJavaRunner
 from .settings import settings
 from .unsupported_file_type_error import UnsupportedFileTypeError
 
@@ -68,7 +66,9 @@ def apply_schema_command() -> None:
 
 @app.command()
 def ingest(
-    path: Path = typer.Argument(..., exists=True, help="File or directory to ingest."),  # noqa: B008
+    path: Path | None = typer.Argument(  # noqa: B008
+        None, exists=True, help="File or directory to ingest (omit with --scip)."
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview what would be ingested without writing to Neo4j."
     ),
@@ -78,23 +78,43 @@ def ingest(
         help="After the initial ingest, watch `path` for changes and re-ingest "
         "continuously (Ctrl+C to stop).",
     ),
+    scip: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--scip",
+        exists=True,
+        help="Ingest a SCIP index (e.g. from `scip-java index`) instead of parsing "
+        "source files — compiler-grade CALLS / IMPORTS / IMPLEMENTS. SCIP-derived "
+        "entities replace the static ones for any file the index covers.",
+    ),
+    root: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--root",
+        help="Repo root the SCIP index's relative paths are resolved against "
+        "(default: current directory). Only with --scip.",
+    ),
 ) -> None:
     """Parse, chunk, embed, and upsert a file or directory (recursive) into the graph.
 
     Skips any file whose content is unchanged since the last ingest.
     """
+    if scip is not None:
+        with driver_session() as driver:
+            count = ScipIngestor(build_embedder(), GraphWriter(driver)).ingest(
+                scip, root=root, dry_run=dry_run
+            )
+        verb = "Would ingest" if dry_run else "Ingested"
+        typer.secho(f"{verb} {count} SCIP documents.", fg=typer.colors.GREEN)
+        return
+    if path is None:
+        typer.secho("Provide a path to ingest, or --scip <index>.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
     with driver_session() as driver:
         pipeline = IngestionPipeline(
             ParserRegistry(),
             build_embedder(),
             GraphWriter(driver),
-            [
-                ProjectModelResolver(driver),
-                SpringBeanResolver(driver),
-                SpringXmlResolver(driver),
-                SpringDataResolver(driver),
-                SpringInjectionResolver(driver),
-            ],
+            build_default_resolvers(driver),
         )
         try:
             results = pipeline.run(path, dry_run=dry_run)
@@ -126,6 +146,46 @@ def ingest(
 
     if any_failed:
         raise typer.Exit(code=1)
+
+
+@app.command(name="scip-java")
+def scip_java(
+    repo: Path = typer.Argument(  # noqa: B008
+        ..., exists=True, file_okay=False, help="Repo (or module) directory to index."
+    ),
+    output: Path = typer.Option(  # noqa: B008
+        Path("index.scip"), "--output", help="Index file path (relative to the repo)."
+    ),
+    build_tool: str | None = typer.Option(
+        None, "--build-tool", help="Pin build-tool detection: gradle / maven / sbt / mill / bazel."
+    ),
+    build_command: str | None = typer.Option(
+        None,
+        "--build-command",
+        help='Build invocation passed to scip-java after `--` (e.g. "clean verify -DskipTests").',
+    ),
+    do_ingest: bool = typer.Option(
+        True, "--ingest/--no-ingest", help="Ingest the produced index (else just write it)."
+    ),
+) -> None:
+    """Run the external `scip-java` binary to build a SCIP index, then ingest it.
+
+    Requires `scip-java` on PATH and a working project build. This is a thin
+    convenience wrapper: `scip-java index` + `grag-mcp ingest --scip`.
+    """
+    try:
+        index_path = ScipJavaRunner.run(
+            repo, output, build_tool=build_tool, build_command=build_command
+        )
+    except (RuntimeError, ValueError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+    typer.secho(f"Wrote {index_path}.", fg=typer.colors.GREEN)
+    if not do_ingest:
+        return
+    with driver_session() as driver:
+        count = ScipIngestor(build_embedder(), GraphWriter(driver)).ingest(index_path, root=repo)
+    typer.secho(f"Ingested {count} SCIP documents.", fg=typer.colors.GREEN)
 
 
 @app.command(name="prune-memory")
@@ -232,13 +292,7 @@ def eval_retrieval(
             ParserRegistry(),
             embedder,
             GraphWriter(driver),
-            [
-                ProjectModelResolver(driver),
-                SpringBeanResolver(driver),
-                SpringXmlResolver(driver),
-                SpringDataResolver(driver),
-                SpringInjectionResolver(driver),
-            ],
+            build_default_resolvers(driver),
         )
         pipeline.run(EVAL_CORPUS_DIR)
         baseline = RetrievalEvaluator(Retriever(driver, embedder)).run(cases)
@@ -325,13 +379,7 @@ def serve_mcp(
                 ParserRegistry(),
                 embedder,
                 writer,
-                [
-                    ProjectModelResolver(driver),
-                    SpringBeanResolver(driver),
-                    SpringXmlResolver(driver),
-                    SpringDataResolver(driver),
-                    SpringInjectionResolver(driver),
-                ],
+                build_default_resolvers(driver),
             )
         if role in (McpRole.MEMORY, McpRole.ALL):
             memory_writer = MemoryWriter(driver, embedder)

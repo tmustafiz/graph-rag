@@ -1,11 +1,10 @@
 import json
-import logging
 import re
 from typing import Any, LiteralString, NamedTuple, cast
 
-from neo4j import Driver, ManagedTransaction
+from neo4j import ManagedTransaction
 
-logger = logging.getLogger(__name__)
+from .graph_resolver import GraphResolver
 
 # Simple names of the built-in Spring stereotypes (matched on `Annotation.name`
 # or the tail of `Annotation.fqn`).
@@ -110,7 +109,7 @@ class _Assembled(NamedTuple):
     binds: list[dict[str, str]]
 
 
-class SpringBeanResolver:
+class SpringBeanResolver(GraphResolver):
     """After a directory ingest, derives the Spring bean graph from the
     `Annotation` / `CodeEntity` / `EXTENDS`-`IMPLEMENTS` / `ConfigProperty`
     layers already in Neo4j.
@@ -136,14 +135,7 @@ class SpringBeanResolver:
     idempotent and never leaves a stale bean behind.
     """
 
-    def __init__(self, driver: Driver) -> None:
-        self._driver = driver
-
-    def resolve(self) -> dict[str, int]:
-        with self._driver.session() as session:
-            result = session.execute_write(self._rebuild)
-        logger.info("spring bean graph resolved: %s", result)
-        return result
+    _log_label = "spring bean"
 
     @classmethod
     def _rebuild(cls, tx: ManagedTransaction) -> dict[str, int]:

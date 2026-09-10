@@ -7,6 +7,212 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-09
+
+### Added
+- Declarative HTTP clients. `@FeignClient(name, path)` and `@HttpExchange`
+  interface methods (`@GetMapping` / `@GetExchange` / …) become *outbound*
+  `HttpEndpoint`s (`outbound=true`, `target_service`, path composed from the
+  type base + method path), wired `(:CodeEntity)-[:CALLS_SERVICE]->(:HttpEndpoint)`.
+  New `ServiceCallResolver` post-ingest pass matches each to an ingested
+  `@RestController` route by `(http_method, path)` (path variables normalized)
+  and adds `(:HttpEndpoint outbound)-[:RESOLVES_TO]->(:HttpEndpoint inbound)` —
+  a cross-service call graph; unmatched outbound endpoints stay standalone.
+  ([#86](https://github.com/tmustafiz/graph-rag/issues/86))
+- Spring events & messaging model. `ApplicationEventPublisher.publishEvent(...)`
+  call sites and `@EventListener` / `@TransactionalEventListener` methods are
+  bridged by a MERGE-shared `EventType` node
+  (`(:CodeEntity)-[:PUBLISHES]->(:EventType)-[:CONSUMED_BY]->(:CodeEntity)`),
+  the event class import-resolved and normalized to one canonical `fqn` per
+  simple name so publisher and listener link across files. `@KafkaListener` /
+  `@RabbitListener` / `@JmsListener` / `@SqsListener` / `@StreamListener` and
+  `KafkaTemplate` / `RabbitTemplate` / `JmsTemplate` `.send(...)` /
+  `.convertAndSend(...)` with a literal destination become
+  `(:CodeEntity)-[:PRODUCES_TO]->(:Destination {broker})-[:CONSUMED_BY]->(:CodeEntity)`.
+  ([#84](https://github.com/tmustafiz/graph-rag/issues/84))
+- MyBatis mapper model. New `MyBatisMapperParser` claims a `.xml` with a
+  `<mapper namespace>` root and emits a `SqlStatement` per
+  `<select|insert|update|delete>` — SQL flattened (`<include>` fragments
+  expanded, dynamic `<if>` / `<where>` / `<foreach>` unwrapped) and scanned for
+  table names + `read` / `write` mode. `@Select` / `@Insert` / `@Update` /
+  `@Delete` annotations on `@Mapper` methods are handled in `JavaParser` via
+  `MyBatisExtractor`. `MyBatisResolver` binds XML statements to their interface
+  method by `namespace` + `id`. Feeds
+  `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)-[:ACCESSES {mode}]->(:DbTable)`
+  (reusing a real `DbTable` by name, else a `stub:true` node).
+  ([#85](https://github.com/tmustafiz/graph-rag/issues/85))
+- Framework-aware retrieval & MCP tools. New MCP tools `get_routes(uri_glob?,
+  module?)`, `get_message_flows(event_or_topic)`,
+  `get_service_calls(qualified_name)` (in/out HTTP, cross-service),
+  `get_architecture_outline(module?)` (beans / endpoints / routes / listeners /
+  scheduled jobs by module). `get_beans_for` gains `publishes` / `listens_to` /
+  `calls_services` / `invoked_by_routes` / `behaviors` context. `search_code`
+  gains `route=` / `endpoint=` / `listens_to=` / `behavior=` filters.
+  `get_central_code_entities` now runs PageRank over `CALLS` / `IMPORTS` **plus**
+  the framework-mediated edges (`IS_BEAN` / `INJECTS`, `PUBLISHES` /
+  `CONSUMED_BY`, Camel `INVOKES`, `CALLS_SERVICE`, `EXECUTES`). MCP server
+  instructions rewritten for the full enterprise-Java graph. New runnable
+  `examples/enterprise-java/` (three modules — Camel Java + XML routes, a Kafka
+  listener, a `@FeignClient` to a second service, an `@Aspect`, `@Transactional`,
+  a MyBatis mapper) with a query walkthrough; `docs/enterprise-java.md` and
+  `docs/ARCHITECTURE.md` "Java frameworks" completed with a precision-tier
+  table. ([#87](https://github.com/tmustafiz/graph-rag/issues/87))
+- `grag-mcp scip-java <repo>` — one-command wrapper that shells out to the
+  external `scip-java` binary (`scip-java index --output … [--build-tool …]
+  [-- <build args>]`) and ingests the produced index. `docs/enterprise-java.md`
+  gains the `scip-java index` workflow (build-tool detection, `--` escape
+  hatch, output conventions) and a copy-pasteable GitHub Actions recipe
+  (build → index → upload → ingest).
+  ([#80](https://github.com/tmustafiz/graph-rag/issues/80))
+- SCIP index ingestion — `grag-mcp ingest --scip <index.scip> [--root <repo>]`.
+  A hand-rolled protobuf reader (`ScipReader`, no `protobuf` runtime) decodes a
+  SCIP `Index`; `ScipSymbolParser` maps a symbol string to a readable
+  `qualified_name`; `ScipIngestor` builds one `ParsedDocument` per SCIP
+  `Document` — `SymbolInformation` → `CodeEntity` (kind from `Kind` else the
+  descriptor suffix), `Relationship(is_implementation)` → `IMPLEMENTS`,
+  `Relationship(is_reference | is_type_definition)` → `IMPORTS`, a reference
+  `Occurrence` with a method `enclosing_range` → `CALLS`. New
+  `CodeEntity.resolution` (`static` / `scip`) records provenance; SCIP entities
+  are written per `Source`, so the existing per-`Source` reconcile drops the
+  file's static entities — SCIP wins on overlap. New `docs/enterprise-java.md`
+  (static vs SCIP decision guidance + how to produce an index).
+  ([#79](https://github.com/tmustafiz/graph-rag/issues/79))
+- Apache Camel routes — XML & YAML DSL + Camel annotations. New `CamelXmlParser`
+  (`<camelContext>` / `<routes>` / `<route>` root; a `<beans>` file embedding a
+  `<camelContext>` stays with `SpringXmlParser`, which now also runs the shared
+  `CamelXmlRouteExtractor`) and `CamelYamlParser` (`- route:` / `- from:`
+  shape) emit the same `CamelRoute` model as the Java DSL, flattening nested
+  `choice` / `when` / `otherwise`. `@Consume(uri=)` on a method becomes a
+  one-step route into it; `@Produce` / `@EndpointInject` on a field becomes
+  `(:CodeEntity)-[:PRODUCES_TO]->(:CamelEndpoint)`. All four sources share the
+  MERGE-keyed `CamelEndpoint`, so `direct:` / `seda:` producer↔consumer pairs
+  span DSLs.
+  ([#82](https://github.com/tmustafiz/graph-rag/issues/82))
+- Apache Camel route graph (Java DSL). `JavaParser` walks each `RouteBuilder`
+  subclass's `configure()` body, unwinding the fluent
+  `from(uri).routeId(id).<step>...` chain (which the generic `CALLS` resolver
+  skips) into a `CamelRoute` with an ordered `steps` list (`to` / `process` /
+  `bean` / `choice` / `when` / `split` / `wireTap` / `enrich` / …) and the
+  builder's `onException(...)` exception FQNs. Endpoint URIs become
+  MERGE-shared `CamelEndpoint {uri, scheme}` nodes, so `.to("direct:x")` and
+  `from("direct:x")` pair via `(:Route)-[:TO]->(:CamelEndpoint)-[:CONSUMED_BY]->(:Route)`.
+  New `CamelResolver` pass wires `(:CamelStep)-[:INVOKES]->(:CodeEntity)` for
+  `process` / `bean` references (`Type.method` / bare `Type` / `beanName`).
+  ([#81](https://github.com/tmustafiz/graph-rag/issues/81))
+- AOP & behavioral-annotation model. `@Transactional` / `@Async` / `@Scheduled`
+  / `@Retryable` / `@Cacheable` / `@CacheEvict` / `@PreAuthorize` / `@Secured` /
+  `@RolesAllowed` on a type or method become `(:CodeEntity)-[:HAS_BEHAVIOR
+  {marker}]->(:BehaviorMarker)` carrying the annotation's attributes (cron,
+  propagation, readOnly, maxAttempts, …); the marker slugs are mirrored onto
+  `CodeEntity.behaviors` for cheap "all scheduled jobs" scans. Every `@Aspect`
+  advice / `@Pointcut` method becomes an `(:Advice)` node, and the new
+  `AopResolver` post-ingest pass does best-effort AspectJ pointcut matching
+  (`execution(…)` / `within(…)` / `@annotation(…)`, `&&` / `||`, one level of
+  named-`@Pointcut` substitution) to wire `(:Advice)-[:ADVISES]->(:CodeEntity)`,
+  recording `Advice.unresolved_reason` for what it can't match.
+  ([#83](https://github.com/tmustafiz/graph-rag/issues/83))
+
+### Fixed
+
+- `grag-mcp ingest --scip` is now a true additive layer — it refreshes
+  `CodeEntity` / `CALLS` / `IMPORTS` / `IMPLEMENTS` for covered files without
+  `DETACH DELETE`ing the framework graph (beans, endpoints, routes, AOP,
+  MyBatis, events, config, modules) a prior static ingest built
+  (`GraphWriter.write(reconcile_frameworks=False)`).
+  ([#151](https://github.com/tmustafiz/graph-rag/issues/151))
+- `compute-centrality` no longer throws on a non-Spring / plain-Python /
+  pre-v0.7.0 database: the GDS projection is built from
+  `db.relationshipTypes()` / `db.labels()`, framework edges are projected
+  UNDIRECTED, and the projection call is inside `try/finally`.
+  ([#152](https://github.com/tmustafiz/graph-rag/issues/152))
+- SCIP: overloaded-method symbols (`submit(+1).`) keep the method name and get
+  distinct `qualified_name`s; `CALLS` attribution matches a reference's
+  enclosing range to the definition it contains (annotated / multi-line
+  signatures no longer drop every call in the method); `CodeEntity.language`
+  comes from the SCIP document / scheme, not a blanket `"scip"`; a truncated
+  `.scip` raises instead of decoding to a partial document.
+  ([#153](https://github.com/tmustafiz/graph-rag/issues/153),
+  [#154](https://github.com/tmustafiz/graph-rag/issues/154),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+- `get_endpoints` no longer returns outbound `@FeignClient` / `@HttpExchange`
+  client declarations as served routes; `get_architecture_outline`'s `module`
+  filter also accepts a path suffix, matching the sibling tools; `get_routes`
+  tolerates a `CamelStep` with a null index.
+  ([#155](https://github.com/tmustafiz/graph-rag/issues/155),
+  [#163](https://github.com/tmustafiz/graph-rag/issues/163),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+- Cross-file `EventType` nodes (import-resolved FQN on one side, bare name on
+  the other) are folded together so publisher ↔ listener flows connect;
+  `HttpEndpoint` rebuilds its single direction edge each ingest instead of
+  keeping both `HANDLED_BY` and `CALLS_SERVICE` when `outbound` flips;
+  `_MERGE_SQL_ACCESSES` resolves the bare table name to an ingested `DbTable`'s
+  `qualified_name` (else a synthesized stub) rather than MERGE-ing on `name`;
+  the orphan `EventType` / `Destination` sweeps are label-scoped.
+  ([#156](https://github.com/tmustafiz/graph-rag/issues/156),
+  [#157](https://github.com/tmustafiz/graph-rag/issues/157),
+  [#158](https://github.com/tmustafiz/graph-rag/issues/158),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+- Camel: `_collect_camel_routes` walks nested / static-inner `RouteBuilder`
+  classes; each new `JavaParser` framework extractor is wrapped so one grammar
+  edge case degrades to "no data for that concern" instead of dropping the
+  whole `.java` file; a `to(...)` inside a `choice` branch is recorded
+  `conditional` with its branch predicate and excluded from `get_routes`'
+  unconditional `to_uris`; the Camel XML / YAML parsers dispatch on the root
+  tag + Camel namespace / a list-of-route shape, so ordinary config files are
+  no longer misclassified.
+  ([#159](https://github.com/tmustafiz/graph-rag/issues/159),
+  [#160](https://github.com/tmustafiz/graph-rag/issues/160),
+  [#161](https://github.com/tmustafiz/graph-rag/issues/161),
+  [#162](https://github.com/tmustafiz/graph-rag/issues/162))
+- `SqlTableScanner` strips string literals and comments before scanning, so a
+  `from` / `join` word inside `'...'` or `--` no longer emits a phantom table;
+  `MyBatisResolver` clears XML-derived `EXECUTES` edges before rebuilding, so a
+  renamed `@Mapper` method leaves no stale edge; `@HttpExchange(url=)` /
+  `@GetExchange(url=)` path prefixes and target service are read.
+  ([#164](https://github.com/tmustafiz/graph-rag/issues/164),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+- Residual defects from a `/code-review` of the fixes above: SCIP `CALLS`
+  attribution handles a single-line (3-int) enclosing range and the language
+  sniff skips `local` symbols; the bare/FQN `EventType` fold only applies when
+  the simple name resolves to exactly one sibling (an ambiguous name is left
+  alone rather than wired non-deterministically); a Camel `choice` branch step
+  is flagged `conditional` on a best-effort basis (block nesting can't be
+  rebuilt exactly from a flat Java-DSL call chain), and `get_routes` now keeps
+  **every** `TO` target in `to_uris` regardless of that flag — with a
+  `conditional_to_uris` subset alongside — so a mislabel can never hide a real
+  route destination; the branch `predicate` on a step is cleared on every
+  `end` / `endChoice`, so a step after a nested `choice` closes carries no
+  label rather than the inner branch's stale one, and the `CamelRoute` model
+  docstring matches the new `to_uris` semantics; an OSGi `<blueprint>` wrapping
+  a *namespaced* `<camelContext>` is parsed again, while an unknown wrapper with
+  only a bare-tag `camelContext` descendant is left to the generic parsers;
+  `SqlTableScanner` treats `#` as a line comment only when it is not a MyBatis
+  `#{param}` bind or a T-SQL `#temp` name, and keeps standard `''` quoting (no
+  `\` escape, which broke Postgres/ANSI literals); a full-URL
+  `@HttpExchange(url="https://svc")` base populates only `target_service`, not
+  the endpoint path; `CamelStep.index` is guaranteed non-null at write time and
+  `get_routes` sorts a legacy null-index step last instead of raising.
+  ([#154](https://github.com/tmustafiz/graph-rag/issues/154),
+  [#156](https://github.com/tmustafiz/graph-rag/issues/156),
+  [#161](https://github.com/tmustafiz/graph-rag/issues/161),
+  [#162](https://github.com/tmustafiz/graph-rag/issues/162),
+  [#164](https://github.com/tmustafiz/graph-rag/issues/164),
+  [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+
+### Changed
+- Internal cleanup, no behaviour change: one shared `dedupe` helper and one
+  shared XML-namespace helper replace ~8 + 7 parser-local copies; a
+  `build_default_resolvers(driver)` factory replaces the resolver list
+  copy-pasted across three CLI commands; `schema.py` is the single source of
+  truth for the framework relationship-type / node-label vocabulary the
+  centrality projection uses; the Camel XML and YAML route extractors share a
+  `CamelStepList` builder; a `GraphResolver` base holds the session/transaction
+  shell the post-ingest passes duplicated; the Camel Java-DSL and
+  event/messaging walkers move out of `java_parser.py` (1554 → ~1030 lines)
+  into `CamelJavaDslExtractor` / `MessageSiteExtractor`; `ModuleArchitecture`
+  and `ServiceCallEndpoint` get their own modules.
+  ([#166](https://github.com/tmustafiz/graph-rag/issues/166))
+
 ## [0.6.0] - 2026-09-07
 
 ### Added
@@ -579,7 +785,8 @@ the code graph, agent working-memory with decay pruning, and an MCP server
 (Streamable HTTP) exposing lookup + memory tools. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
-[Unreleased]: https://github.com/tmustafiz/graph-rag/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/tmustafiz/graph-rag/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/tmustafiz/graph-rag/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tmustafiz/graph-rag/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/tmustafiz/graph-rag/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tmustafiz/graph-rag/compare/v0.3.0...v0.4.0

@@ -1,18 +1,26 @@
 import hashlib
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..models import Annotation, CodeEntity, ParsedDocument, Source
+from .aop_extractor import AopExtractor
+from .camel_annotation_extractor import CamelAnnotationExtractor
 from .http_endpoint_extractor import HttpEndpointExtractor
 from .lombok_synthesizer import LombokSynthesizer
+from .message_flow_extractor import MessageFlowExtractor
+from .mybatis_extractor import MyBatisExtractor
 from .spring_data_extractor import REACTIVE_BASES, SPRING_DATA_BASES, SpringDataExtractor
 
 if TYPE_CHECKING:
     from tree_sitter import Node
 
+logger = logging.getLogger(__name__)
+
 _WHITESPACE_RE = re.compile(r"\s+")
+
 
 _ANNOTATION_NODE_TYPES = ("marker_annotation", "annotation")
 _INTEGER_LITERALS = (
@@ -76,6 +84,12 @@ class JavaParser:
                 "`pip install 'grag-mcp[java]'` (or `uv sync --extra java`)."
             ) from exc
 
+        # Imported here, not at module scope: these extractors subclass
+        # `JavaParser` to share its tree helpers, so a top-level import would be
+        # circular.
+        from .camel_java_dsl_extractor import CamelJavaDslExtractor
+        from .message_site_extractor import MessageSiteExtractor
+
         content = path.read_bytes()
         source = Source(
             path=str(path),
@@ -118,11 +132,66 @@ class JavaParser:
             entities, annotations, repo_bindings
         )
 
+        # Each framework extractor is a heuristic walk over the tree-sitter tree;
+        # a grammar edge case in one must degrade to "no data for that concern",
+        # not drop the whole `.java` file (which `IngestionPipeline` would record
+        # as a failed ingest, losing all CodeEntity / CALLS / annotation data).
+        def _safe(concern: str, produce, fallback):  # noqa: ANN001, ANN202
+            try:
+                return produce()
+            except Exception:
+                logger.warning(
+                    "java parser: %s extraction failed for %s — skipping that concern",
+                    concern,
+                    path,
+                    exc_info=True,
+                )
+                return fallback
+
+        behavior_markers, aop_advice = _safe(
+            "aop", lambda: AopExtractor.extract(entities, annotations), ([], [])
+        )
+        message_sites = _safe(
+            "message sites",
+            lambda: MessageSiteExtractor.extract(
+                type_nodes, content, imported_types, same_file_types, package
+            ),
+            [],
+        )
+        event_types, destinations = _safe(
+            "message flow",
+            lambda: MessageFlowExtractor.extract(entities, annotations, message_sites),
+            ([], []),
+        )
+        camel_routes = _safe(
+            "camel routes",
+            lambda: CamelJavaDslExtractor.extract(
+                type_nodes, content, imported_types, same_file_types, package, str(path)
+            ),
+            [],
+        )
+        consume_routes, camel_produce_endpoints = _safe(
+            "camel annotations",
+            lambda: CamelAnnotationExtractor.extract(
+                entities, annotations, len(camel_routes), str(path)
+            ),
+            ([], []),
+        )
+
         return ParsedDocument(
             source=source,
             code_entities=entities,
             annotations=annotations,
+            behavior_markers=behavior_markers,
+            aop_advice=aop_advice,
+            event_types=event_types,
+            destinations=destinations,
+            camel_routes=camel_routes + consume_routes,
+            camel_produce_endpoints=camel_produce_endpoints,
             http_endpoints=HttpEndpointExtractor.extract(entities, annotations),
+            sql_statements=_safe(
+                "mybatis", lambda: MyBatisExtractor.extract(entities, annotations), []
+            ),
             jpa_entities=jpa_entities,
             spring_data_repositories=spring_data_repositories,
         )

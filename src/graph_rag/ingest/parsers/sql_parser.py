@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ...settings import settings
+from ..dedupe import dedupe
 from ..models import DbColumn, DbIndex, DbReference, DbTable, DbView, ParsedDocument, Source
 from .procedural_sql_extractor import ProceduralSqlExtractor
 
@@ -177,7 +178,7 @@ class _SchemaBuilder:
             name=name,
             schema_name=schema_name,
             file_path=self._file_path,
-            references=_unique(table_references),
+            references=dedupe(table_references),
             embed_text=_table_embed_text(table_qualified_name, columns),
         )
         self.tables.append(table)
@@ -277,7 +278,7 @@ class _SchemaBuilder:
             cte_names = {
                 _identifier_text(cte.args.get("alias")) for cte in select.find_all(exp.CTE)
             }
-            depends_on = _unique(
+            depends_on = dedupe(
                 identity
                 for table in select.find_all(exp.Table)
                 for identity in (_table_identity(table)[0],)
@@ -411,14 +412,6 @@ def _reference_target(reference: "exp.Reference") -> tuple[str, list[str]]:
 
 def _index_column_name(node: "exp.Expression") -> str:
     return _identifier_text(node)
-
-
-def _unique(values) -> list[str]:
-    seen: dict[str, None] = {}
-    for value in values:
-        if value:
-            seen.setdefault(value, None)
-    return list(seen)
 
 
 def _append_unique(target: list[str], value: str) -> None:

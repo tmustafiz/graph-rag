@@ -6,6 +6,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from ..models import ExternalArtifact, Module, ModuleDependency, ParsedDocument, Source
+from .xml_namespace import local_name
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,7 @@ class MavenParser:
 
     @staticmethod
     def _local(tag: str) -> str:
-        return tag.rsplit("}", 1)[-1]
+        return local_name(tag)
 
     @classmethod
     def _child(cls, parent: ElementTree.Element | None, name: str) -> ElementTree.Element | None:

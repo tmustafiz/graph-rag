@@ -57,7 +57,8 @@ SET e.name = row.name, e.kind = row.kind, e.language = row.language,
     e.embed_text = row.embed_text,
     e.file_path = row.file_path, e.start_line = row.start_line, e.end_line = row.end_line,
     e.signature = row.signature, e.docstring = row.docstring, e.embedding = row.embedding,
-    e.synthetic = row.synthetic, e.origin = row.origin
+    e.synthetic = row.synthetic, e.origin = row.origin,
+    e.resolution = coalesce(row.resolution, 'static')
 WITH e, row
 MATCH (src:Source {path: $source_path})
 MERGE (src)-[:DEFINES]->(e)
@@ -77,19 +78,191 @@ SET a.owner_qualified_name = row.owner_qualified_name, a.target = row.target,
 MERGE (owner)-[:ANNOTATED_WITH]->(a)
 """
 
+_MERGE_BEHAVIOR_MARKERS = """
+UNWIND $rows AS row
+MATCH (e:CodeEntity {qualified_name: row.owner_qualified_name})
+MERGE (bm:BehaviorMarker {id: row.id})
+SET bm.owner_qualified_name = row.owner_qualified_name, bm.target = row.target,
+    bm.marker = row.marker, bm.attributes = row.attributes_json, bm.line = row.line
+MERGE (e)-[hb:HAS_BEHAVIOR]->(bm)
+SET hb.marker = row.marker
+"""
+
+_MERGE_AOP_ADVICE = """
+UNWIND $rows AS row
+MATCH (m:CodeEntity {qualified_name: row.advice_qualified_name})
+MERGE (ad:Advice {id: row.id})
+SET ad.aspect = row.aspect_qualified_name,
+    ad.advice_qualified_name = row.advice_qualified_name,
+    ad.kind = row.advice_kind, ad.pointcut_expr = row.pointcut_expr,
+    ad.pointcut_ref = row.pointcut_ref
+MERGE (m)-[:ADVICE_OF]->(ad)
+"""
+
+# `CodeEntity.behaviors` mirrors the `HAS_BEHAVIOR` marker slugs as a plain list
+# property so "all scheduled jobs" / "everything transactional" is a cheap scan.
+# Recomputed after the marker reconcile so a removed annotation drops its slug.
+_REFRESH_ENTITY_BEHAVIORS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(e:CodeEntity)
+OPTIONAL MATCH (e)-[:HAS_BEHAVIOR]->(bm:BehaviorMarker)
+WITH e, collect(DISTINCT bm.marker) AS markers
+SET e.behaviors = markers
+"""
+
+_MERGE_EVENT_TYPES = """
+UNWIND $rows AS row
+MERGE (et:EventType {fqn: row.fqn})
+SET et.simple_name = row.simple_name
+"""
+
+_MERGE_DESTINATIONS = """
+UNWIND $rows AS row
+MERGE (d:Destination {id: row.id})
+SET d.name = row.name, d.broker = row.broker
+"""
+
+_MERGE_PUBLISHES = """
+UNWIND $pairs AS pair
+MATCH (m:CodeEntity {qualified_name: pair.method})
+MATCH (et:EventType {fqn: pair.event})
+MERGE (m)-[:PUBLISHES]->(et)
+"""
+
+_MERGE_EVENT_CONSUMED_BY = """
+UNWIND $pairs AS pair
+MATCH (et:EventType {fqn: pair.event})
+MATCH (m:CodeEntity {qualified_name: pair.method})
+MERGE (et)-[:CONSUMED_BY]->(m)
+"""
+
+_MERGE_PRODUCES_TO = """
+UNWIND $pairs AS pair
+MATCH (m:CodeEntity {qualified_name: pair.method})
+MATCH (d:Destination {id: pair.dest})
+MERGE (m)-[:PRODUCES_TO]->(d)
+"""
+
+_MERGE_DEST_CONSUMED_BY = """
+UNWIND $pairs AS pair
+MATCH (d:Destination {id: pair.dest})
+MATCH (m:CodeEntity {qualified_name: pair.method})
+MERGE (d)-[:CONSUMED_BY]->(m)
+"""
+
 _MERGE_HTTP_ENDPOINTS = """
 UNWIND $rows AS row
 MERGE (h:HttpEndpoint {id: row.id})
 SET h.http_method = row.http_method, h.path = row.path, h.framework = row.framework,
     h.produces = row.produces, h.consumes = row.consumes, h.params = row.params,
     h.bindings = row.bindings_json, h.embed_text = row.embed_text, h.embedding = row.embedding,
-    h.handler_qualified_name = row.handler_qualified_name
+    h.handler_qualified_name = row.handler_qualified_name,
+    h.outbound = coalesce(row.outbound, false), h.target_service = row.target_service
 WITH h, row
 MATCH (src:Source {path: $source_path})
 MERGE (src)-[:DEFINES]->(h)
 WITH h, row
-MATCH (handler:CodeEntity {qualified_name: row.handler_qualified_name})
-MERGE (h)-[:HANDLED_BY]->(handler)
+// `HttpEndpoint.id` does not include `outbound`, so a handler that flips between
+// `@GetMapping` and `@GetExchange` keeps the same node — rebuild its single
+// direction edge from scratch each ingest instead of only ever adding one.
+OPTIONAL MATCH (h)-[stale_handled:HANDLED_BY]->()
+OPTIONAL MATCH ()-[stale_calls:CALLS_SERVICE]->(h)
+DELETE stale_handled, stale_calls
+WITH h, row
+OPTIONAL MATCH (handler:CodeEntity {qualified_name: row.handler_qualified_name})
+FOREACH (_ IN CASE
+        WHEN handler IS NOT NULL AND NOT coalesce(row.outbound, false) THEN [1] ELSE [] END |
+    MERGE (h)-[:HANDLED_BY]->(handler))
+FOREACH (_ IN CASE
+        WHEN handler IS NOT NULL AND coalesce(row.outbound, false) THEN [1] ELSE [] END |
+    MERGE (handler)-[:CALLS_SERVICE]->(h))
+"""
+
+_MERGE_SQL_STATEMENTS = """
+UNWIND $rows AS row
+MERGE (s:SqlStatement {id: row.id})
+SET s.mapper_qn = row.mapper_qn, s.statement_id = row.statement_id, s.kind = row.kind,
+    s.text = row.text, s.origin = row.origin, s.method_qn = row.method_qn,
+    s.file_path = row.file_path
+WITH s, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(s)
+WITH s, row
+FOREACH (_ IN CASE WHEN row.method_qn IS NULL THEN [] ELSE [1] END |
+    MERGE (m:CodeEntity {qualified_name: row.method_qn})
+    MERGE (m)-[:EXECUTES]->(s))
+"""
+
+# Every real `DbTable` is keyed on `qualified_name` (the unique constraint), so
+# resolve the bare MyBatis table name to an ingested table's `qualified_name`
+# when exactly one matches; otherwise (schema not ingested, or an ambiguous bare
+# name shared across schemas) fall back to a stub keyed on a synthesized
+# `qualified_name` — never MERGE on `name`, which would strand a second,
+# `qualified_name`-null node that no reconcile can reach.
+_MERGE_SQL_ACCESSES = """
+UNWIND $pairs AS pair
+MATCH (s:SqlStatement {id: pair.stmt})
+OPTIONAL MATCH (real:DbTable {name: pair.table})
+WHERE coalesce(real.stub, false) = false AND real.qualified_name IS NOT NULL
+WITH s, pair, collect(DISTINCT real.qualified_name) AS real_qns
+WITH s, pair,
+     CASE WHEN size(real_qns) = 1 THEN real_qns[0]
+          ELSE '__stub__.' + pair.table END AS table_qn
+MERGE (t:DbTable {qualified_name: table_qn})
+ON CREATE SET t.stub = true, t.name = pair.table
+MERGE (s)-[a:ACCESSES]->(t)
+SET a.mode = pair.mode
+"""
+
+# `CamelEndpoint` is MERGE-keyed on `uri`, so a `.to("direct:x")` producer and a
+# `from("direct:x")` consumer route land on one node — that pairs internal routes.
+_MERGE_CAMEL_ROUTES = """
+UNWIND $rows AS row
+MERGE (r:Route {id: row.id})
+SET r.route_id = row.route_id, r.from_uri = row.from_uri,
+    r.embed_text = row.embed_text, r.on_exception = row.on_exception
+WITH r, row
+MATCH (src:Source {path: $source_path})
+MERGE (src)-[:DEFINES]->(r)
+MERGE (fep:CamelEndpoint {uri: row.from_uri})
+SET fep.scheme = row.from_scheme
+MERGE (r)-[:FROM]->(fep)
+MERGE (fep)-[:CONSUMED_BY]->(r)
+"""
+
+_MERGE_CAMEL_TO = """
+UNWIND $pairs AS pair
+MATCH (r:Route {id: pair.route})
+MERGE (ep:CamelEndpoint {uri: pair.uri})
+SET ep.scheme = pair.scheme
+MERGE (r)-[t:TO]->(ep)
+SET t.conditional = pair.conditional
+"""
+
+_MERGE_CAMEL_STEPS = """
+UNWIND $rows AS row
+MATCH (r:Route {id: row.route})
+MERGE (st:CamelStep {id: row.id})
+SET st.index = row.index, st.kind = row.kind, st.uri = row.uri,
+    st.ref = row.ref, st.predicate = row.predicate,
+    st.conditional = coalesce(row.conditional, false)
+MERGE (r)-[s:STEP {index: row.index}]->(st)
+SET s.kind = row.kind, s.predicate = row.predicate,
+    s.conditional = coalesce(row.conditional, false)
+"""
+
+# `@Produce` / `@EndpointInject` producer field → the endpoint it writes to.
+_MERGE_CAMEL_PRODUCE = """
+UNWIND $pairs AS pair
+MATCH (m:CodeEntity {qualified_name: pair.producer})
+MERGE (ep:CamelEndpoint {uri: pair.uri})
+SET ep.scheme = pair.scheme
+MERGE (m)-[:PRODUCES_TO]->(ep)
+"""
+
+_RECONCILE_CAMEL_PRODUCE = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)-[r:PRODUCES_TO]->(ep:CamelEndpoint)
+WHERE NOT (m.qualified_name + '|' + ep.uri) IN $keep
+DELETE r
 """
 
 _MERGE_CALLS = """
@@ -397,10 +570,135 @@ WHERE NOT ()-[:ANNOTATED_WITH]->(a)
 DELETE a
 """
 
+# A re-parsed `.java` file that drops a behavioral annotation / an advice method
+# leaves no orphan `BehaviorMarker` / `Advice` behind; the `AopResolver` pass
+# then re-derives the `ADVISES` edges.
+_RECONCILE_BEHAVIOR_MARKERS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(:CodeEntity)-[:HAS_BEHAVIOR]->(bm:BehaviorMarker)
+WHERE NOT bm.id IN $keep_ids
+DETACH DELETE bm
+"""
+
+_RECONCILE_AOP_ADVICE = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(:CodeEntity)-[:ADVICE_OF]->(ad:Advice)
+WHERE NOT ad.id IN $keep_ids
+DETACH DELETE ad
+"""
+
+# `EventType` / `Destination` nodes are MERGE-shared across files, so a re-parse
+# only removes the publish / consume edges *this* Source's methods no longer
+# emit (keyed `method|target`), then sweeps any node left with no edges.
+_RECONCILE_PUBLISHES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)-[r:PUBLISHES]->(et:EventType)
+WHERE NOT (m.qualified_name + '|' + et.fqn) IN $keep
+DELETE r
+"""
+
+_RECONCILE_EVENT_CONSUMED_BY = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)
+MATCH (et:EventType)-[r:CONSUMED_BY]->(m)
+WHERE NOT (et.fqn + '|' + m.qualified_name) IN $keep
+DELETE r
+"""
+
+_RECONCILE_PRODUCES_TO = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)-[r:PRODUCES_TO]->(d:Destination)
+WHERE NOT (m.qualified_name + '|' + d.id) IN $keep
+DELETE r
+"""
+
+_RECONCILE_DEST_CONSUMED_BY = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(m:CodeEntity)
+MATCH (d:Destination)-[r:CONSUMED_BY]->(m)
+WHERE NOT (d.id + '|' + m.qualified_name) IN $keep
+DELETE r
+"""
+
+# `EventType.fqn` is import-resolved per file, so a publisher that resolves
+# `com.acme.events.OrderPlaced` and a same-package listener that only sees
+# `OrderPlaced` write two nodes. Fold the bare-name node into its FQN sibling
+# (re-pointing PUBLISHES / CONSUMED_BY) so the flow connects across files. Runs
+# every message-flow reconcile; label-scoped and a no-op when there are none.
+# Folds only when the simple name resolves to exactly one FQN sibling — an
+# ambiguous `OrderPlaced` (present in two packages) is left as its own node, so
+# the worst case stays a missing flow rather than one wired to the wrong event.
+_MERGE_EVENT_TYPE_ALIASES = """
+MATCH (bare:EventType)
+WHERE NOT bare.fqn CONTAINS '.'
+MATCH (full:EventType)
+WHERE full <> bare AND full.fqn ENDS WITH ('.' + bare.fqn)
+WITH bare, collect(full) AS fulls
+WHERE size(fulls) = 1
+WITH bare, fulls[0] AS full
+CALL {
+    WITH bare, full
+    MATCH (p:CodeEntity)-[r:PUBLISHES]->(bare)
+    MERGE (p)-[:PUBLISHES]->(full)
+    DELETE r
+}
+CALL {
+    WITH bare, full
+    MATCH (bare)-[r:CONSUMED_BY]->(c:CodeEntity)
+    MERGE (full)-[:CONSUMED_BY]->(c)
+    DELETE r
+}
+WITH bare
+DETACH DELETE bare
+"""
+
+# Label-scoped so a re-ingest of a plain Python / JS file (zero messaging nodes)
+# does not trigger a full-graph `MATCH (n)` scan.
+_SWEEP_ORPHAN_EVENT_TYPES = """
+MATCH (n:EventType)
+WHERE NOT (n)--()
+DELETE n
+"""
+
+_SWEEP_ORPHAN_DESTINATIONS = """
+MATCH (n:Destination)
+WHERE NOT (n)--()
+DELETE n
+"""
+
 _RECONCILE_HTTP_ENDPOINTS = """
 MATCH (:Source {path: $source_path})-[:DEFINES]->(h:HttpEndpoint)
 WHERE NOT h.id IN $keep_ids
 DETACH DELETE h
+"""
+
+# A re-parsed mapper XML / `.java` that drops a statement leaves no orphan
+# `SqlStatement` behind; then any stub `DbTable` no `SqlStatement` still
+# accesses is swept.
+_RECONCILE_SQL_STATEMENTS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(s:SqlStatement)
+WHERE NOT s.id IN $keep_ids
+DETACH DELETE s
+"""
+
+_SWEEP_ORPHAN_STUB_TABLES = """
+MATCH (t:DbTable {stub: true})
+WHERE NOT (t)<-[:ACCESSES]-()
+DETACH DELETE t
+"""
+
+# A re-parsed `RouteBuilder` that drops a route / step leaves no orphan
+# `Route` / `CamelStep` behind; then any `CamelEndpoint` with no edge is swept.
+_RECONCILE_CAMEL_ROUTES = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(r:Route)
+WHERE NOT r.id IN $keep_ids
+DETACH DELETE r
+"""
+
+_RECONCILE_CAMEL_STEPS = """
+MATCH (:Source {path: $source_path})-[:DEFINES]->(:Route)-[:STEP]->(st:CamelStep)
+WHERE NOT st.id IN $keep_ids
+DETACH DELETE st
+"""
+
+_SWEEP_ORPHAN_CAMEL_ENDPOINTS = """
+MATCH (e:CamelEndpoint)
+WHERE NOT (e)--()
+DELETE e
 """
 
 _RECONCILE_POLICY_RULES = """
@@ -488,7 +786,15 @@ class GraphWriter:
     def __init__(self, driver: Driver) -> None:
         self._driver = driver
 
-    def write(self, document: ParsedDocument) -> None:
+    def write(self, document: ParsedDocument, *, reconcile_frameworks: bool = True) -> None:
+        """Persist `document`, then per-`Source` reconcile stale nodes.
+
+        `reconcile_frameworks=False` (used by `ScipIngestor`) stops after the
+        chunk / section / code-entity reconcile, so a partial document that only
+        carries `code_entities` does not `DETACH DELETE` the framework graph
+        (annotations, endpoints, routes, SQL, events, beans, modules, …) a prior
+        static ingest attached to the same path.
+        """
         with self._driver.session() as session:
             session.execute_write(self._write_source, document)
             for batch in self._batched(self._source_import_pairs(document)):
@@ -503,10 +809,40 @@ class GraphWriter:
                 session.execute_write(self._write_code_entities, document.source.path, batch)
             for batch in self._batched(self._annotation_rows(document)):
                 session.execute_write(self._write_annotations, batch)
+            for batch in self._batched(self._behavior_marker_rows(document)):
+                session.execute_write(self._write_behavior_markers, batch)
+            for batch in self._batched([a.model_dump(mode="json") for a in document.aop_advice]):
+                session.execute_write(self._write_aop_advice, batch)
+            for batch in self._batched([e.model_dump(mode="json") for e in document.event_types]):
+                session.execute_write(self._write_event_types, batch)
+            for batch in self._batched([d.model_dump(mode="json") for d in document.destinations]):
+                session.execute_write(self._write_destinations, batch)
+            for batch in self._batched(self._publish_pairs(document)):
+                session.execute_write(self._write_publishes, batch)
+            for batch in self._batched(self._event_consume_pairs(document)):
+                session.execute_write(self._write_event_consumed_by, batch)
+            for batch in self._batched(self._produce_pairs(document)):
+                session.execute_write(self._write_produces_to, batch)
+            for batch in self._batched(self._dest_consume_pairs(document)):
+                session.execute_write(self._write_dest_consumed_by, batch)
             for batch in self._batched(
                 [e.model_dump(mode="json") for e in document.http_endpoints]
             ):
                 session.execute_write(self._write_http_endpoints, document.source.path, batch)
+            for batch in self._batched(
+                [s.model_dump(mode="json") for s in document.sql_statements]
+            ):
+                session.execute_write(self._write_sql_statements, document.source.path, batch)
+            for batch in self._batched(self._sql_access_pairs(document)):
+                session.execute_write(self._write_sql_accesses, batch)
+            for batch in self._batched(self._camel_route_rows(document)):
+                session.execute_write(self._write_camel_routes, document.source.path, batch)
+            for batch in self._batched(self._camel_to_pairs(document)):
+                session.execute_write(self._write_camel_to, batch)
+            for batch in self._batched(self._camel_step_rows(document)):
+                session.execute_write(self._write_camel_steps, batch)
+            for batch in self._batched(self._camel_produce_pairs(document)):
+                session.execute_write(self._write_camel_produce, batch)
             for batch in self._batched(self._call_pairs(document)):
                 session.execute_write(self._write_calls, batch)
             for batch in self._batched(self._import_pairs(document)):
@@ -584,15 +920,51 @@ class GraphWriter:
                 document.source.path,
                 [e.qualified_name for e in document.code_entities],
             )
+            if not reconcile_frameworks:
+                return
             session.execute_write(
                 self._reconcile_annotations,
                 document.source.path,
                 [a.id for a in document.annotations],
             )
             session.execute_write(
+                self._reconcile_behavior_markers,
+                document.source.path,
+                [m.id for m in document.behavior_markers],
+            )
+            session.execute_write(
+                self._reconcile_aop_advice,
+                document.source.path,
+                [a.id for a in document.aop_advice],
+            )
+            session.execute_write(self._refresh_entity_behaviors, document.source.path)
+            session.execute_write(
+                self._reconcile_message_flow,
+                document.source.path,
+                self._publish_pairs(document),
+                self._event_consume_pairs(document),
+                self._produce_pairs(document),
+                self._dest_consume_pairs(document),
+            )
+            session.execute_write(
                 self._reconcile_http_endpoints,
                 document.source.path,
                 [e.id for e in document.http_endpoints],
+            )
+            session.execute_write(
+                self._reconcile_sql_statements,
+                document.source.path,
+                [s.id for s in document.sql_statements],
+            )
+            session.execute_write(
+                self._reconcile_camel_routes,
+                document.source.path,
+                [r.id for r in document.camel_routes],
+                [row["id"] for row in self._camel_step_rows(document)],
+                [
+                    f"{pair['producer']}|{pair['uri']}"
+                    for pair in self._camel_produce_pairs(document)
+                ],
             )
             session.execute_write(
                 self._reconcile_policy_rules,
@@ -696,8 +1068,64 @@ class GraphWriter:
         tx.run(cast(LiteralString, _MERGE_ANNOTATIONS), rows=rows)
 
     @staticmethod
+    def _write_behavior_markers(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_BEHAVIOR_MARKERS), rows=rows)
+
+    @staticmethod
+    def _write_aop_advice(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_AOP_ADVICE), rows=rows)
+
+    @staticmethod
+    def _write_event_types(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_EVENT_TYPES), rows=rows)
+
+    @staticmethod
+    def _write_destinations(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_DESTINATIONS), rows=rows)
+
+    @staticmethod
+    def _write_publishes(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_PUBLISHES), pairs=pairs)
+
+    @staticmethod
+    def _write_event_consumed_by(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_EVENT_CONSUMED_BY), pairs=pairs)
+
+    @staticmethod
+    def _write_produces_to(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_PRODUCES_TO), pairs=pairs)
+
+    @staticmethod
+    def _write_dest_consumed_by(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_DEST_CONSUMED_BY), pairs=pairs)
+
+    @staticmethod
     def _write_http_endpoints(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
         tx.run(cast(LiteralString, _MERGE_HTTP_ENDPOINTS), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_sql_statements(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_SQL_STATEMENTS), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_sql_accesses(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_SQL_ACCESSES), pairs=pairs)
+
+    @staticmethod
+    def _write_camel_routes(tx: ManagedTransaction, source_path: str, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CAMEL_ROUTES), rows=rows, source_path=source_path)
+
+    @staticmethod
+    def _write_camel_to(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CAMEL_TO), pairs=pairs)
+
+    @staticmethod
+    def _write_camel_steps(tx: ManagedTransaction, rows: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CAMEL_STEPS), rows=rows)
+
+    @staticmethod
+    def _write_camel_produce(tx: ManagedTransaction, pairs: list[dict]) -> None:
+        tx.run(cast(LiteralString, _MERGE_CAMEL_PRODUCE), pairs=pairs)
 
     @staticmethod
     def _write_calls(tx: ManagedTransaction, pairs: list[dict]) -> None:
@@ -841,6 +1269,63 @@ class GraphWriter:
         tx.run(cast(LiteralString, _SWEEP_ORPHAN_ANNOTATIONS))
 
     @staticmethod
+    def _reconcile_behavior_markers(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_BEHAVIOR_MARKERS),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _reconcile_aop_advice(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_AOP_ADVICE),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+
+    @staticmethod
+    def _refresh_entity_behaviors(tx: ManagedTransaction, source_path: str) -> None:
+        tx.run(cast(LiteralString, _REFRESH_ENTITY_BEHAVIORS), source_path=source_path)
+
+    @staticmethod
+    def _reconcile_message_flow(
+        tx: ManagedTransaction,
+        source_path: str,
+        publish_pairs: list[dict],
+        event_consume_pairs: list[dict],
+        produce_pairs: list[dict],
+        dest_consume_pairs: list[dict],
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_PUBLISHES),
+            source_path=source_path,
+            keep=[f"{pair['method']}|{pair['event']}" for pair in publish_pairs],
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_EVENT_CONSUMED_BY),
+            source_path=source_path,
+            keep=[f"{pair['event']}|{pair['method']}" for pair in event_consume_pairs],
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_PRODUCES_TO),
+            source_path=source_path,
+            keep=[f"{pair['method']}|{pair['dest']}" for pair in produce_pairs],
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_DEST_CONSUMED_BY),
+            source_path=source_path,
+            keep=[f"{pair['dest']}|{pair['method']}" for pair in dest_consume_pairs],
+        )
+        tx.run(cast(LiteralString, _MERGE_EVENT_TYPE_ALIASES))
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_EVENT_TYPES))
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_DESTINATIONS))
+
+    @staticmethod
     def _reconcile_http_endpoints(
         tx: ManagedTransaction, source_path: str, keep_ids: list[str]
     ) -> None:
@@ -849,6 +1334,42 @@ class GraphWriter:
             source_path=source_path,
             keep_ids=keep_ids,
         )
+
+    @staticmethod
+    def _reconcile_sql_statements(
+        tx: ManagedTransaction, source_path: str, keep_ids: list[str]
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_SQL_STATEMENTS),
+            source_path=source_path,
+            keep_ids=keep_ids,
+        )
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_STUB_TABLES))
+
+    @staticmethod
+    def _reconcile_camel_routes(
+        tx: ManagedTransaction,
+        source_path: str,
+        route_ids: list[str],
+        step_ids: list[str],
+        produce_keep: list[str],
+    ) -> None:
+        tx.run(
+            cast(LiteralString, _RECONCILE_CAMEL_STEPS),
+            source_path=source_path,
+            keep_ids=step_ids,
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_CAMEL_ROUTES),
+            source_path=source_path,
+            keep_ids=route_ids,
+        )
+        tx.run(
+            cast(LiteralString, _RECONCILE_CAMEL_PRODUCE),
+            source_path=source_path,
+            keep=produce_keep,
+        )
+        tx.run(cast(LiteralString, _SWEEP_ORPHAN_CAMEL_ENDPOINTS))
 
     @staticmethod
     def _reconcile_policy_rules(
@@ -969,6 +1490,134 @@ class GraphWriter:
                 "line": annotation.line,
             }
             for annotation in document.annotations
+        ]
+
+    @staticmethod
+    def _behavior_marker_rows(document: ParsedDocument) -> list[dict]:
+        return [
+            {
+                "id": marker.id,
+                "owner_qualified_name": marker.owner_qualified_name,
+                "target": marker.target,
+                "marker": marker.marker,
+                "attributes_json": marker.attributes_json,
+                "line": marker.line,
+            }
+            for marker in document.behavior_markers
+        ]
+
+    @staticmethod
+    def _publish_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"method": method, "event": event.fqn}
+            for event in document.event_types
+            for method in event.published_by
+        ]
+
+    @staticmethod
+    def _event_consume_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"event": event.fqn, "method": method}
+            for event in document.event_types
+            for method in event.consumed_by
+        ]
+
+    @staticmethod
+    def _produce_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"method": method, "dest": destination.id}
+            for destination in document.destinations
+            for method in destination.produced_by
+        ]
+
+    @staticmethod
+    def _dest_consume_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"dest": destination.id, "method": method}
+            for destination in document.destinations
+            for method in destination.consumed_by
+        ]
+
+    @staticmethod
+    def _sql_access_pairs(document: ParsedDocument) -> list[dict]:
+        return [
+            {"stmt": statement.id, "table": table["name"], "mode": table["mode"]}
+            for statement in document.sql_statements
+            for table in statement.tables
+        ]
+
+    @staticmethod
+    def _scheme_of(uri: str) -> str:
+        return uri.split(":", 1)[0] if ":" in uri else uri
+
+    @classmethod
+    def _camel_route_rows(cls, document: ParsedDocument) -> list[dict]:
+        return [
+            {
+                "id": route.id,
+                "route_id": route.route_id,
+                "from_uri": route.from_uri,
+                "from_scheme": cls._scheme_of(route.from_uri),
+                "embed_text": route.embed_text,
+                "on_exception": route.on_exception,
+            }
+            for route in document.camel_routes
+        ]
+
+    @classmethod
+    def _camel_to_pairs(cls, document: ParsedDocument) -> list[dict]:
+        pairs: list[dict] = []
+        for route in document.camel_routes:
+            # a URI reached by any non-`choice`-branch step is an unconditional
+            # target; one reached only inside a `choice` branch is conditional.
+            unconditional = {
+                step["uri"]
+                for step in route.steps
+                if step.get("uri") and not step.get("conditional")
+            }
+            for uri in route.to_uris:
+                pairs.append(
+                    {
+                        "route": route.id,
+                        "uri": uri,
+                        "scheme": cls._scheme_of(uri),
+                        "conditional": uri not in unconditional,
+                    }
+                )
+        return pairs
+
+    @staticmethod
+    def _camel_step_rows(document: ParsedDocument) -> list[dict]:
+        rows: list[dict] = []
+        for route in document.camel_routes:
+            for position, step in enumerate(route.steps):
+                # the ordinal position is the source of truth for step order;
+                # a parser-supplied `index` only overrides it when present, so
+                # `CamelStep.index` is never null downstream.
+                index = step["index"] if step.get("index") is not None else position
+                rows.append(
+                    {
+                        "route": route.id,
+                        "id": f"{route.id}#{index}",
+                        "index": index,
+                        "kind": step["kind"],
+                        "uri": step.get("uri"),
+                        "ref": step.get("ref"),
+                        "predicate": step.get("predicate"),
+                        "conditional": bool(step.get("conditional", False)),
+                    }
+                )
+        return rows
+
+    @classmethod
+    def _camel_produce_pairs(cls, document: ParsedDocument) -> list[dict]:
+        return [
+            {
+                "producer": endpoint["producer_qn"],
+                "uri": endpoint["uri"],
+                "scheme": cls._scheme_of(endpoint["uri"]),
+            }
+            for endpoint in document.camel_produce_endpoints
         ]
 
     @staticmethod

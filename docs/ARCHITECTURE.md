@@ -43,6 +43,9 @@ flowchart TD
 | Package | Responsibility |
 | --- | --- |
 | `graph_rag.ingest.parsers` | One `Parser` per file type. `parse(path) -> ParsedDocument` (Sections/Chunks/CodeEntities/PolicyRules). |
+| `graph_rag.ingest.scip` | Reader for a SCIP (Sourcegraph Code Intelligence Protocol) index — a hand-rolled protobuf decoder (`ScipReader`, no `protobuf` runtime) + `ScipSymbolParser` (symbol string → `qualified_name`). |
+| `graph_rag.scip_ingestor` | `grag-mcp ingest --scip`: maps a SCIP `Index` to `ParsedDocument`s (`CodeEntity.resolution="scip"`), replacing the static entities for every file the index covers. |
+| `graph_rag.scip_java_runner` | `grag-mcp scip-java <repo>`: thin wrapper that shells out to the external `scip-java` binary (not vendored) and feeds its index to the ingestor. |
 | `graph_rag.ingest.parser_registry` | Maps file extension → parser. New type = new module + one registration line. |
 | `graph_rag.ingest.chunker` | Splits section body text into token-bounded, overlapping chunks that never cross a heading; keeps code/table blocks intact. |
 | `graph_rag.ingest.embedders` | `Embedder` interface; `SentenceTransformerEmbedder` (local `all-MiniLM-L6-v2`, 384-dim) is the default — no API key, works offline. `build_embedder()` reads `GRAG_EMBEDDING_PROVIDER` and can instead return a hosted `RestEmbedder` (OpenAI / Ollama / Voyage / Cohere / Gemini — plain `httpx`, no SDKs), probing vector width against `EMBEDDING_DIMENSIONS` at startup. |
@@ -54,12 +57,16 @@ flowchart TD
 | `graph_rag.graph.spring_bean_resolver` | Post-directory-ingest pass: `Bean` nodes + `IS_BEAN` / `INJECTS` / `PRODUCES` / `BINDS` from the annotation + type-hierarchy + config layers. |
 | `graph_rag.graph.spring_xml_resolver` | Post-directory-ingest pass (after `spring_bean_resolver`): projects `SpringXmlBean` defs into the same `Bean` graph (`defined_in:'xml'`), resolves `<ref>` wiring across XML + annotation beans, and `IMPORTS_CONTEXT` for `<import resource>` / `<context:property-placeholder>`. |
 | `graph_rag.graph.spring_data_resolver` | Post-ingest pass (after `spring_xml_resolver`): tags repository / entity `CodeEntity`s `:Repository` / `:JpaEntity`, tags repo methods with `query_kind` / `query_text`, and wires `MANAGES` / `PERSISTS_AS` / `RELATES_TO` from the `SpringDataRepoDef` / `JpaEntityDef` defs. |
-| `graph_rag.graph.spring_injection_resolver` | Final post-ingest pass: MERGEs a `:Bean` + `IS_BEAN` for every Spring Data repository interface (`bean_type` = interface FQN), then re-resolves any bean's `unresolved_injections` against the complete (annotation + XML + repository) bean set, promoting a now-unique match to an `INJECTS` edge. |
+| `graph_rag.graph.spring_injection_resolver` | Final Spring post-ingest pass: MERGEs a `:Bean` + `IS_BEAN` for every Spring Data repository interface (`bean_type` = interface FQN), then re-resolves any bean's `unresolved_injections` against the complete (annotation + XML + repository) bean set, promoting a now-unique match to an `INJECTS` edge. |
+| `graph_rag.graph.aop_resolver` | Post-ingest pass (after the Spring passes): best-effort AspectJ pointcut matching — resolves each `@Aspect` advice's `execution(…)` / `within(…)` / `@annotation(…)` pointcut (with `&&` / `\|\|` and one level of named-`@Pointcut` substitution) to the `CodeEntity`s it advises, rebuilding `(:Advice)-[:ADVISES]->(:CodeEntity)` and recording `Advice.unresolved_reason` for what it can't match. |
+| `graph_rag.graph.service_call_resolver` | Post-ingest pass (last): links each outbound `HttpEndpoint` (`@FeignClient` / `@HttpExchange` client method) to the ingested `@RestController` route it calls — `(:HttpEndpoint {outbound:true})-[:RESOLVES_TO]->(:HttpEndpoint inbound)` — matched on `(http_method, path)` with path variables normalized. |
+| `graph_rag.graph.mybatis_resolver` | Post-ingest pass (last): binds each XML-derived `SqlStatement` to the `@Mapper` interface method it implements — `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)` — by matching the mapper `namespace` + statement `id` to a method. |
+| `graph_rag.graph.camel_resolver` | Post-ingest pass (last): resolves each Camel `process(...)` / `bean(...)` / `to("bean:...")` step's reference to the `CodeEntity` it runs — `(:CamelStep)-[:INVOKES]->(:CodeEntity)` — by `Type.method` / bare `Type` / `beanName` best-effort match. |
 | `graph_rag.graph.centrality_analyzer` | GDS PageRank over the `CodeEntity` `CALLS`/`IMPORTS` graph → `CodeEntity.pagerank`. |
 | `graph_rag.mcp_server.retriever` | Hybrid vector + full-text retrieval and graph traversal behind the MCP tools. |
 | `graph_rag.mcp_server.knowledge_server` / `.memory_server` | Tool + resource definitions, one module per role; `server.py` combines both onto one server for `--role all`. |
 | `graph_rag.memory` | `AgentMemory` write / recall / decay-pruning. |
-| `graph_rag.cli` | `typer` CLI: `status`, `apply-schema`, `ingest`, `serve-mcp`, `compute-centrality`, `prune-memory`, `eval-retrieval`. |
+| `graph_rag.cli` | `typer` CLI: `status`, `apply-schema`, `ingest` (`--scip` for a SCIP index), `scip-java`, `serve-mcp`, `compute-centrality`, `prune-memory`, `eval-retrieval`. |
 | `graph_rag.http_app` | FastAPI app mounted alongside the MCP server; exposes `POST /ingest`. |
 
 ## Graph data model
@@ -71,7 +78,7 @@ flowchart TD
 | `Source` | `path` | `source_type`, `content_hash`, `ingested_at` |
 | `Section` | `id` | `title`, `level`, `breadcrumb`, `order`, page range |
 | `Chunk` | `id` | `text`, `token_count`, `embedding` (384-d), page/line range |
-| `CodeEntity` | `qualified_name` (globally unique across every language) | `name`, `kind` (per-language vocabulary), `language`, `signature`, `docstring`, `path`, line range, `embedding`, `pagerank`, `synthetic` / `origin` (compile-time-synthesized members, e.g. Lombok) |
+| `CodeEntity` | `qualified_name` (globally unique across every language) | `name`, `kind` (per-language vocabulary), `language`, `signature`, `docstring`, `path`, line range, `embedding`, `pagerank`, `synthetic` / `origin` (compile-time-synthesized members, e.g. Lombok), `resolution` (`static` tree-sitter default / `scip` compiler-grade), `behaviors` (marker slugs, see `BehaviorMarker`) |
 | `PolicyRule` | `id` | `name`, `category`, `severity`, `guideline`, `embedding` |
 | `Concept` | `name` | e.g. a Terraform `resource_type` |
 | `AgentMemory` | `id` | `content`, `embedding`, `last_accessed_at`, access count, soft-delete flag |
@@ -80,13 +87,22 @@ flowchart TD
 | `DbView` | `qualified_name` (`schema.view`) | `name`, `schema_name`, `materialized`, `embed_text`, `embedding` |
 | `DbIndex` | `qualified_name` (`schema.table.index`) | `name`, `columns`, `unique` |
 | `Annotation` | `id` (hash of owner + target + fqn + line) | `name`, `fqn` (import-resolved), `target` (`type`/`method`/`constructor`/`field`/`param:<name>`), `attributes` (JSON string), `line` |
+| `BehaviorMarker` | `id` (hash of owner + target + marker + line) | `marker` (`transactional` / `async` / `scheduled` / `retryable` / `cacheable` / `cache_put` / `cache_evict` / `pre_authorize` / `post_authorize` / `secured` / `roles_allowed`), `target` (`type`/`method`), `attributes` (JSON string), `line` |
+| `Advice` | `id` (hash of advice method qn + kind) | `kind` (`before`/`after`/`after_returning`/`after_throwing`/`around`/`pointcut`), `pointcut_expr`, `pointcut_ref`, `aspect`, `unresolved_reason` (set by `AopResolver` when a pointcut matched nothing / is unsupported) |
+| `EventType` | `fqn` (import-resolved where possible, else simple name — one canonical node per simple name) | `simple_name` — an in-process application event, bridging publisher and `@EventListener` |
+| `Destination` | `id` (`<broker>:<name>`) | `name` (literal topic/queue/exchange), `broker` (`kafka`/`rabbit`/`jms`/`sqs`/`stream`/`unknown`) |
 | `ConfigFile` | `path` (= owning `Source.path`) | `format` (`properties` / `yaml` / `spring-xml`); for `spring-xml` also `scan_packages`, `placeholder_locations`, `import_resources`, `namespace_elements` |
 | `ConfigProperty` | `id` (hash of file + profile + key + line) | `key` (dotted, list items `[i]`), `value` (string), `profile` (`None` = default), `origin_line` |
 | `SpringXmlBean` | `id` (hash of `source_path` + `bean_id`) | `bean_id` / `bean_name`, `class_name`, `scope`, `parent`, `factory_bean` / `factory_method`, `primary`, `abstract`, `aliases`, `constructor_arg_refs`, `property_names` / `property_refs`, `value_placeholder_keys` — raw `<bean>` def, projected into `Bean` by the XML resolver |
 | `Module` | `path` (module directory, absolute) | `artifact`, `group`, `version`, `build_tool` (`maven` / `gradle`), `packages` (owned package prefixes), `source_roots` |
 | `ExternalArtifact` | `gav` (`group:artifact`) | `group`, `artifact`, `version` |
 | `Bean` | `id` (owning `CodeEntity.qualified_name`; XML beans use a `source_path`+`bean_id` hash, stubs `xml-stub::<ref>`) | `name` (Spring bean name), `stereotype` (`XmlBean` / `XmlBeanStub` for XML-wired), `scope`, `primary`, `bean_type`, `defined_in` (`xml` when from a `<beans>` context), `unresolved_injections` (JSON) |
+| `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs` / `feign` / `spring-http-interface`), `produces`, `consumes`, `params`, `bindings` (JSON), `outbound` (true for a `@FeignClient` / `@HttpExchange` client call), `target_service` (Feign `name` / `url`), `embed_text`, `embedding` (384-d) |
 | `HttpEndpoint` | `id` (hash of handler + method + path) | `http_method`, `path` (class + method composed), `framework` (`spring-mvc` / `jax-rs`), `produces`, `consumes`, `params`, `bindings` (JSON), `embed_text`, `embedding` (384-d) |
+| `SqlStatement` | `id` (hash of mapper_qn + statement_id + kind + origin) | `mapper_qn` (namespace / interface FQN), `statement_id`, `kind` (`select`/`insert`/`update`/`delete`), `text` (flattened SQL), `origin` (`mybatis-xml` / `mybatis-annotation`), `method_qn` (set for the annotation form) |
+| `Route` | `id` (hash of source path + ordinal) | `route_id` (explicit `.routeId(...)` or `<file>:<n>`), `from_uri`, `embed_text`, `on_exception` (exception FQNs from the builder's `onException(...)`) — one Camel route |
+| `CamelStep` | `id` (`<route id>#<index>`) | `index`, `kind` (`to` / `process` / `bean` / `choice` / `when` / `split` / …), `uri`, `ref` (process/bean target, resolved by `CamelResolver`), `predicate` (for `when` / `filter`) |
+| `CamelEndpoint` | `uri` | `scheme` (before the first `:`) — MERGE-shared, so `.to("direct:x")` and `from("direct:x")` pair |
 | `SpringDataRepoDef` / `JpaEntityDef` | `qualified_name` | Per-`.java` raw extract of a Spring Data repository (`base`, `entity_type`, `id_type`, `reactive`, parallel `method_*` arrays) / JPA type (`kind`, `table`, `id_fields`, parallel `association_*` arrays); projected onto the `CodeEntity` by `SpringDataResolver` |
 
 A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `repository_entity_type` / `repository_id_type` / `repository_reactive`), a **`:JpaEntity`** label (`jpa_kind` / `jpa_table`), or, on a repository method, `query_kind` (`derived` / `jpql` / `native` / `modifying` / `procedure` / `inherited`) + `query_text` + `query_properties` — all set by `SpringDataResolver`.
@@ -100,6 +116,10 @@ A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `re
 - `(CodeEntity)-[:RENDERS]->(CodeEntity)` (React `component` → child component, from the JSX it mounts)
 - `(CodeEntity)-[:EXTENDS]->(CodeEntity)` (superclass, or an interface's super-interface), `(CodeEntity)-[:IMPLEMENTS]->(CodeEntity)` (Java, best-effort import-resolved)
 - `(CodeEntity)-[:ANNOTATED_WITH]->(Annotation)` (Java annotations on a type / method / constructor / annotated field / parameter)
+- `(CodeEntity)-[:HAS_BEHAVIOR {marker}]->(BehaviorMarker)` (`@Transactional` / `@Scheduled` / `@Async` / `@Cacheable` / `@PreAuthorize` / … — the marker slug is also mirrored onto `CodeEntity.behaviors` for cheap scans)
+- `(CodeEntity)-[:ADVICE_OF]->(Advice)` (an `@Aspect` advice / `@Pointcut` method → its `Advice` node), `(Advice)-[:ADVISES]->(CodeEntity)` (best-effort pointcut match, wired by `AopResolver`)
+- `(CodeEntity)-[:PUBLISHES]->(EventType)-[:CONSUMED_BY]->(CodeEntity)` (`publishEvent(...)` call site → event class → `@EventListener` method — links across files via the MERGE-shared `EventType`)
+- `(CodeEntity)-[:PRODUCES_TO]->(Destination)-[:CONSUMED_BY]->(CodeEntity)` (`KafkaTemplate`/`RabbitTemplate`/`JmsTemplate` `.send(...)` → literal topic/queue → `@KafkaListener` / `@RabbitListener` / `@JmsListener` / `@SqsListener` method)
 - `(Source)-[:DEFINES]->(ConfigFile)`, `(ConfigFile)-[:HAS_PROPERTY]->(ConfigProperty)`
 - `(ConfigProperty)-[:REFERENCES]->(ConfigProperty)` (`${a.b}` placeholder, resolved within the file)
 - `(ConfigFile)-[:DECLARES_BEAN]->(SpringXmlBean)` (one per `<bean>` in a Spring XML context)
@@ -116,6 +136,10 @@ A `CodeEntity` may also carry a **`:Repository`** label (`repository_base` / `re
 - `(Module)-[:DEPENDS_ON {scope}]->(Module)` (Maven reactor / sibling GAV / Gradle `project(':x')`), `(Module)-[:DEPENDS_ON_EXTERNAL {gav, scope}]->(ExternalArtifact)`
 - `(CodeEntity)-[:IS_BEAN]->(Bean)`, `(Bean)-[:INJECTS {via, qualifier, multiplicity, property}]->(Bean)` (`via` also `xml-constructor` / `xml-property` for XML-wired), `(Bean)-[:PRODUCES]->(Bean)` (`@Bean` method), `(Bean)-[:BINDS]->(ConfigProperty)` (`@Value` / `@ConfigurationProperties` / XML `<property value="${…}">`)
 - `(HttpEndpoint)-[:HANDLED_BY]->(CodeEntity)` (the Spring MVC / JAX-RS handler method), `(HttpEndpoint)-[:IN_MODULE]->(Module)`
+- `(CodeEntity)-[:CALLS_SERVICE]->(HttpEndpoint {outbound:true})` (a `@FeignClient` / `@HttpExchange` client method → the outbound call it declares), `(HttpEndpoint outbound)-[:RESOLVES_TO]->(HttpEndpoint inbound)` (wired by `ServiceCallResolver` when a matching controller route is ingested — a cross-service call graph)
+- `(CodeEntity)-[:EXECUTES]->(SqlStatement)` (a `@Mapper` method → the MyBatis SQL it runs — XML statements bound by `MyBatisResolver`, annotation ones at write time), `(SqlStatement)-[:ACCESSES {mode}]->(DbTable)` (`mode` = `read` / `write`; a stub `DbTable {name, stub:true}` when the schema was not separately ingested)
+- `(Route)-[:FROM]->(CamelEndpoint)`, `(Route)-[:TO]->(CamelEndpoint)`, `(CamelEndpoint)-[:CONSUMED_BY]->(Route)` (the route this endpoint is the `from` of — an internal `direct:` / `seda:` / `vm:` endpoint thus links producer route → consumer route via the shared node)
+- `(Route)-[:STEP {index, kind, predicate?}]->(CamelStep)`, `(CamelStep)-[:INVOKES]->(CodeEntity)` (`process` / `bean` step target, wired by `CamelResolver`)
 - `(Source)-[:DEFINES]->(SpringDataRepoDef|JpaEntityDef)` (per-`.java` raw extract)
 - `(CodeEntity:Repository)-[:MANAGES]->(CodeEntity:JpaEntity)` (repo's managed domain type), `(CodeEntity:JpaEntity)-[:PERSISTS_AS]->(DbTable)` (only when a `DbTable` with that name was ingested), `(CodeEntity:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(CodeEntity:JpaEntity)` (`@OneToMany` / `@ManyToOne` / `@ManyToMany` / `@OneToOne`)
 
@@ -139,16 +163,21 @@ no longer produces. A file that fails to parse/embed/write is recorded and
 skipped without aborting the batch.
 
 Build files (`pom.xml`, `*.gradle*`) parse first so the `Module` layer exists
-before the `.java` files, and once the batch is done five graph passes run in
+before the `.java` files, and once the batch is done nine graph passes run in
 order: `ProjectModelResolver` wires `IN_MODULE`, promotes sibling dependencies
 and classifies `IMPORTS.external`; `SpringBeanResolver` derives the annotation
 `Bean` layer; `SpringXmlResolver` folds the `SpringXmlBean` defs from any
 `<beans>` contexts into that same `Bean` layer; `SpringDataResolver` tags the
 repository / JPA-entity `CodeEntity`s and wires `MANAGES` / `PERSISTS_AS` /
-`RELATES_TO`; finally `SpringInjectionResolver` makes every Spring Data
-repository interface a `:Bean` and re-runs injection resolution over the now
-complete bean set, so an annotation bean wiring an XML-only bean or a
-repository (unresolvable when the first pass ran) gets its `INJECTS` edge. The
+`RELATES_TO`; `SpringInjectionResolver` makes every Spring Data repository
+interface a `:Bean` and re-runs injection resolution over the now complete
+bean set, so an annotation bean wiring an XML-only bean or a repository
+(unresolvable when the first pass ran) gets its `INJECTS` edge; `AopResolver`
+matches every `@Aspect` advice's pointcut to the `CodeEntity`s it advises;
+`ServiceCallResolver` links each outbound `@FeignClient` / `@HttpExchange`
+endpoint to the controller route it calls; `MyBatisResolver` binds each XML
+mapper statement to its `@Mapper` interface method; and `CamelResolver`
+resolves each Camel `process` / `bean` step to the `CodeEntity` it invokes. The
 same passes also run after a **single-file** ingest — each is a full-graph
 rebuild — so `ingest_path` / `grag ingest <file>` / `--watch` keep the
 projections in sync with an edit.
@@ -184,6 +213,35 @@ class satisfying the `Parser` protocol (`can_handle(path) -> bool`,
 `search_code`, `get_neighbors`, and `compute-centrality` operate on
 `CodeEntity` regardless of language, so a new parser needs no retrieval-side
 change.
+
+### SCIP (compiler-grade resolution, optional)
+
+Static parsing is deliberately build-free — it can't resolve library symbols,
+overloads by type, or cross-module calls. A **SCIP index** (Sourcegraph's Code
+Intelligence Protocol; `scip-java index` runs the real compiler with the full
+classpath) carries a precise symbol graph. `grag-mcp ingest --scip <index.scip>
+[--root <repo>]` consumes it:
+
+- `ScipReader` decodes the protobuf `Index` message directly off the wire — no
+  `protobuf` runtime, no generated stubs — into `ScipDocument` / `ScipSymbol` /
+  `ScipOccurrence`.
+- `ScipSymbolParser` turns a SCIP symbol string
+  (`scip-java maven com.acme 1.0 com/acme/OrderService#submit().`) into a
+  readable `qualified_name` (`com.acme.OrderService.submit`) + a `kind` from the
+  descriptor suffix (`#` type, `().` method, `.` term).
+- `ScipIngestor` maps each `Document` to a `ParsedDocument`: `SymbolInformation`
+  → `CodeEntity` (`kind` from `Kind` else the descriptor; `documentation` →
+  `docstring` / `embed_text`); `Relationship(is_implementation)` → `IMPLEMENTS`;
+  `Relationship(is_reference | is_type_definition)` → `IMPORTS`; a reference
+  `Occurrence` whose `enclosing_range` belongs to a method → `CALLS`.
+- Every SCIP entity is tagged `resolution="scip"`. It is written per `Source`,
+  so `GraphWriter`'s existing per-`Source` reconcile drops the file's
+  static-parsed entities — **SCIP wins on overlap**. Language-agnostic:
+  validated with `scip-java`, spot-checked with `scip-typescript` /
+  `scip-python`.
+
+The index is not vendored or produced by graph-rag — see
+`docs/enterprise-java.md` for how to generate one.
 
 `JavaParser` (`grag-mcp[java]`, backed by `tree-sitter` +
 `tree-sitter-language-pack`) is the first non-Python implementation and the
@@ -422,7 +480,8 @@ entity, exact then unique-simple-name), `(:JpaEntity)-[:PERSISTS_AS]->(:DbTable)
 `(:JpaEntity)-[:RELATES_TO {kind, mapped_by, field}]->(:JpaEntity)` — including a
 self-edge for tree / hierarchy models (`Category.parent` + `Category.children`).
 
-`SpringInjectionResolver` is the fifth and last pass. It first MERGEs a
+`SpringInjectionResolver` is the fifth pass, and the last of the Spring
+passes. It first MERGEs a
 `(:Bean {stereotype:'Repository'})` + `IS_BEAN` for every `SpringDataRepoDef`
 interface (`bean_type` = the interface FQN), so a repository injected by type
 with no `@Repository` annotation is a real candidate. It then re-reads every
@@ -432,6 +491,87 @@ candidate — matched by declared type or supertype simple name, narrowed by
 `@Qualifier` — to an `(:Bean)-[:INJECTS]->(:Bean)` edge, pruning it from
 `unresolved_injections`. This is what lets an `@Service` wire a bean defined
 only in `applicationContext.xml`.
+
+**AOP & behavioral annotations.** `AopExtractor` runs inside `JavaParser`
+(single-file — an aspect and its advice live in one file). Any
+`@Transactional` / `@Async` / `@Scheduled` / `@Retryable` / `@Cacheable` /
+`@CacheEvict` / `@PreAuthorize` / `@Secured` / `@RolesAllowed` on a type or
+method becomes a `BehaviorMarker` carrying the annotation's full attribute map
+(`propagation`, `readOnly`, `cron`, `fixedRate`, `maxAttempts`, …); the marker
+slugs are also mirrored onto `CodeEntity.behaviors` so "every scheduled job" is
+one scan. Every advice / `@Pointcut` method of an `@Aspect` class becomes an
+`Advice` node with its raw pointcut string. `AopResolver` (sixth post-ingest
+pass) then does best-effort AspectJ matching — `execution(…)` against method
+`qualified_name`, `within(…)` against the declaring type, `@annotation(…)`
+against carried annotations, combined with `&&` / `||` and one level of named
+`@Pointcut` substitution — writing `(:Advice)-[:ADVISES]->(:CodeEntity)` and
+leaving `Advice.unresolved_reason` on anything it can't match (`!`, unsupported
+designators, no hit). There is no full pointcut engine.
+
+**Declarative HTTP clients.** `HttpEndpointExtractor` also emits *outbound*
+`HttpEndpoint`s for a `@FeignClient(name, path)` or `@HttpExchange` interface —
+one per method mapping (`@GetMapping` / `@GetExchange` / …), path composed from
+the type base + method path, `outbound=true`, `target_service` = the Feign
+`name` / `url`. The client method is wired
+`(:CodeEntity)-[:CALLS_SERVICE]->(:HttpEndpoint outbound)`.
+`ServiceCallResolver` (seventh post-ingest pass) then matches each outbound
+endpoint to an ingested `@RestController` route by `(http_method, path)` — path
+variables normalized to `{}`, a trailing slash trimmed, `*` matching any method
+— and adds `(:HttpEndpoint outbound)-[:RESOLVES_TO]->(:HttpEndpoint inbound)`
+when the match is unique. An unmatched outbound endpoint is left standalone.
+**MyBatis mappers.** `MyBatisMapperParser` claims a `.xml` with a
+`<mapper namespace="...">` root and emits a `SqlStatement` per
+`<select|insert|update|delete id=...>` — SQL flattened (`<include refid>`
+expanded against `<sql>` fragments, dynamic `<if>` / `<where>` / `<foreach>`
+tags unwrapped) and scanned for table names + access mode. `MyBatisExtractor`
+(inside `JavaParser`) does the same for `@Select` / `@Insert` / `@Update` /
+`@Delete` annotations, keeping the method (`method_qn`) directly.
+`MyBatisResolver` binds each XML statement to its method by
+`namespace` + `id`. Both feed `(:CodeEntity)-[:EXECUTES]->(:SqlStatement)-[:ACCESSES {mode}]->(:DbTable)`,
+reusing a real `DbTable` when one with that name was ingested, else a
+`stub:true` node.
+**Events & messaging.** `MessageFlowExtractor` (also inside `JavaParser`)
+recovers the call graph that publisher and consumer hide from each other.
+In-process: an `ApplicationEventPublisher.publishEvent(new OrderPlaced(...))`
+call site and an `@EventListener void on(OrderPlaced e)` method are bridged by a
+MERGE-shared `EventType` node (`(:CodeEntity)-[:PUBLISHES]->(:EventType)-[:CONSUMED_BY]->(:CodeEntity)`)
+— the event class is import-resolved from the `new X(...)` / the listener
+parameter / `classes=`, and publisher and listener are normalized to one
+canonical `fqn` per simple name so the two sides connect even across files.
+Broker: `@KafkaListener(topics=)` / `@RabbitListener(queues=)` /
+`@JmsListener(destination=)` / `@SqsListener` / `@StreamListener` and
+`KafkaTemplate`/`RabbitTemplate`/`JmsTemplate` `.send(...)` / `.convertAndSend(...)`
+call sites with a literal destination become
+`(:CodeEntity)-[:PRODUCES_TO]->(:Destination {broker})-[:CONSUMED_BY]->(:CodeEntity)`.
+No resolver pass — the shared-node MERGE does the cross-file join.
+**Apache Camel (Java DSL).** `JavaParser._collect_camel_routes` walks each
+`RouteBuilder` subclass's `configure()` body. A fluent
+`from(uri).routeId(id).<step>.<step>...` chain — which the generic `CALLS`
+resolver deliberately skips — is unwound in source order into a `CamelRoute`:
+`from_uri`, `route_id` (explicit or `<file>:<ordinal>`), and an ordered `steps`
+list (`to` / `toD` / `process` / `bean` / `choice` / `when` / `otherwise` /
+`split` / `multicast` / `wireTap` / `enrich` / `setHeader` / …), with
+`onException(...)` / `errorHandler(...)` exception FQNs attached to every route
+in the builder. Endpoint URIs become MERGE-shared `CamelEndpoint {uri, scheme}`
+nodes, so a `.to("direct:x")` and a `from("direct:x")` in different routes pair
+through `(:Route)-[:TO]->(:CamelEndpoint)-[:CONSUMED_BY]->(:Route)` with no
+resolver. `CamelResolver` (ninth post-ingest pass) resolves each `process` /
+`bean` / `to("bean:...")` step's reference (`Type.method`, bare `Type`, or
+`beanName`) to `(:CamelStep)-[:INVOKES]->(:CodeEntity)`.
+
+The **XML** and **YAML** DSLs feed the same model. `CamelXmlParser` claims a
+`.xml` with a `<camelContext>` / `<routes>` / `<route>` root (a `<beans>` file
+that embeds a `<camelContext>` stays with `SpringXmlParser`, which calls the
+shared `CamelXmlRouteExtractor` too); `CamelYamlParser` claims a `.yaml` whose
+entries carry a `route.from` / top-level `from`. Nested
+`<choice><when><simple/></when><otherwise/></choice>` (XML) and the equivalent
+YAML mapping are flattened to the same `choice / when / … / otherwise / … / end`
+step list. `@Consume(uri=)` on a method becomes a one-`bean`-step route into
+that method; `@Produce` / `@EndpointInject` on a field becomes
+`(:CodeEntity)-[:PRODUCES_TO]->(:CamelEndpoint)`. All four sources (Java DSL,
+XML, YAML, annotations) share the MERGE-keyed `CamelEndpoint`, so a
+`direct:` / `seda:` endpoint pairs producer and consumer no matter which DSL
+each side is written in.
 
 ## Retrieval
 
@@ -474,32 +614,60 @@ Graph-native tools sit alongside search: `get_section` / `get_outline`
 
 ### Java frameworks
 
-For a Spring / Spring Boot / Jakarta codebase the graph carries beans +
-dependency injection (`SpringBeanResolver` / `SpringXmlResolver`), Spring MVC /
-JAX-RS HTTP endpoints (`HttpEndpointExtractor`), Spring Data repositories + JPA
-entities (`SpringDataExtractor` / `SpringDataResolver`), and application config
-(`ConfigFileParser` / `SpringXmlParser`) — each detailed in **Adding a
-language** above. It is reachable over MCP through:
+For an enterprise Java (Spring / Jakarta / Apache Camel) codebase the graph
+carries beans + dependency injection (`SpringBeanResolver` / `SpringXmlResolver`
+/ `SpringInjectionResolver`), Spring MVC / JAX-RS HTTP endpoints
+(`HttpEndpointExtractor`), Spring Data repositories + JPA entities
+(`SpringDataExtractor` / `SpringDataResolver`), application config
+(`ConfigFileParser` / `SpringXmlParser`), Apache Camel routes
+(`JavaParser._collect_camel_routes` / `CamelXmlParser` / `CamelYamlParser` +
+`CamelResolver`), in-process events + broker messaging (`MessageFlowExtractor`),
+AOP advice + behavioral markers (`AopExtractor` / `AopResolver`), MyBatis mapper
+SQL (`MyBatisMapperParser` / `MyBatisExtractor` / `MyBatisResolver`), and
+declarative HTTP clients (`HttpEndpointExtractor` + `ServiceCallResolver`) —
+each detailed in **Adding a language** above. It is reachable over MCP through:
 
-- **`search_code`** with `stereotype=` (`Service` / `RestController` /
-  `Repository` / `Configuration` / … — a bean stereotype or a bare type-level
-  annotation), `annotation=` (any annotation, simple name or FQN), `module=`
-  (owning `Module.artifact` or a path suffix) — guards baked into the hybrid
-  query so an unfiltered call is unchanged.
-- **`get_beans_for(qualified_name)`** — the bean for a `CodeEntity` /
-  `Bean.id`, its `INJECTS` / `PRODUCES` wiring both ways, and the
-  `ConfigProperty` keys it `BINDS` (annotation- and XML-wired beans alike).
-- **`get_endpoints(path_glob?, http_method?, module?)`** — `HttpEndpoint`s with
-  their handler and module; `path_glob` uses `*` / `?` and whole-path match.
-- **`get_neighbors`** — already relationship-type-generic, so `INJECTS` /
-  `HANDLED_BY` / `MANAGES` / `PERSISTS_AS` / `RELATES_TO` / `BINDS` /
-  `IMPORTS_CONTEXT` traverse like any other edge.
+- **`search_code`** filters — `stereotype=` / `annotation=` / `module=`, plus
+  `route=` (a Camel `Route.route_id` whose steps invoke the entity),
+  `endpoint=` (a path glob a handler on the entity serves), `listens_to=` (an
+  `EventType` fqn/simple or `Destination` name the entity or a method it
+  contains consumes), `behavior=` (`transactional` / `scheduled` / `async` /
+  `retryable` / `cacheable` / `pre_authorize` / …). Guards baked into the
+  hybrid query so an unfiltered call is unchanged.
+- **`get_beans_for(qualified_name)`** — the bean's `INJECTS` / `PRODUCES` /
+  `BINDS` wiring, plus v0.7.0 context on its backing `CodeEntity` and methods:
+  `publishes`, `listens_to`, `calls_services` (outbound HTTP), `invoked_by_routes`,
+  `behaviors`.
+- **`get_endpoints(path_glob?, http_method?, module?)`** — inbound `HttpEndpoint`s.
+- **`get_routes(uri_glob?, module?)`** — Camel `Route`s: `from` / `to` endpoints,
+  ordered step list, and the `CodeEntity`s their `process` / `bean` steps invoke.
+- **`get_message_flows(event_or_topic)`** — publisher ↔ consumer `CodeEntity`s
+  for an `EventType` (fqn or simple) or a `Destination` name.
+- **`get_service_calls(qualified_name)`** — the inbound (routes it handles) and
+  outbound (`@FeignClient` / `@HttpExchange` calls, with the controller route
+  each `RESOLVES_TO`) HTTP edges for one entity — a slice of the cross-service
+  call graph.
+- **`get_architecture_outline(module?)`** — beans / endpoints / routes /
+  listeners / scheduled jobs grouped by module.
+- **`get_central_code_entities`** — PageRank now runs over `CALLS` / `IMPORTS`
+  **plus** the framework-mediated edges (`IS_BEAN` / `INJECTS`, `PUBLISHES` /
+  `CONSUMED_BY`, Camel `INVOKES`, `CALLS_SERVICE`, `EXECUTES`), so ranking
+  reflects framework coupling, not just source calls.
+- **`get_neighbors`** — relationship-type-generic, so every edge above
+  traverses like any other.
 
-`examples/spring-boot/` is a runnable two-module sample exercising all of the
-above, with a query walkthrough in its `README.md`. Precise cross-file and
-library-level symbol resolution is the v0.7.0 `--scip` path; today's Java graph
-is best-effort static (no type inference), matching the `CALLS` / `IMPORTS`
-caveat above.
+**Precision tiers.**
+
+| Tier | Resolves | `CodeEntity.resolution` |
+| --- | --- | --- |
+| **static** (default, build-free) | in-file calls, explicit imports, `this`/`super` members, and the full framework graph (beans, MVC, Camel, events, AOP, MyBatis, Feign) | `static` |
+| **SCIP** (`grag-mcp ingest --scip`, needs a build) | compiler-grade cross-file / cross-module `CALLS` / `IMPORTS` / `IMPLEMENTS`, overload-correct targets, library symbols | `scip` (wins on overlap) |
+
+`examples/spring-boot/` covers the v0.6.0 beans / MVC / Spring Data slice;
+`examples/enterprise-java/` is a three-module sample exercising the v0.7.0
+additions (Camel Java + XML, a Kafka listener, a `@FeignClient` to a second
+service, an `@Aspect`, `@Transactional`, a MyBatis mapper) with a query
+walkthrough in its `README.md` and in `docs/enterprise-java.md`.
 
 ## MCP server
 

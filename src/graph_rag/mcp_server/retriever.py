@@ -9,17 +9,23 @@ from graph_rag.ingest.embedders import Embedder
 
 from .cross_encoder_reranker import CrossEncoderReranker
 from .models import (
+    ArchitectureOutline,
     BeanDetail,
     BeanEdge,
     CodeCentralityResult,
     CodeSearchResult,
     EndpointResult,
+    MessageFlowResult,
+    ModuleArchitecture,
     NeighborResult,
     OutlineNode,
     PolicyResult,
+    RouteResult,
     SearchResult,
     SectionDetail,
     SectionOutlineEntry,
+    ServiceCallEndpoint,
+    ServiceCallResult,
     SourceInfo,
 )
 from .query_rewriter import QueryRewriter
@@ -163,6 +169,34 @@ WHERE ($stereotype IS NULL
          WHERE mm.artifact = $module OR mm.path = $module
                OR mm.path ENDS WITH ('/' + $module)
        })
+  AND ($route IS NULL OR EXISTS {
+         MATCH (:Route {route_id: $route})-[:STEP]->(:CamelStep)-[:INVOKES]->(e)
+       })
+  AND ($endpoint IS NULL OR EXISTS {
+         MATCH (he:HttpEndpoint)-[:HANDLED_BY]->(e)
+         WHERE he.path =~ $endpoint
+       })
+  AND ($listens_to IS NULL
+       OR EXISTS {
+         MATCH (le:EventType)-[:CONSUMED_BY]->(e)
+         WHERE le.fqn = $listens_to OR le.simple_name = $listens_to
+       }
+       OR EXISTS { MATCH (ld:Destination {name: $listens_to})-[:CONSUMED_BY]->(e) }
+       OR EXISTS {
+         MATCH (e)-[:CONTAINS]->(lm:CodeEntity)
+         MATCH (le2:EventType)-[:CONSUMED_BY]->(lm)
+         WHERE le2.fqn = $listens_to OR le2.simple_name = $listens_to
+       }
+       OR EXISTS {
+         MATCH (e)-[:CONTAINS]->(lm2:CodeEntity)
+         MATCH (:Destination {name: $listens_to})-[:CONSUMED_BY]->(lm2)
+       })
+  AND ($behavior IS NULL
+       OR $behavior IN coalesce(e.behaviors, [])
+       OR EXISTS {
+         MATCH (e)-[:CONTAINS]->(bm:CodeEntity)
+         WHERE $behavior IN coalesce(bm.behaviors, [])
+       })
 """
 
 # `search_code`'s graph filters resolve an allow-set of `qualified_name`s up
@@ -215,7 +249,8 @@ RETURN b.id AS bean_id, b.name AS name, b.stereotype AS stereotype, b.scope AS s
 
 _GET_ENDPOINTS = """
 MATCH (h:HttpEndpoint)
-WHERE ($http_method IS NULL OR h.http_method = $http_method)
+WHERE coalesce(h.outbound, false) = false
+  AND ($http_method IS NULL OR h.http_method = $http_method)
   AND ($path_regex IS NULL OR h.path =~ $path_regex)
 OPTIONAL MATCH (h)-[:HANDLED_BY]->(handler:CodeEntity)
 OPTIONAL MATCH (h)-[:IN_MODULE]->(mod:Module)
@@ -226,6 +261,133 @@ RETURN h.http_method AS http_method, h.path AS path, h.framework AS framework,
        handler.qualified_name AS handler_qualified_name, mod.artifact AS module
 ORDER BY h.path, h.http_method
 LIMIT $limit
+"""
+
+_GET_ROUTES = """
+MATCH (r:Route)
+OPTIONAL MATCH (r)-[:FROM|TO]->(ep:CamelEndpoint)
+WITH r, collect(DISTINCT ep.uri) AS all_uris
+WHERE $uri_regex IS NULL OR any(u IN all_uris WHERE u =~ $uri_regex)
+OPTIONAL MATCH (r)-[t_to:TO]->(toe:CamelEndpoint)
+OPTIONAL MATCH (r)-[:STEP]->(step:CamelStep)
+OPTIONAL MATCH (step)-[:INVOKES]->(inv:CodeEntity)
+OPTIONAL MATCH (rs:Source)-[:DEFINES]->(r)
+OPTIONAL MATCH (rs)-[:IN_MODULE]->(mod:Module)
+WITH r, rs, mod,
+     collect(DISTINCT toe.uri) AS to_uris,
+     collect(DISTINCT CASE WHEN coalesce(t_to.conditional, false) THEN toe.uri END)
+       AS conditional_to_uris,
+     collect(DISTINCT inv.qualified_name) AS invokes,
+     collect(DISTINCT {i: step.index, k: step.kind, u: step.uri}) AS raw_steps
+WHERE $module IS NULL OR mod.artifact = $module OR mod.path ENDS WITH ('/' + $module)
+RETURN r.route_id AS route_id, r.from_uri AS from_uri, r.on_exception AS on_exception,
+       [u IN to_uris WHERE u IS NOT NULL] AS to_uris,
+       [u IN conditional_to_uris WHERE u IS NOT NULL] AS conditional_to_uris,
+       [q IN invokes WHERE q IS NOT NULL] AS invokes,
+       [s IN raw_steps WHERE s.k IS NOT NULL] AS raw_steps,
+       mod.artifact AS module, rs.path AS source_path
+ORDER BY r.route_id
+LIMIT $limit
+"""
+
+_GET_MESSAGE_FLOWS = """
+MATCH (et:EventType)
+WHERE et.fqn = $name OR et.simple_name = $name
+OPTIONAL MATCH (pub:CodeEntity)-[:PUBLISHES]->(et)
+OPTIONAL MATCH (et)-[:CONSUMED_BY]->(con:CodeEntity)
+RETURN 'event' AS kind, et.fqn AS name, null AS broker,
+       [q IN collect(DISTINCT pub.qualified_name) WHERE q IS NOT NULL] AS publishers,
+       [q IN collect(DISTINCT con.qualified_name) WHERE q IS NOT NULL] AS consumers
+UNION
+MATCH (d:Destination)
+WHERE d.name = $name
+OPTIONAL MATCH (dp:CodeEntity)-[:PRODUCES_TO]->(d)
+OPTIONAL MATCH (d)-[:CONSUMED_BY]->(dc:CodeEntity)
+RETURN 'destination' AS kind, d.name AS name, d.broker AS broker,
+       [q IN collect(DISTINCT dp.qualified_name) WHERE q IS NOT NULL] AS publishers,
+       [q IN collect(DISTINCT dc.qualified_name) WHERE q IS NOT NULL] AS consumers
+"""
+
+_GET_SERVICE_CALLS = """
+MATCH (e:CodeEntity {qualified_name: $qualified_name})
+OPTIONAL MATCH (inh:HttpEndpoint)-[:HANDLED_BY]->(e)
+OPTIONAL MATCH (e)-[:CALLS_SERVICE]->(out:HttpEndpoint)
+OPTIONAL MATCH (out)-[:RESOLVES_TO]->(:HttpEndpoint)-[:HANDLED_BY]->(th:CodeEntity)
+RETURN
+  collect(DISTINCT {m: inh.http_method, p: inh.path}) AS inbound,
+  collect(DISTINCT {m: out.http_method, p: out.path, svc: out.target_service,
+                    th: th.qualified_name}) AS outbound
+"""
+
+# The module filter accepts either the exact Maven artifactId or a path suffix
+# (`mod.path ENDS WITH '/' + $module`), matching `get_endpoints` / `get_routes` /
+# `search_code`; `'unassigned'` stays reachable when no module is passed.
+_MODULE_FILTER = (
+    "WHERE $module IS NULL OR module = $module "
+    "OR (modpath IS NOT NULL AND modpath ENDS WITH ('/' + $module))"
+)
+
+_GET_ARCHITECTURE_OUTLINE = f"""
+MATCH (c:CodeEntity)-[:IS_BEAN]->(b:Bean)
+OPTIONAL MATCH (bs:Source)-[:DEFINES]->(c)
+OPTIONAL MATCH (bs)-[:IN_MODULE]->(bm:Module)
+WITH coalesce(bm.artifact, 'unassigned') AS module, bm.path AS modpath, 'bean' AS cat,
+     b.name + ' [' + coalesce(b.stereotype, '?') + ']' AS item
+{_MODULE_FILTER}
+RETURN module, cat, item
+UNION
+MATCH (h:HttpEndpoint)
+WHERE coalesce(h.outbound, false) = false
+OPTIONAL MATCH (h)-[:IN_MODULE]->(hm:Module)
+WITH coalesce(hm.artifact, 'unassigned') AS module, hm.path AS modpath, 'endpoint' AS cat,
+     h.http_method + ' ' + h.path AS item
+{_MODULE_FILTER}
+RETURN module, cat, item
+UNION
+MATCH (r:Route)
+OPTIONAL MATCH (rs:Source)-[:DEFINES]->(r)
+OPTIONAL MATCH (rs)-[:IN_MODULE]->(rm:Module)
+WITH coalesce(rm.artifact, 'unassigned') AS module, rm.path AS modpath, 'route' AS cat,
+     r.route_id + ': ' + r.from_uri AS item
+{_MODULE_FILTER}
+RETURN module, cat, item
+UNION
+MATCH (src)-[:CONSUMED_BY]->(lc:CodeEntity)
+WHERE src:EventType OR src:Destination
+OPTIONAL MATCH (ls:Source)-[:DEFINES]->(lc)
+OPTIONAL MATCH (ls)-[:IN_MODULE]->(lm:Module)
+WITH coalesce(lm.artifact, 'unassigned') AS module, lm.path AS modpath, 'listener' AS cat,
+     lc.qualified_name + ' <- ' + coalesce(src.fqn, src.name) AS item
+{_MODULE_FILTER}
+RETURN module, cat, item
+UNION
+MATCH (sc:CodeEntity)-[:HAS_BEHAVIOR {{marker: 'scheduled'}}]->(smk:BehaviorMarker)
+OPTIONAL MATCH (ss:Source)-[:DEFINES]->(sc)
+OPTIONAL MATCH (ss)-[:IN_MODULE]->(sm:Module)
+WITH coalesce(sm.artifact, 'unassigned') AS module, sm.path AS modpath, 'scheduled' AS cat,
+     sc.qualified_name + coalesce(' (' + smk.attributes + ')', '') AS item
+{_MODULE_FILTER}
+RETURN module, cat, item
+"""
+
+_GET_BEAN_FRAMEWORK_CONTEXT = """
+MATCH (c:CodeEntity)-[:IS_BEAN]->(:Bean {id: $bean_id})
+OPTIONAL MATCH (c)-[:CONTAINS]->(child:CodeEntity)
+WITH collect(DISTINCT child) + collect(DISTINCT c) AS members
+UNWIND members AS mem
+OPTIONAL MATCH (mem)-[:PUBLISHES]->(pet:EventType)
+OPTIONAL MATCH (let:EventType)-[:CONSUMED_BY]->(mem)
+OPTIONAL MATCH (ld:Destination)-[:CONSUMED_BY]->(mem)
+OPTIONAL MATCH (mem)-[:CALLS_SERVICE]->(oe:HttpEndpoint)
+OPTIONAL MATCH (rt:Route)-[:STEP]->(:CamelStep)-[:INVOKES]->(mem)
+RETURN
+  [q IN collect(DISTINCT pet.fqn) WHERE q IS NOT NULL] AS publishes,
+  [q IN collect(DISTINCT coalesce(let.fqn, ld.name)) WHERE q IS NOT NULL] AS listens_to,
+  [q IN collect(DISTINCT
+     oe.http_method + ' ' + oe.path + ' -> ' + coalesce(oe.target_service, '?'))
+   WHERE q IS NOT NULL] AS calls_services,
+  [q IN collect(DISTINCT rt.route_id) WHERE q IS NOT NULL] AS invoked_by_routes,
+  [b IN collect(DISTINCT mem.behaviors) WHERE b IS NOT NULL] AS behavior_lists
 """
 
 _VECTOR_SEARCH_POLICY = """
@@ -524,9 +686,15 @@ class Retriever:
         """
         with self._driver.session() as session:
             record = session.run(cast(LiteralString, _GET_BEANS_FOR), key=qualified_name).single()
-        if record is None:
-            return None
-        row = dict(record)
+            if record is None:
+                return None
+            row = dict(record)
+            context = session.run(
+                cast(LiteralString, _GET_BEAN_FRAMEWORK_CONTEXT), bean_id=row["bean_id"]
+            ).single()
+        context_map: dict[str, Any] = dict(context) if context else {}
+        behavior_lists = context_map.get("behavior_lists") or []
+        behaviors = sorted({slug for slugs in behavior_lists for slug in slugs})
         return BeanDetail(
             bean_id=row["bean_id"],
             name=row["name"],
@@ -541,6 +709,11 @@ class Retriever:
             produced_by=_bean_edges(row["produced_by"]),
             binds=[key for key in row["binds"] if key],
             unresolved_injections=row["unresolved_injections"],
+            publishes=list(context_map.get("publishes") or []),
+            listens_to=list(context_map.get("listens_to") or []),
+            calls_services=list(context_map.get("calls_services") or []),
+            invoked_by_routes=list(context_map.get("invoked_by_routes") or []),
+            behaviors=behaviors,
         )
 
     def get_endpoints(
@@ -577,6 +750,135 @@ class Retriever:
                 for row in rows
             ]
 
+    def get_routes(
+        self, uri_glob: str | None = None, module: str | None = None, limit: int = 100
+    ) -> list[RouteResult]:
+        """Apache Camel routes (`Route` nodes), optionally filtered by a
+        `uri_glob` matched against the route's `from` and any `to` endpoint URI
+        (`*` / `?`; substring unless pinned with `^` / `$`), and/or the owning
+        `Module.artifact`. Each result carries the ordered step list and the
+        `CodeEntity`s its `process` / `bean` steps invoke.
+        """
+        params = {
+            "uri_regex": _glob_to_regex(uri_glob) if uri_glob else None,
+            "module": module,
+            "limit": limit,
+        }
+        with self._driver.session() as session:
+            rows = [dict(row) for row in session.run(cast(LiteralString, _GET_ROUTES), params)]
+        return [
+            RouteResult(
+                route_id=row["route_id"],
+                from_uri=row["from_uri"],
+                to_uris=row["to_uris"],
+                conditional_to_uris=row["conditional_to_uris"],
+                steps=[
+                    step["k"] + (f"({step['u']})" if step["u"] else "")
+                    # This writer guarantees `CamelStep.index`, but a graph left by
+                    # an older build can still hold a null-index step — sort those
+                    # last instead of raising and aborting the whole call.
+                    for step in sorted(
+                        row["raw_steps"], key=lambda step: (step["i"] is None, step["i"] or 0)
+                    )
+                ],
+                invokes=row["invokes"],
+                on_exception=row["on_exception"] or [],
+                module=row["module"],
+                source_path=row["source_path"],
+            )
+            for row in rows
+        ]
+
+    def get_message_flows(self, event_or_topic: str) -> list[MessageFlowResult]:
+        """Publisher ↔ consumer flows for an application event type
+        (`EventType.fqn` or simple name) or a broker destination
+        (`Destination.name` — a Kafka topic / Rabbit queue / …). Returns up to
+        two results (one per kind that matches the name).
+        """
+        with self._driver.session() as session:
+            rows = [
+                dict(row)
+                for row in session.run(cast(LiteralString, _GET_MESSAGE_FLOWS), name=event_or_topic)
+            ]
+        return [
+            MessageFlowResult(
+                kind=row["kind"],
+                name=row["name"],
+                broker=row["broker"],
+                publishers=row["publishers"],
+                consumers=row["consumers"],
+            )
+            for row in rows
+            if row["name"] and (row["publishers"] or row["consumers"])
+        ]
+
+    def get_service_calls(self, qualified_name: str) -> ServiceCallResult:
+        """The inbound (`@RestController` routes it handles) and outbound
+        (`@FeignClient` / `@HttpExchange` calls it declares, with the ingested
+        controller route each resolves to) HTTP edges touching one
+        `CodeEntity.qualified_name`.
+        """
+        with self._driver.session() as session:
+            record = session.run(
+                cast(LiteralString, _GET_SERVICE_CALLS), qualified_name=qualified_name
+            ).single()
+        endpoints: list[ServiceCallEndpoint] = []
+        if record is not None:
+            row = dict(record)
+            for inbound in row["inbound"]:
+                if inbound.get("m"):
+                    endpoints.append(
+                        ServiceCallEndpoint(
+                            direction="inbound",
+                            http_method=inbound["m"],
+                            path=inbound["p"],
+                        )
+                    )
+            for outbound in row["outbound"]:
+                if outbound.get("m"):
+                    endpoints.append(
+                        ServiceCallEndpoint(
+                            direction="outbound",
+                            http_method=outbound["m"],
+                            path=outbound["p"],
+                            target_service=outbound.get("svc"),
+                            resolves_to_handler=outbound.get("th"),
+                        )
+                    )
+        return ServiceCallResult(qualified_name=qualified_name, endpoints=endpoints)
+
+    def get_architecture_outline(self, module: str | None = None) -> ArchitectureOutline:
+        """Beans, HTTP endpoints, Camel routes, message listeners, and scheduled
+        jobs grouped by Maven/Gradle module (nodes in no module land in an
+        `unassigned` bucket). Optionally restricted to one `Module.artifact`.
+        """
+        with self._driver.session() as session:
+            rows = [
+                dict(row)
+                for row in session.run(
+                    cast(LiteralString, _GET_ARCHITECTURE_OUTLINE), module=module
+                )
+            ]
+        by_module: dict[str, ModuleArchitecture] = {}
+        bucket = {
+            "bean": "beans",
+            "endpoint": "endpoints",
+            "route": "routes",
+            "listener": "listeners",
+            "scheduled": "scheduled_jobs",
+        }
+        for row in rows:
+            architecture = by_module.setdefault(
+                row["module"], ModuleArchitecture(module=row["module"])
+            )
+            getattr(architecture, bucket[row["cat"]]).append(row["item"])
+        for architecture in by_module.values():
+            for field_name in bucket.values():
+                getattr(architecture, field_name).sort()
+        return ArchitectureOutline(
+            modules=sorted(by_module.values(), key=lambda architecture: architecture.module)
+        )
+
     def _code_candidates(
         self,
         session: Any,
@@ -610,9 +912,7 @@ class Retriever:
         combined = combine_scores({qn: row["score"] for qn, row in by_id.items()}, fulltext_scores)
         return by_id, combined
 
-    def _filtered_code_keys(
-        self, stereotype: str | None, annotation: str | None, module: str | None
-    ) -> set[str]:
+    def _filtered_code_keys(self, filters: dict[str, str | None]) -> set[str]:
         """The `qualified_name`s matching the `search_code` graph filters,
         resolved on the graph alone (no embedding) so the ANN pass can be
         intersected against the full matching set rather than pre-truncated.
@@ -622,9 +922,13 @@ class Retriever:
                 row["qualified_name"]
                 for row in session.run(
                     cast(LiteralString, _FILTERED_CODE_KEYS),
-                    stereotype=stereotype,
-                    annotation=annotation,
-                    module=module,
+                    stereotype=filters["stereotype"],
+                    annotation=filters["annotation"],
+                    module=filters["module"],
+                    route=filters["route"],
+                    endpoint=filters["endpoint"],
+                    listens_to=filters["listens_to"],
+                    behavior=filters["behavior"],
                 )
             }
 
@@ -635,16 +939,34 @@ class Retriever:
         stereotype: str | None = None,
         annotation: str | None = None,
         module: str | None = None,
+        route: str | None = None,
+        endpoint: str | None = None,
+        listens_to: str | None = None,
+        behavior: str | None = None,
     ) -> list[CodeSearchResult]:
         """Hybrid (vector + full-text) search over `CodeEntity` nodes —
         the code-search complement to `search` (which covers prose chunks only).
-        Optional `stereotype` / `annotation` / `module` narrow the hits to the
-        Spring / Java-framework graph.
+        Optional filters narrow the hits to the Spring / Java-framework graph:
+        `stereotype` / `annotation` / `module`, plus `route` (a `Route.route_id`
+        whose steps invoke the entity), `endpoint` (a path glob a handler on the
+        entity serves), `listens_to` (an `EventType` fqn/simple or `Destination`
+        name the entity — or a method it contains — consumes), and `behavior`
+        (`transactional` / `scheduled` / `async` / `retryable` / `cacheable` /
+        `pre_authorize` / …).
         """
+        filters: dict[str, str | None] = {
+            "stereotype": stereotype,
+            "annotation": annotation,
+            "module": module,
+            "route": route,
+            "endpoint": _glob_to_regex(endpoint) if endpoint else None,
+            "listens_to": listens_to,
+            "behavior": behavior,
+        }
         candidate_k = top_k * CANDIDATE_MULTIPLIER
         allowed: set[str] | None = None
-        if stereotype is not None or annotation is not None or module is not None:
-            allowed = self._filtered_code_keys(stereotype, annotation, module)
+        if any(value is not None for value in filters.values()):
+            allowed = self._filtered_code_keys(filters)
             if not allowed:
                 return []
             # over-fetch so the index truncation still reaches enough of the
