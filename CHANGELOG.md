@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-09
+
 ### Added
 - Declarative HTTP clients. `@FeignClient(name, path)` and `@HttpExchange`
   interface methods (`@GetMapping` / `@GetExchange` / …) become *outbound*
@@ -196,6 +198,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [#162](https://github.com/tmustafiz/graph-rag/issues/162),
   [#164](https://github.com/tmustafiz/graph-rag/issues/164),
   [#165](https://github.com/tmustafiz/graph-rag/issues/165))
+
+### Changed
+- Internal cleanup, no behaviour change: one shared `dedupe` helper and one
+  shared XML-namespace helper replace ~8 + 7 parser-local copies; a
+  `build_default_resolvers(driver)` factory replaces the resolver list
+  copy-pasted across three CLI commands; `schema.py` is the single source of
+  truth for the framework relationship-type / node-label vocabulary the
+  centrality projection uses; the Camel XML and YAML route extractors share a
+  `CamelStepList` builder; a `GraphResolver` base holds the session/transaction
+  shell the post-ingest passes duplicated; the Camel Java-DSL and
+  event/messaging walkers move out of `java_parser.py` (1554 → ~1030 lines)
+  into `CamelJavaDslExtractor` / `MessageSiteExtractor`; `ModuleArchitecture`
+  and `ServiceCallEndpoint` get their own modules.
+  ([#166](https://github.com/tmustafiz/graph-rag/issues/166))
 
 ## [0.6.0] - 2026-09-07
 
@@ -769,7 +785,8 @@ the code graph, agent working-memory with decay pruning, and an MCP server
 (Streamable HTTP) exposing lookup + memory tools. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
-[Unreleased]: https://github.com/tmustafiz/graph-rag/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/tmustafiz/graph-rag/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/tmustafiz/graph-rag/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tmustafiz/graph-rag/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/tmustafiz/graph-rag/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/tmustafiz/graph-rag/compare/v0.3.0...v0.4.0
