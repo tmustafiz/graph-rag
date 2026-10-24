@@ -48,6 +48,24 @@ services:
       timeout: 5s
       retries: 15
 
+  # Opt-in Neo4j Browser UI, for when NEO4J_IMAGE is a hardened image that ships
+  # without it (the Browser 404s: {"code":"Neo.ClientError.Request.Invalid"}).
+  # Static files extracted from a stock Neo4j image, served by nginx. Enable it:
+  #   docker compose --profile browser up -d
+  # then open http://localhost:7475 and connect to bolt://localhost:7687.
+  # Not built or started otherwise. See docs/operations.md.
+  neo4j-browser:
+    profiles: ["browser"]
+    build:
+      context: ./docker/neo4j-browser
+      args:
+        NEO4J_BROWSER_SOURCE_IMAGE: ${NEO4J_BROWSER_SOURCE_IMAGE:-neo4j:2026.07.1}
+    container_name: graph-rag-neo4j-browser
+    ports:
+      - "127.0.0.1:7475:8080"
+    depends_on:
+      - neo4j
+
   mcp-server:
     build:
       context: .
